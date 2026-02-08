@@ -3,6 +3,8 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/JakeNeyer/ipam/network"
 	"github.com/JakeNeyer/ipam/store"
@@ -10,6 +12,10 @@ import (
 	"github.com/swaggest/usecase"
 	"github.com/swaggest/usecase/status"
 )
+
+func allocationBlockNamesMatch(a, b string) bool {
+	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
+}
 
 // CreateAllocation handler
 func NewCreateAllocationUseCase(s *store.Store) usecase.Interactor {
@@ -22,8 +28,53 @@ func NewCreateAllocationUseCase(s *store.Store) usecase.Interactor {
 			return status.Wrap(errors.New("invalid CIDR format"), status.InvalidArgument)
 		}
 
+		blocks, err := s.ListBlocks()
+		if err != nil {
+			return status.Wrap(err, status.Internal)
+		}
+		var parentBlock *network.Block
+		for _, b := range blocks {
+			if b.Name == input.BlockName {
+				parentBlock = b
+				break
+			}
+		}
+		if parentBlock == nil {
+			return status.Wrap(errors.New("block not found"), status.NotFound)
+		}
+
+		contained, err := network.Contains(parentBlock.CIDR, input.CIDR)
+		if err != nil {
+			return status.Wrap(err, status.InvalidArgument)
+		}
+		if !contained {
+			return status.Wrap(errors.New("allocation CIDR must fall within the parent block's CIDR range"), status.InvalidArgument)
+		}
+
+		// Ensure the new allocation's CIDR does not overlap any existing allocation in the same block.
+		allAllocs, err := s.ListAllocations()
+		if err != nil {
+			return status.Wrap(err, status.Internal)
+		}
+		for _, existing := range allAllocs {
+			if !allocationBlockNamesMatch(existing.Block.Name, input.BlockName) {
+				continue
+			}
+			overlap, err := network.Overlaps(input.CIDR, existing.Block.CIDR)
+			if err != nil {
+				return status.Wrap(err, status.Internal)
+			}
+			if overlap {
+				return status.Wrap(
+					fmt.Errorf("CIDR %s overlaps with existing allocation %q in block %q", input.CIDR, existing.Name, input.BlockName),
+					status.InvalidArgument,
+				)
+			}
+		}
+
+		id := s.GenerateID()
 		allocation := &network.Allocation{
-			Id:   uuid.New(),
+			Id:   id,
 			Name: input.Name,
 			Block: network.Block{
 				Name: input.BlockName,
@@ -31,12 +82,11 @@ func NewCreateAllocationUseCase(s *store.Store) usecase.Interactor {
 			},
 		}
 
-		id := s.GenerateID()
 		if err := s.CreateAllocation(id, allocation); err != nil {
 			return status.Wrap(err, status.Internal)
 		}
 
-		output.Id = allocation.Id
+		output.Id = id
 		output.Name = allocation.Name
 		output.BlockName = allocation.Block.Name
 		output.CIDR = allocation.Block.CIDR
@@ -45,18 +95,28 @@ func NewCreateAllocationUseCase(s *store.Store) usecase.Interactor {
 
 	u.SetTitle("Create Allocation")
 	u.SetDescription("Creates a new IP allocation")
-	u.SetExpectedErrors(status.InvalidArgument, status.Internal)
+	u.SetExpectedErrors(status.InvalidArgument, status.NotFound, status.Internal)
 	return u
 }
 
 // ListAllocations handler
 func NewListAllocationsUseCase(s *store.Store) usecase.Interactor {
-	u := usecase.NewInteractor(func(ctx context.Context, input struct{}, output *allocationListOutput) error {
-		allocations, err := s.ListAllocations()
+	u := usecase.NewInteractor(func(ctx context.Context, input listAllocationsInput, output *allocationListOutput) error {
+		limit, offset := input.Limit, input.Offset
+		if limit <= 0 {
+			limit = defaultListLimit
+		}
+		if limit > maxListLimit {
+			limit = maxListLimit
+		}
+		if offset < 0 {
+			offset = 0
+		}
+		allocations, total, err := s.ListAllocationsFiltered(input.Name, input.BlockName, limit, offset)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
-
+		output.Total = total
 		output.Allocations = make([]*allocationOutput, len(allocations))
 		for i, alloc := range allocations {
 			output.Allocations[i] = &allocationOutput{
@@ -70,7 +130,7 @@ func NewListAllocationsUseCase(s *store.Store) usecase.Interactor {
 	})
 
 	u.SetTitle("List Allocations")
-	u.SetDescription("Lists all IP allocations")
+	u.SetDescription("Lists IP allocations with optional name/block_name filter and pagination (limit, offset)")
 	u.SetExpectedErrors(status.Internal)
 	return u
 }
@@ -105,6 +165,31 @@ func NewUpdateAllocationUseCase(s *store.Store) usecase.Interactor {
 		}
 
 		alloc.Name = input.Name
+
+		// Ensure this allocation's CIDR does not overlap any other allocation in the same block (create and update).
+		allAllocs, err := s.ListAllocations()
+		if err != nil {
+			return status.Wrap(err, status.Internal)
+		}
+		for _, existing := range allAllocs {
+			if existing.Id == input.ID {
+				continue
+			}
+			if !allocationBlockNamesMatch(existing.Block.Name, alloc.Block.Name) {
+				continue
+			}
+			overlap, err := network.Overlaps(alloc.Block.CIDR, existing.Block.CIDR)
+			if err != nil {
+				return status.Wrap(err, status.Internal)
+			}
+			if overlap {
+				return status.Wrap(
+					fmt.Errorf("CIDR %s overlaps with existing allocation %q in block %q", alloc.Block.CIDR, existing.Name, alloc.Block.Name),
+					status.InvalidArgument,
+				)
+			}
+		}
+
 		if err := s.UpdateAllocation(input.ID, alloc); err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -118,7 +203,7 @@ func NewUpdateAllocationUseCase(s *store.Store) usecase.Interactor {
 
 	u.SetTitle("Update Allocation")
 	u.SetDescription("Updates an existing allocation")
-	u.SetExpectedErrors(status.NotFound, status.Internal)
+	u.SetExpectedErrors(status.NotFound, status.InvalidArgument, status.Internal)
 	return u
 }
 

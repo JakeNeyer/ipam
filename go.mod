@@ -8,6 +8,7 @@ require (
 	github.com/swaggest/rest v0.2.75
 	github.com/swaggest/swgui v1.8.5
 	github.com/swaggest/usecase v1.3.1
+	golang.org/x/crypto v0.28.0
 )
 
 require (

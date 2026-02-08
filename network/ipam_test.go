@@ -355,3 +355,73 @@ func TestNextAvailableCIDR(t *testing.T) {
 		})
 	}
 }
+
+func TestNextAvailableCIDRWithAllocations(t *testing.T) {
+	tests := []struct {
+		name          string
+		supernet      string
+		prefixLength  int
+		allocated     []string
+		expectedCIDR  string
+		expectErr     bool
+		expectInSuper bool
+	}{
+		{
+			name:          "fill gap between two allocations",
+			supernet:      "10.0.0.0/16",
+			prefixLength:  24,
+			allocated:     []string{"10.0.0.0/24", "10.0.2.0/24"},
+			expectedCIDR:  "10.0.1.0/24",
+			expectErr:     false,
+			expectInSuper: true,
+		},
+		{
+			name:          "next after last allocation when no gap fits",
+			supernet:      "10.0.0.0/16",
+			prefixLength:  24,
+			allocated:     []string{"10.0.0.0/24", "10.0.1.0/24"},
+			expectedCIDR:  "10.0.2.0/24",
+			expectErr:     false,
+			expectInSuper: true,
+		},
+		{
+			name:          "first /24 when no allocations",
+			supernet:      "10.0.0.0/16",
+			prefixLength:  24,
+			allocated:     nil,
+			expectedCIDR:  "10.0.0.0/24",
+			expectErr:     false,
+			expectInSuper: true,
+		},
+		{
+			name:          "fill gap at start",
+			supernet:      "10.0.0.0/16",
+			prefixLength:  24,
+			allocated:     []string{"10.0.1.0/24", "10.0.2.0/24"},
+			expectedCIDR:  "10.0.0.0/24",
+			expectErr:     false,
+			expectInSuper: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := NextAvailableCIDRWithAllocations(tt.supernet, tt.prefixLength, tt.allocated)
+			if (err != nil) != tt.expectErr {
+				t.Errorf("NextAvailableCIDRWithAllocations error = %v, expectErr %v", err, tt.expectErr)
+				return
+			}
+			if tt.expectErr {
+				return
+			}
+			if result != tt.expectedCIDR {
+				t.Errorf("NextAvailableCIDRWithAllocations = %s, want %s", result, tt.expectedCIDR)
+			}
+			if tt.expectInSuper {
+				contained, _ := Contains(tt.supernet, result)
+				if !contained {
+					t.Errorf("result %s not contained in supernet %s", result, tt.supernet)
+				}
+			}
+		})
+	}
+}

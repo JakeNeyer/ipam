@@ -27,11 +27,12 @@ var (
 
 // Block represents a network block with a CIDR notation.
 type Block struct {
-	ID       uuid.UUID `json:"id"`
-	Name     string    `json:"name"`
-	CIDR     string    `json:"cidr"`
-	Usage    Usage     `json:"usage"`
-	Children []Block   `json:"children,omitempty"`
+	ID            uuid.UUID `json:"id"`
+	Name          string    `json:"name"`
+	CIDR          string    `json:"cidr"`
+	Usage         Usage     `json:"usage"`
+	Children      []Block   `json:"children,omitempty"`
+	EnvironmentID uuid.UUID `json:"environment_id,omitempty"` // uuid.Nil when not assigned
 }
 
 type Usage struct {

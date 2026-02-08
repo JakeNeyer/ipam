@@ -10,19 +10,35 @@ type environmentOutput struct {
 
 type environmentListOutput struct {
 	Environments []*environmentOutput `json:"environments"`
-}
-
-// Block Output Types
-type blockOutput struct {
-	Name      string `json:"name"`
-	CIDR      string `json:"cidr"`
-	TotalIPs  int    `json:"total_ips"`
-	UsedIPs   int    `json:"used_ips"`
-	Available int    `json:"available_ips"`
+	Total        int                  `json:"total"`
 }
 
 type blockListOutput struct {
 	Blocks []*blockOutput `json:"blocks"`
+	Total  int            `json:"total"`
+}
+
+// environmentDetailOutput is used for GET /environments/:id (includes blocks).
+type environmentDetailOutput struct {
+	Id     uuid.UUID      `json:"id"`
+	Name   string         `json:"name"`
+	Blocks []*blockOutput `json:"blocks"`
+}
+
+// Block Output Types
+type blockOutput struct {
+	ID            uuid.UUID `json:"id"`
+	Name          string    `json:"name"`
+	CIDR          string    `json:"cidr"`
+	TotalIPs      int       `json:"total_ips"`
+	UsedIPs       int       `json:"used_ips"`
+	Available     int       `json:"available_ips"`
+	EnvironmentID uuid.UUID `json:"environment_id,omitempty"`
+}
+
+
+type suggestBlockCIDROutput struct {
+	CIDR string `json:"cidr"`
 }
 
 type blockUsageOutput struct {
@@ -44,4 +60,5 @@ type allocationOutput struct {
 
 type allocationListOutput struct {
 	Allocations []*allocationOutput `json:"allocations"`
+	Total       int                 `json:"total"`
 }

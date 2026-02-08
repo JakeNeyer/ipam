@@ -1,6 +1,7 @@
 package server
 
 import (
+	"github.com/JakeNeyer/ipam/server/auth"
 	"github.com/JakeNeyer/ipam/server/handlers"
 	"github.com/JakeNeyer/ipam/store"
 	"github.com/swaggest/openapi-go/openapi31"
@@ -16,8 +17,22 @@ func NewServer(s *store.Store) *web.Service {
 	svc.OpenAPISchema().SetVersion("1.0.0")
 
 	svc.Wrap(
-		gzip.Middleware, // Response compression with support for direct gzip pass through.
+		auth.Middleware(s),
+		gzip.Middleware,
 	)
+
+	// Setup routes (no auth; only when no users exist).
+	svc.Handle("/api/setup/status", handlers.GetSetupStatusHandler(s))
+	svc.Handle("/api/setup", handlers.PostSetupHandler(s))
+
+	// Auth routes (no auth required for login/logout).
+	svc.Handle("/api/auth/login", handlers.LoginHandler(s))
+	svc.Handle("/api/auth/logout", handlers.LogoutHandler(s))
+	svc.Handle("/api/auth/me", handlers.MeHandler())
+	svc.Handle("/api/auth/me/tour-completed", handlers.TourCompletedHandler(s))
+
+	// Admin routes (auth + admin role required).
+	svc.Handle("/api/admin/users", handlers.AdminUsersHandler(s))
 
 	// Environment use case handlers.
 	createEnvUC := handlers.NewCreateEnvironmentUseCase(s)
@@ -28,6 +43,9 @@ func NewServer(s *store.Store) *web.Service {
 
 	getEnvUC := handlers.NewGetEnvironmentUseCase(s)
 	svc.Get("/api/environments/{id}", getEnvUC)
+
+	suggestEnvBlockCIDRUC := handlers.NewSuggestEnvironmentBlockCIDRUseCase(s)
+	svc.Get("/api/environments/{id}/suggest-block-cidr", suggestEnvBlockCIDRUC)
 
 	updateEnvUC := handlers.NewUpdateEnvironmentUseCase(s)
 	svc.Put("/api/environments/{id}", updateEnvUC)
@@ -54,6 +72,9 @@ func NewServer(s *store.Store) *web.Service {
 	getBlockUsageUC := handlers.NewGetBlockUsageUseCase(s)
 	svc.Get("/api/blocks/{id}/usage", getBlockUsageUC)
 
+	suggestBlockCIDRUC := handlers.NewSuggestBlockCIDRUseCase(s)
+	svc.Get("/api/blocks/{id}/suggest-cidr", suggestBlockCIDRUC)
+
 	// Allocation use case handlers.
 	createAllocUC := handlers.NewCreateAllocationUseCase(s)
 	svc.Post("/api/allocations", createAllocUC)
@@ -69,6 +90,8 @@ func NewServer(s *store.Store) *web.Service {
 
 	deleteAllocUC := handlers.NewDeleteAllocationUseCase(s)
 	svc.Delete("/api/allocations/{id}", deleteAllocUC)
+
+	svc.Handle("/api/export/csv", handlers.ExportCSVHandler(s))
 
 	// Swagger UI endpoint at /docs.
 	svc.Docs("/docs", swgui.New)
