@@ -54,3 +54,23 @@ Uses the smallest compute (shared-cpu-1x, 256MB) and Fly Postgres (lowest cost).
    `fly deploy`
 
 The app listens on `PORT` (8080) and serves the API plus the built web UI. Open the app URL and log in (or complete setup if you didn’t set initial admin).
+
+### Update an existing Fly.io deployment
+
+Use these steps whenever you want to roll out the newest version.
+
+1. Pull latest code and verify your branch is up to date:
+   - `git checkout main`
+   - `git pull`
+2. From the repo root, deploy the latest commit:
+   - `fly deploy`
+3. Watch deployment status:
+   - `fly status`
+   - `fly logs`
+4. Verify the running release:
+   - Open your app URL (`fly open`) and confirm UI/API behavior.
+   - Optionally verify the image/release in Fly:
+     - `fly releases`
+5. If the deployment fails, roll back to the previous stable release:
+   - `fly releases`
+   - `fly deploy --image <previous-image-ref>`
