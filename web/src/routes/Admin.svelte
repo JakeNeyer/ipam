@@ -1,17 +1,53 @@
 <script>
   import { onMount } from 'svelte'
+  import Icon from '@iconify/svelte'
   import '../lib/theme.js'
-  import { listUsers, createUser } from '../lib/api.js'
+  import { listUsers, listTokens, deleteToken } from '../lib/api.js'
+  import ApiTokensModal from '../lib/ApiTokensModal.svelte'
+  import AddUserModal from '../lib/AddUserModal.svelte'
 
   let users = []
   let loading = true
   let error = ''
-  let showCreate = false
-  let createEmail = ''
-  let createPassword = ''
-  let createRole = 'user'
-  let createSubmitting = false
-  let createError = ''
+  let showAddUserModal = false
+  let showApiTokensModal = false
+  let tokens = []
+  let tokensLoading = true
+  let tokensError = ''
+  let deletingTokenId = null
+
+  let userSortBy = 'email' // 'email' | 'role'
+  let userSortDir = 'asc'
+  function setUserSort(column) {
+    if (userSortBy === column) userSortDir = userSortDir === 'asc' ? 'desc' : 'asc'
+    else { userSortBy = column; userSortDir = 'asc' }
+  }
+  $: sortedUsers = (() => {
+    const list = [...users]
+    const mult = userSortDir === 'asc' ? 1 : -1
+    if (userSortBy === 'email') list.sort((a, b) => mult * (a.email || '').localeCompare(b.email || '', undefined, { sensitivity: 'base' }))
+    else if (userSortBy === 'role') list.sort((a, b) => mult * (a.role || '').localeCompare(b.role || '', undefined, { sensitivity: 'base' }))
+    return list
+  })()
+
+  let tokenSortBy = 'name' // 'name' | 'created' | 'expires'
+  let tokenSortDir = 'asc'
+  function setTokenSort(column) {
+    if (tokenSortBy === column) tokenSortDir = tokenSortDir === 'asc' ? 'desc' : 'asc'
+    else { tokenSortBy = column; tokenSortDir = 'asc' }
+  }
+  $: sortedTokens = (() => {
+    const list = [...tokens]
+    const mult = tokenSortDir === 'asc' ? 1 : -1
+    if (tokenSortBy === 'name') list.sort((a, b) => mult * (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }))
+    else if (tokenSortBy === 'created') list.sort((a, b) => mult * (new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()))
+    else if (tokenSortBy === 'expires') list.sort((a, b) => {
+      const da = a.expires_at ? new Date(a.expires_at).getTime() : Number.MAX_SAFE_INTEGER
+      const db = b.expires_at ? new Date(b.expires_at).getTime() : Number.MAX_SAFE_INTEGER
+      return mult * (da - db)
+    })
+    return list
+  })()
 
   async function load() {
     loading = true
@@ -26,74 +62,84 @@
     }
   }
 
-  async function handleCreate(e) {
-    e.preventDefault()
-    createError = ''
-    if (!createEmail.trim() || !createPassword) {
-      createError = 'Email and password are required.'
-      return
-    }
-    createSubmitting = true
+  async function loadTokens() {
+    tokensLoading = true
+    tokensError = ''
     try {
-      await createUser(createEmail.trim(), createPassword, createRole)
-      createEmail = ''
-      createPassword = ''
-      createRole = 'user'
-      showCreate = false
-      await load()
+      const res = await listTokens()
+      tokens = res.tokens || []
     } catch (e) {
-      createError = e.message || 'Failed to create user'
+      tokensError = e?.message || 'Failed to load tokens'
+      tokens = []
     } finally {
-      createSubmitting = false
+      tokensLoading = false
+    }
+  }
+
+  async function handleDeleteToken(id) {
+    if (!id) return
+    deletingTokenId = id
+    try {
+      await deleteToken(id)
+      await loadTokens()
+    } catch (e) {
+      tokensError = e?.message || 'Failed to delete token'
+    } finally {
+      deletingTokenId = null
+    }
+  }
+
+  function formatTokenDate(iso) {
+    if (!iso) return ''
+    try {
+      return new Date(iso).toLocaleDateString(undefined, { dateStyle: 'short' })
+    } catch {
+      return iso
+    }
+  }
+
+  function formatExpiry(expiresAt) {
+    if (expiresAt == null || expiresAt === '') return 'Never'
+    try {
+      const d = new Date(expiresAt)
+      if (isNaN(d.getTime())) return expiresAt
+      if (d < new Date()) return 'Expired'
+      return d.toLocaleDateString(undefined, { dateStyle: 'short' })
+    } catch {
+      return expiresAt
+    }
+  }
+
+  function isExpired(expiresAt) {
+    if (expiresAt == null || expiresAt === '') return false
+    try {
+      return new Date(expiresAt) < new Date()
+    } catch {
+      return false
     }
   }
 
   onMount(() => {
     load()
+    loadTokens()
   })
 </script>
 
 <div class="admin-page">
-  <header class="admin-header">
-    <h1 class="admin-title">Admin</h1>
-    <button type="button" class="btn btn-primary" on:click={() => (showCreate = !showCreate)}>
-      {showCreate ? 'Cancel' : 'Add user'}
-    </button>
+  <header class="page-header">
+    <h1 class="page-title">Admin</h1>
   </header>
 
-  {#if showCreate}
-    <div class="admin-card">
-      <h2 class="admin-card-title">New user</h2>
-      <form class="admin-form" on:submit={handleCreate}>
-        {#if createError}
-          <div class="admin-error" role="alert">{createError}</div>
-        {/if}
-        <label class="admin-label">
-          <span>Email</span>
-          <input type="email" bind:value={createEmail} placeholder="user@example.com" disabled={createSubmitting} />
-        </label>
-        <label class="admin-label">
-          <span>Password</span>
-          <input type="password" bind:value={createPassword} placeholder="Password" disabled={createSubmitting} />
-        </label>
-        <label class="admin-label">
-          <span>Role</span>
-          <select bind:value={createRole} disabled={createSubmitting}>
-            <option value="user">User</option>
-            <option value="admin">Admin</option>
-          </select>
-        </label>
-        <div class="admin-form-actions">
-          <button type="submit" class="btn btn-primary" disabled={createSubmitting}>
-            {createSubmitting ? 'Creating…' : 'Create'}
-          </button>
-        </div>
-      </form>
-    </div>
-  {/if}
+  <AddUserModal open={showAddUserModal} on:close={() => (showAddUserModal = false)} on:created={load} />
+  <ApiTokensModal open={showApiTokensModal} on:close={() => { showApiTokensModal = false; loadTokens() }} />
 
   <div class="admin-card">
-    <h2 class="admin-card-title">Users</h2>
+    <div class="admin-card-header">
+      <h2 class="admin-card-title">Users</h2>
+      <button type="button" class="btn btn-primary btn-small" on:click={() => (showAddUserModal = true)}>
+        Add user
+      </button>
+    </div>
     {#if loading}
       <p class="admin-muted">Loading…</p>
     {:else if error}
@@ -105,15 +151,99 @@
         <table class="table">
           <thead>
             <tr>
-              <th>Email</th>
-              <th>Role</th>
+              <th class="sortable" class:sorted={userSortBy === 'email'}>
+                <button type="button" class="th-sort" on:click={() => setUserSort('email')}>
+                  <span class="th-sort-label">Email</span>
+                  {#if userSortBy === 'email'}
+                    <span class="sort-icon" aria-hidden="true"><Icon icon={userSortDir === 'asc' ? 'lucide:chevron-up' : 'lucide:chevron-down'} width="0.875em" height="0.875em" /></span>
+                  {/if}
+                </button>
+              </th>
+              <th class="sortable" class:sorted={userSortBy === 'role'}>
+                <button type="button" class="th-sort" on:click={() => setUserSort('role')}>
+                  <span class="th-sort-label">Role</span>
+                  {#if userSortBy === 'role'}
+                    <span class="sort-icon" aria-hidden="true"><Icon icon={userSortDir === 'asc' ? 'lucide:chevron-up' : 'lucide:chevron-down'} width="0.875em" height="0.875em" /></span>
+                  {/if}
+                </button>
+              </th>
             </tr>
           </thead>
           <tbody>
-            {#each users as u}
+            {#each sortedUsers as u}
               <tr>
                 <td class="name">{u.email}</td>
                 <td><span class="role-badge" class:admin={u.role === 'admin'}>{u.role}</span></td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
+  </div>
+
+  <div class="admin-card">
+    <div class="admin-card-header">
+      <h2 class="admin-card-title">API tokens</h2>
+      <button type="button" class="btn btn-primary btn-small" on:click={() => (showApiTokensModal = true)}>
+        Add token
+      </button>
+    </div>
+    {#if tokensLoading}
+      <p class="admin-muted">Loading…</p>
+    {:else if tokensError}
+      <p class="admin-error">{tokensError}</p>
+    {:else if tokens.length === 0}
+      <p class="admin-muted">No tokens yet.</p>
+    {:else}
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th class="sortable" class:sorted={tokenSortBy === 'name'}>
+                <button type="button" class="th-sort" on:click={() => setTokenSort('name')}>
+                  <span class="th-sort-label">Name</span>
+                  {#if tokenSortBy === 'name'}
+                    <span class="sort-icon" aria-hidden="true"><Icon icon={tokenSortDir === 'asc' ? 'lucide:chevron-up' : 'lucide:chevron-down'} width="0.875em" height="0.875em" /></span>
+                  {/if}
+                </button>
+              </th>
+              <th class="sortable" class:sorted={tokenSortBy === 'created'}>
+                <button type="button" class="th-sort" on:click={() => setTokenSort('created')}>
+                  <span class="th-sort-label">Created</span>
+                  {#if tokenSortBy === 'created'}
+                    <span class="sort-icon" aria-hidden="true"><Icon icon={tokenSortDir === 'asc' ? 'lucide:chevron-up' : 'lucide:chevron-down'} width="0.875em" height="0.875em" /></span>
+                  {/if}
+                </button>
+              </th>
+              <th class="sortable" class:sorted={tokenSortBy === 'expires'}>
+                <button type="button" class="th-sort" on:click={() => setTokenSort('expires')}>
+                  <span class="th-sort-label">Expires</span>
+                  {#if tokenSortBy === 'expires'}
+                    <span class="sort-icon" aria-hidden="true"><Icon icon={tokenSortDir === 'asc' ? 'lucide:chevron-up' : 'lucide:chevron-down'} width="0.875em" height="0.875em" /></span>
+                  {/if}
+                </button>
+              </th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each sortedTokens as t (t.id)}
+              <tr class:expired={isExpired(t.expires_at)}>
+                <td class="name">{t.name}</td>
+                <td>{formatTokenDate(t.created_at)}</td>
+                <td class="expires">{formatExpiry(t.expires_at)}</td>
+                <td class="table-actions">
+                  <button
+                    type="button"
+                    class="btn btn-danger btn-small"
+                    disabled={deletingTokenId === t.id}
+                    on:click={() => handleDeleteToken(t.id)}
+                    title="Delete token"
+                  >
+                    {deletingTokenId === t.id ? 'Deleting…' : 'Delete'}
+                  </button>
+                </td>
               </tr>
             {/each}
           </tbody>
@@ -127,17 +257,6 @@
   .admin-page {
     padding: 0;
   }
-  .admin-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 1.5rem;
-  }
-  .admin-title {
-    margin: 0;
-    font-size: 1.5rem;
-    font-weight: 600;
-  }
   .admin-card {
     margin-bottom: 1.5rem;
     padding: 1.25rem;
@@ -145,35 +264,27 @@
     border: 1px solid var(--border);
     border-radius: var(--radius);
   }
+  .admin-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+  }
   .admin-card-title {
-    margin: 0 0 1rem 0;
+    margin: 0;
     font-size: 1.1rem;
     font-weight: 600;
   }
-  .admin-form {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    max-width: 20rem;
+  .admin-card > .admin-card-title {
+    margin-bottom: 1rem;
   }
-  .admin-label {
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-    font-size: 0.9rem;
+  .table-actions {
+    text-align: right;
+    white-space: nowrap;
+  }
+  tr.expired .name,
+  tr.expired .expires {
     color: var(--text-muted);
-  }
-  .admin-label input,
-  .admin-label select {
-    padding: 0.5rem 0.75rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--bg);
-    color: var(--text);
-    font-size: 0.95rem;
-  }
-  .admin-form-actions {
-    margin-top: 0.25rem;
   }
   .admin-error {
     padding: 0.5rem 0;
@@ -222,9 +333,53 @@
     background: var(--table-header-bg);
     border-bottom: 1px solid var(--border);
   }
+  .table th.sortable {
+    padding: 0;
+  }
+  .table th .th-sort {
+    display: inline-flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.35rem;
+    width: 100%;
+    min-width: 0;
+    padding: 0.75rem 1rem;
+    text-align: left;
+    font-size: inherit;
+    font-weight: inherit;
+    text-transform: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+    transition: color 0.15s, background 0.15s;
+  }
+  .table th .th-sort:hover {
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.04);
+  }
+  .table th.sortable.sorted .th-sort {
+    color: var(--accent);
+  }
+  .table th .th-sort-label {
+    flex-shrink: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .table th .sort-icon {
+    flex-shrink: 0;
+    flex-grow: 0;
+    font-size: 0.65rem;
+  }
   .table td {
     padding: 0.75rem 1rem;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--table-row-border);
     color: var(--text);
   }
   .table tbody tr:last-child td {
@@ -235,8 +390,5 @@
   }
   .table td.name {
     font-weight: 500;
-  }
-  :global(.btn) {
-    font-family: var(--font-sans);
   }
 </style>

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/JakeNeyer/ipam/store"
 	"github.com/google/uuid"
@@ -10,6 +11,7 @@ import (
 type contextKey string
 
 const userContextKey contextKey = "user"
+const requestContextKey contextKey = "request"
 
 // WithUser returns a context with the user attached.
 func WithUser(ctx context.Context, user *store.User) context.Context {
@@ -29,4 +31,15 @@ func UserIDFromContext(ctx context.Context) uuid.UUID {
 		return uuid.Nil
 	}
 	return u.ID
+}
+
+// WithRequest returns a context with the request attached (for use cases that need cookies etc.).
+func WithRequest(ctx context.Context, r *http.Request) context.Context {
+	return context.WithValue(ctx, requestContextKey, r)
+}
+
+// RequestFromContext returns the request from the context, or nil if not set.
+func RequestFromContext(ctx context.Context) *http.Request {
+	r, _ := ctx.Value(requestContextKey).(*http.Request)
+	return r
 }

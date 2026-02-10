@@ -65,4 +65,16 @@
     border-radius: var(--radius);
     border: 1px solid var(--border);
   }
+  .docs-viewer :global(.screenshot-light) {
+    display: block;
+  }
+  .docs-viewer :global(.screenshot-dark) {
+    display: none;
+  }
+  :global(html.dark) .docs-viewer :global(.screenshot-light) {
+    display: none;
+  }
+  :global(html.dark) .docs-viewer :global(.screenshot-dark) {
+    display: block;
+  }
 </style>

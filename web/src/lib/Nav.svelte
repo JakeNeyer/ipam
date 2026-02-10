@@ -1,5 +1,6 @@
 <script>
   import { createEventDispatcher } from 'svelte'
+  import Icon from '@iconify/svelte'
   import { theme } from './theme.js'
   export let current = 'dashboard'
   export let currentUser = null
@@ -23,18 +24,15 @@
     } catch (_) {}
   }
 
-  function toggleTheme() {
-    theme.set($theme === 'dark' ? 'light' : 'dark')
-  }
-
   function closeSettings(e) {
     if (settingsOpen && e.target && !e.target.closest('.settings-area')) settingsOpen = false
   }
 
   const links = [
-    { id: 'dashboard', label: 'Dashboard', icon: '⊞' },
-    { id: 'environments', label: 'Environments', icon: '☰' },
-    { id: 'networks', label: 'Networks', icon: '◉' },
+    { id: 'dashboard', label: 'Dashboard', icon: 'lucide:layout-dashboard' },
+    { id: 'environments', label: 'Environments', icon: 'lucide:layers' },
+    { id: 'networks', label: 'Networks', icon: 'lucide:network' },
+    { id: 'subnet-calculator', label: 'Subnet calculator', icon: 'lucide:calculator' },
   ]
 
   let hoveredLabel = null
@@ -45,7 +43,7 @@
 <nav class="nav" class:collapsed>
   {#if !collapsed}
     <div class="brand">
-      <span class="logo">IPAM</span>
+      <img src={$theme === 'light' ? '/images/logo-light.svg' : '/images/logo.svg'} alt="IPAM" class="logo" />
     </div>
   {/if}
   <ul class="links">
@@ -61,7 +59,7 @@
           title={collapsed ? link.label : ''}
           aria-label={link.label}
         >
-          <span class="icon">{link.icon}</span>
+          <span class="icon"><Icon icon={link.icon} width="1.25em" height="1.25em" /></span>
           {#if !collapsed}
             <span class="label">{link.label}</span>
           {:else if hoveredLabel === link.label}
@@ -74,6 +72,24 @@
       <li>
         <button
           class="link"
+          class:active={current === 'reserved-blocks'}
+          on:click={() => dispatch('nav', 'reserved-blocks')}
+          on:mouseenter={() => (hoveredLabel = collapsed ? 'Reserved blocks' : null)}
+          on:mouseleave={() => (hoveredLabel = null)}
+          title={collapsed ? 'Reserved blocks' : ''}
+          aria-label="Reserved blocks"
+        >
+          <span class="icon"><Icon icon="lucide:ban" width="1.25em" height="1.25em" /></span>
+          {#if !collapsed}
+            <span class="label">Reserved blocks</span>
+          {:else if hoveredLabel === 'Reserved blocks'}
+            <span class="nav-tooltip" role="tooltip">Reserved blocks</span>
+          {/if}
+        </button>
+      </li>
+      <li>
+        <button
+          class="link"
           class:active={current === 'admin'}
           data-tour="tour-nav-admin"
           on:click={() => dispatch('nav', 'admin')}
@@ -82,7 +98,7 @@
           title={collapsed ? 'Admin' : ''}
           aria-label="Admin"
         >
-          <span class="icon">🛡</span>
+          <span class="icon"><Icon icon="lucide:shield" width="1.25em" height="1.25em" /></span>
           {#if !collapsed}
             <span class="label">Admin</span>
           {:else if hoveredLabel === 'Admin'}
@@ -100,7 +116,7 @@
       title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
       aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
     >
-      <span class="collapse-icon" aria-hidden="true">{collapsed ? '›' : '‹'}</span>
+      <span class="collapse-icon" aria-hidden="true"><Icon icon={collapsed ? 'lucide:chevron-right' : 'lucide:chevron-left'} width="1em" height="1em" /></span>
       {#if !collapsed}
         <span class="collapse-label">Collapse</span>
       {/if}
@@ -116,7 +132,7 @@
         aria-expanded={settingsOpen}
         aria-haspopup="true"
       >
-        <span class="settings-icon" aria-hidden="true">⚙</span>
+        <span class="settings-icon" aria-hidden="true"><Icon icon="lucide:settings" width="1.25em" height="1.25em" /></span>
         {#if !collapsed}
           <span class="settings-label">Settings</span>
         {/if}
@@ -143,21 +159,9 @@
             type="button"
             class="settings-item"
             role="menuitem"
-            on:click={toggleTheme}
-          >
-            {#if $theme === 'dark'}
-              ☀ Light mode
-            {:else}
-              ☽ Dark mode
-            {/if}
-          </button>
-          <button
-            type="button"
-            class="settings-item"
-            role="menuitem"
             on:click={() => { dispatch('logout'); settingsOpen = false }}
           >
-            Sign out
+            <Icon icon="lucide:log-out" width="1em" height="1em" /> Sign out
           </button>
         </div>
       {/if}
@@ -193,12 +197,10 @@
     border-bottom: 1px solid var(--border);
   }
   .logo {
-    font-weight: 600;
-    font-size: 1.1rem;
-    letter-spacing: -0.02em;
-    color: var(--text);
-    white-space: nowrap;
-    overflow: hidden;
+    display: block;
+    height: 3.25rem;
+    width: auto;
+    object-fit: contain;
   }
   .links {
     display: flex;
@@ -259,8 +261,13 @@
     background: var(--accent-dim);
   }
   .icon {
-    font-size: 0.7rem;
-    opacity: 0.85;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.9;
+    flex-shrink: 0;
+  }
+  .icon :global(svg) {
     flex-shrink: 0;
   }
   .label {
@@ -302,7 +309,9 @@
     background: var(--accent-dim);
   }
   .collapse-icon {
-    font-size: 1rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     line-height: 1;
     flex-shrink: 0;
   }
@@ -340,8 +349,9 @@
     background: var(--accent-dim);
   }
   .settings-icon {
-    font-size: 1rem;
-    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     flex-shrink: 0;
   }
   .settings-label {

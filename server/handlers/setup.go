@@ -1,89 +1,97 @@
 package handlers
 
 import (
-	"encoding/json"
-	"net/http"
+	"context"
+	"errors"
 
-	"github.com/JakeNeyer/ipam/server/auth"
+	"github.com/JakeNeyer/ipam/internal/logger"
 	"github.com/JakeNeyer/ipam/store"
+	"github.com/swaggest/usecase"
+	"github.com/swaggest/usecase/status"
 	"golang.org/x/crypto/bcrypt"
 )
 
-// SetupStatusResponse is the response for GET /api/setup/status.
-type SetupStatusResponse struct {
+// getSetupStatusOutput is the response for GET /api/setup/status.
+type getSetupStatusOutput struct {
 	SetupRequired bool `json:"setup_required"`
 }
 
-// SetupRequest is the body for POST /api/setup.
-type SetupRequest struct {
+// NewGetSetupStatusUseCase returns a use case for GET /api/setup/status.
+func NewGetSetupStatusUseCase(s store.Storer) usecase.Interactor {
+	u := usecase.NewInteractor(func(ctx context.Context, input struct{}, output *getSetupStatusOutput) error {
+		users, err := s.ListUsers()
+		if err != nil {
+			logger.Error(logger.MsgSetupStatusFailed, logger.KeyOperation, "get_setup_status", logger.ErrAttr(err))
+			// Return 4xx so frontend gets a message; 500 hid the real error (e.g. DB not ready)
+			return status.Wrap(errors.New("setup check failed"), status.InvalidArgument)
+		}
+		output.SetupRequired = len(users) == 0
+		logger.Info("setup status", logger.KeyOperation, "get_setup_status", logger.KeySetupRequired, output.SetupRequired)
+		return nil
+	})
+	u.SetTitle("Get setup status")
+	u.SetDescription("Returns whether initial setup is required (no users exist)")
+	u.SetExpectedErrors(status.InvalidArgument)
+	return u
+}
+
+// postSetupInput is the body for POST /api/setup.
+type postSetupInput struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
 }
 
-// GetSetupStatusHandler returns a handler for GET /api/setup/status.
-// Returns setup_required: true when no users exist.
-func GetSetupStatusHandler(s *store.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		users, err := s.ListUsers()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(SetupStatusResponse{
-			SetupRequired: len(users) == 0,
-		})
-	}
+// postSetupOutput is the response for POST /api/setup.
+type postSetupOutput struct {
+	User UserResponse `json:"user"`
 }
 
-// PostSetupHandler returns a handler for POST /api/setup.
-// Creates the first admin user only when no users exist.
-func PostSetupHandler(s *store.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
+// NewPostSetupUseCase returns a use case for POST /api/setup. Creates the first admin only when no users exist.
+func NewPostSetupUseCase(s store.Storer) usecase.Interactor {
+	u := usecase.NewInteractor(func(ctx context.Context, input postSetupInput, output *postSetupOutput) error {
+		logger.Info("setup request", logger.KeyOperation, "post_setup", logger.KeyEmail, input.Email)
 		users, err := s.ListUsers()
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			logger.Error(logger.MsgSetupStatusFailed, logger.KeyOperation, "post_setup", logger.ErrAttr(err))
+			return status.Wrap(errors.New("setup check failed, please try again"), status.InvalidArgument)
 		}
 		if len(users) > 0 {
-			auth.WriteJSONError(w, "setup already completed", http.StatusForbidden)
-			return
+			logger.Info(logger.MsgSetupAlreadyDone, logger.KeyOperation, "post_setup")
+			return status.Wrap(errors.New("setup already completed"), status.PermissionDenied)
 		}
-		var req SetupRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid request body", http.StatusBadRequest)
-			return
+		if input.Email == "" || input.Password == "" {
+			logger.Info(logger.MsgSetupMissingCreds, logger.KeyOperation, "post_setup")
+			return status.Wrap(errors.New("email and password required"), status.InvalidArgument)
 		}
-		if req.Email == "" || req.Password == "" {
-			http.Error(w, "email and password required", http.StatusBadRequest)
-			return
-		}
-		hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
 		if err != nil {
-			http.Error(w, "failed to hash password", http.StatusInternalServerError)
-			return
+			logger.Error(logger.MsgSetupPasswordFailed, logger.KeyOperation, "post_setup", logger.ErrAttr(err))
+			return status.Wrap(errors.New("password setup failed, please try again"), status.InvalidArgument)
 		}
 		admin := &store.User{
-			Email:        req.Email,
+			Email:        input.Email,
 			PasswordHash: string(hash),
 			Role:         store.RoleAdmin,
 		}
 		if err := s.CreateUser(admin); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			logger.Error(logger.MsgSetupCreateUserFailed, logger.KeyOperation, "post_setup", logger.ErrAttr(err))
+			msg := err.Error()
+			if msg == "" {
+				msg = logger.MsgSetupCreateUserFailed
+			}
+			return status.Wrap(errors.New(msg), status.InvalidArgument)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(map[string]UserResponse{
-			"user": {ID: admin.ID.String(), Email: admin.Email, Role: admin.Role, TourCompleted: admin.TourCompleted},
-		})
-	}
+		logger.Info("setup success", logger.KeyOperation, "post_setup", logger.KeyUserID, admin.ID.String(), logger.KeyEmail, admin.Email)
+		output.User = UserResponse{
+			ID:            admin.ID.String(),
+			Email:         admin.Email,
+			Role:          admin.Role,
+			TourCompleted: admin.TourCompleted,
+		}
+		return nil
+	})
+	u.SetTitle("Post setup")
+	u.SetDescription("Creates the first admin user. Only succeeds when no users exist.")
+	u.SetExpectedErrors(status.PermissionDenied, status.InvalidArgument, status.Internal)
+	return u
 }

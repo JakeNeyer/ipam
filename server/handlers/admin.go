@@ -17,7 +17,7 @@ type CreateUserRequest struct {
 }
 
 // AdminUsersHandler handles GET (list) and POST (create) /api/admin/users. Admin only.
-func AdminUsersHandler(s *store.Store) http.HandlerFunc {
+func AdminUsersHandler(s store.Storer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user := auth.UserFromContext(r.Context())
 		if user == nil || user.Role != store.RoleAdmin {
@@ -35,7 +35,7 @@ func AdminUsersHandler(s *store.Store) http.HandlerFunc {
 	}
 }
 
-func listUsers(s *store.Store, w http.ResponseWriter) {
+func listUsers(s store.Storer, w http.ResponseWriter) {
 	users, err := s.ListUsers()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -49,7 +49,7 @@ func listUsers(s *store.Store, w http.ResponseWriter) {
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"users": out})
 }
 
-func createUser(s *store.Store, w http.ResponseWriter, r *http.Request) {
+func createUser(s store.Storer, w http.ResponseWriter, r *http.Request) {
 	var req CreateUserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)

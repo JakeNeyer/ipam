@@ -2,12 +2,19 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/csv"
+	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"strconv"
 
 	"github.com/JakeNeyer/ipam/store"
+	"github.com/swaggest/rest"
+	"github.com/swaggest/rest/nethttp"
+	"github.com/swaggest/usecase"
+	"github.com/swaggest/usecase/status"
 )
 
 // cidrStartEnd returns the first and last IP of a CIDR as strings, or "", "" if invalid.
@@ -26,23 +33,21 @@ func cidrStartEnd(cidr string) (start, end string) {
 	return first.String(), last.String()
 }
 
-// ExportCSVHandler returns an http.HandlerFunc that writes network blocks as CSV.
-func ExportCSVHandler(s *store.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
+// exportCSVOutput is the output for GET /api/export/csv. Body is written as text/csv by the CSV response encoder.
+type exportCSVOutput struct {
+	Body []byte
+}
 
+// NewExportCSVUseCase returns a use case for GET /api/export/csv.
+func NewExportCSVUseCase(s store.Storer) usecase.Interactor {
+	u := usecase.NewInteractor(func(ctx context.Context, input struct{}, output *exportCSVOutput) error {
 		envs, err := s.ListEnvironments()
 		if err != nil {
-			http.Error(w, "failed to list environments", http.StatusInternalServerError)
-			return
+			return status.Wrap(err, status.Internal)
 		}
 		blocks, err := s.ListBlocks()
 		if err != nil {
-			http.Error(w, "failed to list blocks", http.StatusInternalServerError)
-			return
+			return status.Wrap(err, status.Internal)
 		}
 
 		envByID := make(map[string]string)
@@ -53,8 +58,7 @@ func ExportCSVHandler(s *store.Store) http.HandlerFunc {
 		var buf bytes.Buffer
 		wr := csv.NewWriter(&buf)
 		if err := wr.Write([]string{"name", "cidr", "cidr_start", "cidr_end", "environment_name", "total_ips", "used_ips", "available_ips"}); err != nil {
-			http.Error(w, "failed to write CSV", http.StatusInternalServerError)
-			return
+			return status.Wrap(err, status.Internal)
 		}
 
 		for _, b := range blocks {
@@ -79,12 +83,45 @@ func ExportCSVHandler(s *store.Store) http.HandlerFunc {
 
 		wr.Flush()
 		if wr.Error() != nil {
-			http.Error(w, "failed to write CSV", http.StatusInternalServerError)
-			return
+			return status.Wrap(errors.New("failed to write CSV"), status.Internal)
 		}
 
-		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-		w.Header().Set("Content-Disposition", `attachment; filename="ipam-export.csv"`)
-		_, _ = w.Write(buf.Bytes())
+		output.Body = buf.Bytes()
+		return nil
+	})
+	u.SetTitle("Export CSV")
+	u.SetDescription("Exports all blocks as CSV")
+	u.SetExpectedErrors(status.Internal)
+	return u
+}
+
+// csvResponseEncoder writes exportCSVOutput as text/csv.
+type csvResponseEncoder struct{}
+
+// NewCSVResponseEncoder returns a ResponseEncoder that writes exportCSVOutput.Body as text/csv.
+func NewCSVResponseEncoder() nethttp.ResponseEncoder {
+	return &csvResponseEncoder{}
+}
+
+func (e *csvResponseEncoder) WriteErrResponse(w http.ResponseWriter, _ *http.Request, statusCode int, response interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	_ = json.NewEncoder(w).Encode(response)
+}
+
+func (e *csvResponseEncoder) WriteSuccessfulResponse(w http.ResponseWriter, _ *http.Request, output interface{}, _ rest.HandlerTrait) {
+	out, ok := output.(*exportCSVOutput)
+	if !ok || out == nil {
+		return
 	}
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="ipam-export.csv"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(out.Body)
+}
+
+func (e *csvResponseEncoder) SetupOutput(output interface{}, _ *rest.HandlerTrait) {}
+
+func (e *csvResponseEncoder) MakeOutput(w http.ResponseWriter, _ rest.HandlerTrait) interface{} {
+	return &exportCSVOutput{}
 }

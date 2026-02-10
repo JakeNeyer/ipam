@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { createEventDispatcher } from 'svelte'
+  import Icon from '@iconify/svelte'
 
   const dispatch = createEventDispatcher()
 
@@ -127,7 +128,7 @@
     aria-labelledby="searchable-select-label"
   >
     <span class="searchable-select-value">{open ? '' : (selectedLabel || placeholder)}</span>
-    <span class="searchable-select-chevron" aria-hidden="true">{open ? '▲' : '▼'}</span>
+    <span class="searchable-select-chevron" aria-hidden="true"><Icon icon={open ? 'lucide:chevron-up' : 'lucide:chevron-down'} width="1em" height="1em" /></span>
   </button>
   {#if open}
     <div
@@ -188,6 +189,9 @@
     cursor: pointer;
     text-align: left;
     transition: border-color 0.15s;
+  }
+  :global(.dark) .searchable-select-trigger {
+    background: var(--bg);
   }
   .searchable-select-trigger:hover:not(:disabled) {
     border-color: var(--text-muted);

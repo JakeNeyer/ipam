@@ -20,7 +20,7 @@ import (
 // }
 
 // CreateEnvironment handler
-func NewCreateEnvironmentUseCase(s *store.Store) usecase.Interactor {
+func NewCreateEnvironmentUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input createEnvironmentInput, output *environmentOutput) error {
 		if input.Name == "" {
 			return status.Wrap(errors.New("name is required"), status.InvalidArgument)
@@ -69,7 +69,7 @@ func NewCreateEnvironmentUseCase(s *store.Store) usecase.Interactor {
 }
 
 // ListEnvironments handler
-func NewListEnvironmentsUseCase(s *store.Store) usecase.Interactor {
+func NewListEnvironmentsUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input listEnvironmentsInput, output *environmentListOutput) error {
 		limit, offset := input.Limit, input.Offset
 		if limit <= 0 {
@@ -103,7 +103,7 @@ func NewListEnvironmentsUseCase(s *store.Store) usecase.Interactor {
 }
 
 // GetEnvironment handler returns the environment with its blocks.
-func NewGetEnvironmentUseCase(s *store.Store) usecase.Interactor {
+func NewGetEnvironmentUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input getEnvironmentInput, output *environmentDetailOutput) error {
 		env, err := s.GetEnvironment(input.ID)
 		if err != nil {
@@ -144,7 +144,7 @@ func NewGetEnvironmentUseCase(s *store.Store) usecase.Interactor {
 }
 
 // UpdateEnvironment handler
-func NewUpdateEnvironmentUseCase(s *store.Store) usecase.Interactor {
+func NewUpdateEnvironmentUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input updateEnvironmentInput, output *environmentOutput) error {
 		env, err := s.GetEnvironment(input.ID)
 		if err != nil {
@@ -168,7 +168,7 @@ func NewUpdateEnvironmentUseCase(s *store.Store) usecase.Interactor {
 }
 
 // DeleteEnvironment handler
-func NewDeleteEnvironmentUseCase(s *store.Store) usecase.Interactor {
+func NewDeleteEnvironmentUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input getEnvironmentInput, output *struct{}) error {
 		if err := s.DeleteEnvironment(input.ID); err != nil {
 			return status.Wrap(errors.New("environment not found"), status.NotFound)
@@ -187,7 +187,7 @@ func NewDeleteEnvironmentUseCase(s *store.Store) usecase.Interactor {
 const defaultBlockSupernet = "10.0.0.0/8"
 
 // SuggestEnvironmentBlockCIDR handler
-func NewSuggestEnvironmentBlockCIDRUseCase(s *store.Store) usecase.Interactor {
+func NewSuggestEnvironmentBlockCIDRUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input suggestEnvironmentBlockCIDRInput, output *suggestBlockCIDROutput) error {
 		if input.Prefix < 9 || input.Prefix > 32 {
 			return status.Wrap(errors.New("prefix must be between 9 and 32"), status.InvalidArgument)
@@ -203,6 +203,24 @@ func NewSuggestEnvironmentBlockCIDRUseCase(s *store.Store) usecase.Interactor {
 		for _, b := range blocks {
 			if b.CIDR != "" {
 				existingCIDRs = append(existingCIDRs, b.CIDR)
+			}
+		}
+		// Exclude reserved ranges that overlap the supernet (contained in supernet, or reserve contains/overlaps supernet)
+		reserved, err := s.ListReservedBlocks()
+		if err != nil {
+			return status.Wrap(err, status.Internal)
+		}
+		for _, r := range reserved {
+			overlap, _ := network.Overlaps(defaultBlockSupernet, r.CIDR)
+			if !overlap {
+				continue
+			}
+			contained, _ := network.Contains(defaultBlockSupernet, r.CIDR)
+			if contained {
+				existingCIDRs = append(existingCIDRs, r.CIDR)
+			} else {
+				// Reserved contains or partially overlaps supernet; no suggestion possible in that range
+				existingCIDRs = append(existingCIDRs, defaultBlockSupernet)
 			}
 		}
 		cidr, err := network.NextAvailableCIDRWithAllocations(defaultBlockSupernet, input.Prefix, existingCIDRs)

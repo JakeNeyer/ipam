@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -12,42 +14,63 @@ import (
 
 const (
 	SessionCookieName = "ipam_session"
-	SessionDuration   = 24 * time.Hour
+	SessionDuration  = 24 * time.Hour
 )
 
-// Middleware returns a middleware that requires a valid session for /api/* except login and logout.
-func Middleware(s *store.Store) func(http.Handler) http.Handler {
+// Middleware returns a middleware that requires a valid session or API key for /api/* except login and logout.
+func Middleware(s store.Storer) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			path := r.URL.Path
 			if path == "/api/auth/login" || path == "/api/auth/logout" ||
 				path == "/api/setup/status" || path == "/api/setup" {
-				next.ServeHTTP(w, r)
+				ctx := WithRequest(r.Context(), r)
+				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
 			if !strings.HasPrefix(path, "/api/") {
 				next.ServeHTTP(w, r)
 				return
 			}
-			cookie, err := r.Cookie(SessionCookieName)
-			if err != nil || cookie == nil || cookie.Value == "" {
+
+			var user *store.User
+
+			// Try session cookie first
+			if cookie, err := r.Cookie(SessionCookieName); err == nil && cookie != nil && cookie.Value != "" {
+				if sess, err := s.GetSession(cookie.Value); err == nil {
+					if u, err := s.GetUser(sess.UserID); err == nil {
+						user = u
+					}
+				}
+			}
+
+			// If no session, try Bearer token (API key)
+			if user == nil {
+				if bearer := r.Header.Get("Authorization"); strings.HasPrefix(bearer, "Bearer ") {
+					rawToken := strings.TrimSpace(strings.TrimPrefix(bearer, "Bearer "))
+					if rawToken != "" {
+						keyHash := hashToken(rawToken)
+						if u, err := s.GetUserByTokenHash(keyHash); err == nil {
+							user = u
+						}
+					}
+				}
+			}
+
+			if user == nil {
 				WriteJSONError(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
-			sess, err := s.GetSession(cookie.Value)
-			if err != nil {
-				WriteJSONError(w, "unauthorized", http.StatusUnauthorized)
-				return
-			}
-			user, err := s.GetUser(sess.UserID)
-			if err != nil {
-				WriteJSONError(w, "unauthorized", http.StatusUnauthorized)
-				return
-			}
-			ctx := WithUser(r.Context(), user)
+			ctx := WithRequest(r.Context(), r)
+			ctx = WithUser(ctx, user)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+func hashToken(raw string) string {
+	h := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(h[:])
 }
 
 // WriteJSONError writes a JSON error response.

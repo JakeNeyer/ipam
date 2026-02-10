@@ -1,0 +1,2 @@
+# Playwright browser cache (run: PLAYWRIGHT_BROWSERS_PATH=./playwright-browsers npx playwright install chromium)
+playwright-browsers/

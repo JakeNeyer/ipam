@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars and set real values.
+# Use when running terraform directly (e.g. terraform plan -var-file=terraform.tfvars).
+# Do not commit terraform.tfvars (add to .gitignore if needed).
+
+ipam_endpoint = "http://localhost:8011"
+ipam_token    = "your-api-token"

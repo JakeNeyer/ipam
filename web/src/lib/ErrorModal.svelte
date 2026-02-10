@@ -18,7 +18,7 @@
       <h3 id="error-modal-title">Error</h3>
       <p id="error-modal-desc" class="error-modal-message">{message}</p>
       <div class="error-modal-actions">
-        <button type="button" on:click={() => dispatch('close')}>OK</button>
+        <button type="button" class="btn btn-primary" on:click={() => dispatch('close')}>OK</button>
       </div>
     </div>
   </div>
@@ -60,20 +60,5 @@
     display: flex;
     justify-content: flex-end;
     gap: 0.5rem;
-  }
-  .error-modal-actions button {
-    padding: 0.5rem 1rem;
-    border-radius: var(--radius);
-    font-family: var(--font-sans);
-    font-size: 0.9rem;
-    cursor: pointer;
-    border: 1px solid var(--accent);
-    background: var(--accent);
-    color: var(--btn-primary-text);
-    transition: background 0.15s, border-color 0.15s;
-  }
-  .error-modal-actions button:hover {
-    background: var(--btn-primary-hover-bg);
-    border-color: var(--btn-primary-hover-border);
   }
 </style>

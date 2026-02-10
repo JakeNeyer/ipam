@@ -18,7 +18,7 @@ func allocationBlockNamesMatch(a, b string) bool {
 }
 
 // CreateAllocation handler
-func NewCreateAllocationUseCase(s *store.Store) usecase.Interactor {
+func NewCreateAllocationUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input createAllocationInput, output *allocationOutput) error {
 		if input.Name == "" || input.BlockName == "" || input.CIDR == "" {
 			return status.Wrap(errors.New("name, block_name, and CIDR are required"), status.InvalidArgument)
@@ -31,6 +31,9 @@ func NewCreateAllocationUseCase(s *store.Store) usecase.Interactor {
 		blocks, err := s.ListBlocks()
 		if err != nil {
 			return status.Wrap(err, status.Internal)
+		}
+		if len(blocks) == 0 {
+			return status.Wrap(errors.New("no network blocks exist; create a block first"), status.FailedPrecondition)
 		}
 		var parentBlock *network.Block
 		for _, b := range blocks {
@@ -71,6 +74,14 @@ func NewCreateAllocationUseCase(s *store.Store) usecase.Interactor {
 				)
 			}
 		}
+		if reserved, err := s.OverlapsReservedBlock(input.CIDR); err != nil {
+			return status.Wrap(err, status.Internal)
+		} else if reserved != nil {
+			return status.Wrap(
+				fmt.Errorf("CIDR %s overlaps reserved block %s", input.CIDR, reserved.CIDR),
+				status.InvalidArgument,
+			)
+		}
 
 		id := s.GenerateID()
 		allocation := &network.Allocation{
@@ -95,12 +106,12 @@ func NewCreateAllocationUseCase(s *store.Store) usecase.Interactor {
 
 	u.SetTitle("Create Allocation")
 	u.SetDescription("Creates a new IP allocation")
-	u.SetExpectedErrors(status.InvalidArgument, status.NotFound, status.Internal)
+	u.SetExpectedErrors(status.InvalidArgument, status.FailedPrecondition, status.NotFound, status.Internal)
 	return u
 }
 
 // ListAllocations handler
-func NewListAllocationsUseCase(s *store.Store) usecase.Interactor {
+func NewListAllocationsUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input listAllocationsInput, output *allocationListOutput) error {
 		limit, offset := input.Limit, input.Offset
 		if limit <= 0 {
@@ -112,7 +123,7 @@ func NewListAllocationsUseCase(s *store.Store) usecase.Interactor {
 		if offset < 0 {
 			offset = 0
 		}
-		allocations, total, err := s.ListAllocationsFiltered(input.Name, input.BlockName, limit, offset)
+		allocations, total, err := s.ListAllocationsFiltered(input.Name, input.BlockName, input.EnvironmentID, limit, offset)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -136,7 +147,7 @@ func NewListAllocationsUseCase(s *store.Store) usecase.Interactor {
 }
 
 // GetAllocation handler
-func NewGetAllocationUseCase(s *store.Store) usecase.Interactor {
+func NewGetAllocationUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input getAllocationInput, output *allocationOutput) error {
 		alloc, err := s.GetAllocation(input.ID)
 		if err != nil {
@@ -157,7 +168,7 @@ func NewGetAllocationUseCase(s *store.Store) usecase.Interactor {
 }
 
 // UpdateAllocation handler
-func NewUpdateAllocationUseCase(s *store.Store) usecase.Interactor {
+func NewUpdateAllocationUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input updateAllocationInput, output *allocationOutput) error {
 		alloc, err := s.GetAllocation(input.ID)
 		if err != nil {
@@ -208,7 +219,7 @@ func NewUpdateAllocationUseCase(s *store.Store) usecase.Interactor {
 }
 
 // DeleteAllocation handler
-func NewDeleteAllocationUseCase(s *store.Store) usecase.Interactor {
+func NewDeleteAllocationUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input struct {
 		Id uuid.UUID `path:"id"`
 	}, output *struct{}) error {

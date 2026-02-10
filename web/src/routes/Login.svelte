@@ -1,5 +1,5 @@
 <script>
-  import '../lib/theme.js'
+  import { theme } from '../lib/theme.js'
   import { login } from '../lib/api.js'
   import { user } from '../lib/auth.js'
 
@@ -33,7 +33,7 @@
 
 <div class="login-page">
   <div class="login-card">
-    <h1 class="login-title">IPAM</h1>
+    <img src={$theme === 'light' ? '/images/logo-light.svg' : '/images/logo.svg'} alt="IPAM" class="login-logo" />
     <p class="login-subtitle">Sign in to continue</p>
     <form class="login-form" on:submit={handleSubmit}>
       {#if error}
@@ -73,10 +73,13 @@
     border-radius: var(--radius);
     box-shadow: var(--shadow-md);
   }
-  .login-title {
-    margin: 0 0 0.25rem 0;
-    font-size: 1.5rem;
-    font-weight: 600;
+  .login-logo {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-height: 9rem;
+    margin: 0 auto 1rem;
+    object-fit: contain;
   }
   .login-subtitle {
     margin: 0 0 1.5rem 0;
@@ -116,7 +119,5 @@
   }
   .login-submit {
     margin-top: 0.5rem;
-    padding: 0.6rem 1rem;
-    font-size: 1rem;
   }
 </style>

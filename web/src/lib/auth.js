@@ -41,6 +41,7 @@ export async function logout() {
 /**
  * Fetches setup status and updates setupRequired store.
  * Call when not logged in to decide whether to show Setup or Login.
+ * On failure (e.g. network/500), defaults to true so the user can still reach Setup.
  * @returns {Promise<boolean>} true if setup is required
  */
 export async function checkSetupRequired() {
@@ -50,7 +51,8 @@ export async function checkSetupRequired() {
     setupRequired.set(required)
     return required
   } catch {
-    setupRequired.set(false)
-    return false
+    // When status check fails (e.g. Postgres/network), show Setup so initial admin can be created
+    setupRequired.set(true)
+    return true
   }
 }

@@ -1,6 +1,9 @@
 package store
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strings"
@@ -11,26 +14,35 @@ import (
 	"github.com/google/uuid"
 )
 
+const apiTokenPrefix = "ipam_"
+const apiTokenSecretBytes = 32
+
 // Store manages all IPAM data
 type Store struct {
-	environments map[uuid.UUID]*network.Environment
-	blocks       map[uuid.UUID]*network.Block
-	allocations  map[uuid.UUID]*network.Allocation
-	users        map[uuid.UUID]*User
-	usersByEmail map[string]uuid.UUID
-	sessions     map[string]*Session
-	mu           sync.RWMutex
+	environments  map[uuid.UUID]*network.Environment
+	blocks        map[uuid.UUID]*network.Block
+	allocations   map[uuid.UUID]*network.Allocation
+	reservedBlocks map[uuid.UUID]*ReservedBlock
+	users         map[uuid.UUID]*User
+	usersByEmail  map[string]uuid.UUID
+	sessions      map[string]*Session
+	tokens        map[uuid.UUID]*APIToken
+	tokenByHash   map[string]uuid.UUID
+	mu            sync.RWMutex
 }
 
 // NewStore creates a new store
 func NewStore() *Store {
 	return &Store{
-		environments: make(map[uuid.UUID]*network.Environment),
-		blocks:       make(map[uuid.UUID]*network.Block),
-		allocations:  make(map[uuid.UUID]*network.Allocation),
-		users:        make(map[uuid.UUID]*User),
-		usersByEmail: make(map[string]uuid.UUID),
-		sessions:     make(map[string]*Session),
+		environments:   make(map[uuid.UUID]*network.Environment),
+		blocks:         make(map[uuid.UUID]*network.Block),
+		allocations:    make(map[uuid.UUID]*network.Allocation),
+		reservedBlocks: make(map[uuid.UUID]*ReservedBlock),
+		users:          make(map[uuid.UUID]*User),
+		usersByEmail:   make(map[string]uuid.UUID),
+		sessions:       make(map[string]*Session),
+		tokens:         make(map[uuid.UUID]*APIToken),
+		tokenByHash:    make(map[string]uuid.UUID),
 	}
 }
 
@@ -226,21 +238,35 @@ func (s *Store) GetAllocation(id uuid.UUID) (*network.Allocation, error) {
 }
 
 func (s *Store) ListAllocations() ([]*network.Allocation, error) {
-	allocs, _, err := s.ListAllocationsFiltered("", "", 0, 0)
+	allocs, _, err := s.ListAllocationsFiltered("", "", uuid.Nil, 0, 0)
 	return allocs, err
 }
 
-// ListAllocationsFiltered returns allocations matching name (substring) and optionally blockName.
+// ListAllocationsFiltered returns allocations matching name (substring), optionally blockName, and optionally environmentID (allocations in blocks belonging to that environment).
 // If limit <= 0, no limit is applied. offset is 0-based. Returns (items, total, error).
-func (s *Store) ListAllocationsFiltered(name string, blockName string, limit, offset int) ([]*network.Allocation, int, error) {
+func (s *Store) ListAllocationsFiltered(name string, blockName string, environmentID uuid.UUID, limit, offset int) ([]*network.Allocation, int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	nameLower := strings.ToLower(strings.TrimSpace(name))
 	blockLower := strings.ToLower(strings.TrimSpace(blockName))
+	var blockNamesInEnv map[string]bool
+	if environmentID != uuid.Nil {
+		blockNamesInEnv = make(map[string]bool)
+		for _, block := range s.blocks {
+			if block.EnvironmentID == environmentID {
+				blockNamesInEnv[strings.ToLower(strings.TrimSpace(block.Name))] = true
+			}
+		}
+	}
 	var matched []*network.Allocation
 	for _, alloc := range s.allocations {
 		if blockLower != "" && strings.ToLower(strings.TrimSpace(alloc.Block.Name)) != blockLower {
 			continue
+		}
+		if environmentID != uuid.Nil {
+			if !blockNamesInEnv[strings.ToLower(strings.TrimSpace(alloc.Block.Name))] {
+				continue
+			}
 		}
 		if nameLower == "" || strings.Contains(strings.ToLower(alloc.Name), nameLower) {
 			matched = append(matched, alloc)
@@ -276,6 +302,69 @@ func (s *Store) DeleteAllocation(id uuid.UUID) error {
 	}
 	delete(s.allocations, id)
 	return nil
+}
+
+// ReservedBlock operations (blacklisted CIDR ranges; cannot be used as blocks or allocations).
+func (s *Store) ListReservedBlocks() ([]*ReservedBlock, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*ReservedBlock
+	for _, r := range s.reservedBlocks {
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CIDR < out[j].CIDR })
+	return out, nil
+}
+
+func (s *Store) CreateReservedBlock(r *ReservedBlock) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if r.ID == uuid.Nil {
+		r.ID = s.GenerateID()
+	}
+	if r.CreatedAt.IsZero() {
+		r.CreatedAt = time.Now()
+	}
+	s.reservedBlocks[r.ID] = r
+	return nil
+}
+
+func (s *Store) GetReservedBlock(id uuid.UUID) (*ReservedBlock, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	r, exists := s.reservedBlocks[id]
+	if !exists {
+		return nil, fmt.Errorf("reserved block not found")
+	}
+	return r, nil
+}
+
+func (s *Store) DeleteReservedBlock(id uuid.UUID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.reservedBlocks[id]; !exists {
+		return fmt.Errorf("reserved block not found")
+	}
+	delete(s.reservedBlocks, id)
+	return nil
+}
+
+// OverlapsReservedBlock returns the first reserved block that overlaps the given CIDR, or nil.
+func (s *Store) OverlapsReservedBlock(cidr string) (*ReservedBlock, error) {
+	list, err := s.ListReservedBlocks()
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range list {
+		overlap, err := network.Overlaps(cidr, r.CIDR)
+		if err != nil {
+			return nil, err
+		}
+		if overlap {
+			return r, nil
+		}
+	}
+	return nil, nil
 }
 
 // User operations
@@ -358,4 +447,102 @@ func (s *Store) DeleteSession(sessionID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.sessions, sessionID)
+}
+
+// hashToken returns the SHA-256 hex hash of the raw token.
+func hashToken(raw string) string {
+	h := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(h[:])
+}
+
+// CreateAPIToken creates a new API token for the user. Returns the raw token (only shown once).
+// expiresAt is optional; nil means the token never expires.
+func (s *Store) CreateAPIToken(userID uuid.UUID, name string, expiresAt *time.Time) (token *APIToken, rawToken string, err error) {
+	secret := make([]byte, apiTokenSecretBytes)
+	if _, err := rand.Read(secret); err != nil {
+		return nil, "", err
+	}
+	rawToken = apiTokenPrefix + hex.EncodeToString(secret)
+	keyHash := hashToken(rawToken)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.users[userID]; !exists {
+		return nil, "", fmt.Errorf("user not found")
+	}
+	id := s.GenerateID()
+	token = &APIToken{
+		ID:        id,
+		UserID:    userID,
+		Name:      strings.TrimSpace(name),
+		KeyHash:   keyHash,
+		CreatedAt: time.Now(),
+		ExpiresAt: expiresAt,
+	}
+	s.tokens[id] = token
+	s.tokenByHash[keyHash] = id
+	return token, rawToken, nil
+}
+
+// GetUserByTokenHash returns the user for the given token hash, or nil if not found or token expired.
+func (s *Store) GetUserByTokenHash(keyHash string) (*User, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	tokenID, exists := s.tokenByHash[keyHash]
+	if !exists {
+		return nil, fmt.Errorf("token not found")
+	}
+	tok, exists := s.tokens[tokenID]
+	if !exists {
+		return nil, fmt.Errorf("token not found")
+	}
+	if tok.ExpiresAt != nil && time.Now().After(*tok.ExpiresAt) {
+		return nil, fmt.Errorf("token expired")
+	}
+	user, exists := s.users[tok.UserID]
+	if !exists {
+		return nil, fmt.Errorf("user not found")
+	}
+	return user, nil
+}
+
+// ListAPITokens returns all API tokens for the user (without secret).
+func (s *Store) ListAPITokens(userID uuid.UUID) ([]*APIToken, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*APIToken
+	for _, t := range s.tokens {
+		if t.UserID == userID {
+			out = append(out, t)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out, nil
+}
+
+// DeleteAPIToken removes the token. Returns error if token not found or not owned by user.
+func (s *Store) DeleteAPIToken(tokenID, userID uuid.UUID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tok, exists := s.tokens[tokenID]
+	if !exists {
+		return fmt.Errorf("token not found")
+	}
+	if tok.UserID != userID {
+		return fmt.Errorf("token not found")
+	}
+	delete(s.tokens, tokenID)
+	delete(s.tokenByHash, tok.KeyHash)
+	return nil
+}
+
+// GetAPIToken returns the token by ID (for ownership check).
+func (s *Store) GetAPIToken(tokenID uuid.UUID) (*APIToken, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	tok, exists := s.tokens[tokenID]
+	if !exists {
+		return nil, fmt.Errorf("token not found")
+	}
+	return tok, nil
 }

@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import './lib/theme.js'
+  import { theme } from './lib/theme.js'
   import { checkAuth, authChecked, user, setupRequired, checkSetupRequired } from './lib/auth.js'
   import { completeTour } from './lib/api.js'
   import Nav from './lib/Nav.svelte'
@@ -14,14 +14,18 @@
   import Login from './routes/Login.svelte'
   import Setup from './routes/Setup.svelte'
   import Admin from './routes/Admin.svelte'
+  import ReservedBlocks from './routes/ReservedBlocks.svelte'
+  import SubnetCalculator from './routes/SubnetCalculator.svelte'
+  import Landing from './routes/Landing.svelte'
 
-  let route = 'dashboard'
+  let route = 'landing'
   let showTour = false
   let tourStep = 0
   let routeEnvironmentId = null
   let routeEnvId = null
   let routeOrphanedOnly = false
   let routeBlockName = null
+  let routeAllocationName = null
   let routeCreateEnv = false
   let routeCreateBlock = false
   let routeCreateAllocation = false
@@ -33,6 +37,7 @@
     routeEnvironmentId = environmentId
     routeOrphanedOnly = false
     routeBlockName = opts.block ?? null
+    routeAllocationName = opts.allocation ?? null
     routeCreateEnv = opts.create === true
     routeCreateBlock = opts.createBlock === true
     routeCreateAllocation = opts.createAllocation === true
@@ -43,6 +48,7 @@
       const params = new URLSearchParams()
       if (environmentId) params.set('environment', environmentId)
       if (opts.block) params.set('block', opts.block)
+      if (opts.allocation) params.set('allocation', opts.allocation)
       if (opts.createBlock) params.set('createBlock', '1')
       if (opts.createAllocation) params.set('createAllocation', '1')
       const q = params.toString()
@@ -57,20 +63,33 @@
       window.location.hash = opts.page ? 'docs/' + opts.page : 'docs'
     } else if (path === 'admin') {
       window.location.hash = 'admin'
+    } else if (path === 'reserved-blocks') {
+      window.location.hash = 'reserved-blocks'
+    } else if (path === 'subnet-calculator') {
+      window.location.hash = 'subnet-calculator'
     } else {
       window.location.hash = path
     }
   }
 
   function parseHash() {
-    const raw = (window.location.hash || '#').slice(1) || 'dashboard'
+    const raw = (window.location.hash || '#').slice(1) || ''
     const [path, query] = raw.split('?')
+    if (path === '' || path === 'landing' || path === 'features' || path === 'terraform' || path === 'api' || path === 'user-guide') {
+      route = 'landing'
+      return
+    }
+    if (path === 'login') {
+      route = 'login'
+      return
+    }
     if (path === 'environments' || path === 'networks') {
       route = path
       routeEnvironmentId = null
       routeEnvId = null
       routeOrphanedOnly = false
       routeBlockName = null
+      routeAllocationName = null
       routeCreateEnv = false
       routeCreateBlock = false
       routeCreateAllocation = false
@@ -82,6 +101,8 @@
           routeOrphanedOnly = params.get('orphaned') === '1' || params.get('orphaned') === 'true'
           const blockName = params.get('block')
           routeBlockName = blockName || null
+          const allocationName = params.get('allocation')
+          routeAllocationName = allocationName || null
           routeCreateBlock = params.get('createBlock') === '1'
           routeCreateAllocation = params.get('createAllocation') === '1'
         } else if (path === 'environments') {
@@ -95,12 +116,17 @@
       routeDocsPage = path === 'docs' ? '' : path.slice(5)
     } else if (path === 'admin') {
       route = 'admin'
+    } else if (path === 'reserved-blocks') {
+      route = 'reserved-blocks'
+    } else if (path === 'subnet-calculator') {
+      route = 'subnet-calculator'
     } else {
       route = 'dashboard'
       routeEnvironmentId = null
       routeEnvId = null
       routeOrphanedOnly = false
       routeBlockName = null
+      routeAllocationName = null
       routeCreateEnv = false
       routeCreateBlock = false
       routeCreateAllocation = false
@@ -108,12 +134,14 @@
   }
 
   function handlePaletteNavigate(e) {
-    const { path, block, environmentId } = e.detail || {}
+    const { path, block, allocation, environmentId } = e.detail || {}
     if (path === 'environments') go('environments', null, environmentId ? { env: environmentId } : {})
-    else if (path === 'networks') go('networks', null, block ? { block } : {})
+    else if (path === 'networks') go('networks', null, { block: block ?? undefined, allocation: allocation ?? undefined })
     else if (path === 'dashboard') go('dashboard')
     else if (path === 'docs') go('docs', null, { page: (e.detail && e.detail.page) || '' })
     else if (path === 'admin') go('admin')
+    else if (path === 'reserved-blocks') go('reserved-blocks')
+    else if (path === 'subnet-calculator') go('subnet-calculator')
   }
 
   function handlePaletteCreate(e) {
@@ -133,7 +161,7 @@
     parseHash()
   }
 
-  $: if ($authChecked && $user && route === 'admin' && $user.role !== 'admin') {
+  $: if ($authChecked && $user && (route === 'admin' || route === 'reserved-blocks') && $user.role !== 'admin') {
     window.location.hash = ''
   }
 
@@ -181,12 +209,20 @@
   function onTourStep(e) {
     tourStep = e.detail?.index ?? 0
   }
+
+  function toggleTheme() {
+    theme.set($theme === 'dark' ? 'light' : 'dark')
+  }
 </script>
 
 {#if !$authChecked}
   <div class="app loading" role="presentation">
     <div class="loading-message">Loading…</div>
   </div>
+{:else if route === 'landing' && !$user}
+  <Landing />
+{:else if route === 'docs'}
+  <Docs currentPage={routeDocsPage} />
 {:else if !$user}
   {#if $setupRequired === null}
     <div class="app loading" role="presentation">
@@ -197,8 +233,6 @@
   {:else}
     <Login />
   {/if}
-{:else if route === 'docs'}
-  <Docs currentPage={routeDocsPage} />
 {:else}
   <div class="app" role="presentation">
     <Nav current={route} currentUser={$user} on:nav={(e) => go(e.detail)} on:logout={handleLogout} />
@@ -208,6 +242,7 @@
           on:envBlocks={(e) => go('networks', e.detail)}
           on:viewOrphaned={() => { window.location.hash = 'networks?orphaned=1'; parseHash() }}
           on:viewBlock={(e) => { window.location.hash = 'networks?block=' + encodeURIComponent(e.detail); parseHash() }}
+          on:viewAllocation={(e) => { window.location.hash = 'networks?allocation=' + encodeURIComponent(e.detail); parseHash() }}
         />
       {:else if route === 'environments'}
         <Environments openCreateFromQuery={routeCreateEnv} openEnvironmentId={routeEnvId} on:clearCreateQuery={() => { routeCreateEnv = false; if (window.location.hash.includes('create=1')) { window.location.hash = 'environments' } }} />
@@ -216,14 +251,21 @@
           environmentId={routeEnvironmentId}
           orphanedOnly={routeOrphanedOnly}
           blockNameFilter={routeBlockName}
+          allocationFilter={routeAllocationName}
           openCreateBlockFromQuery={routeCreateBlock}
           openCreateAllocationFromQuery={routeCreateAllocation}
-          on:clearEnv={() => { routeEnvironmentId = null; routeOrphanedOnly = false; routeBlockName = null; window.location.hash = 'networks' }}
+          on:clearEnv={() => { routeEnvironmentId = null; routeOrphanedOnly = false; routeBlockName = null; routeAllocationName = null; window.location.hash = 'networks' }}
           on:setEnv={(e) => go('networks', e.detail)}
+          on:setBlockFilter={(e) => { const block = e.detail?.block ?? null; routeAllocationName = null; const params = new URLSearchParams(); if (routeEnvironmentId) params.set('environment', routeEnvironmentId); if (routeOrphanedOnly) params.set('orphaned', '1'); if (block) params.set('block', block); window.location.hash = 'networks' + (params.toString() ? '?' + params.toString() : ''); parseHash(); }}
+          on:setAllocationFilter={(e) => { const allocation = e.detail?.allocation ?? null; const params = new URLSearchParams(); if (routeEnvironmentId) params.set('environment', routeEnvironmentId); if (routeOrphanedOnly) params.set('orphaned', '1'); if (routeBlockName) params.set('block', routeBlockName); if (allocation) params.set('allocation', allocation); window.location.hash = 'networks' + (params.toString() ? '?' + params.toString() : ''); parseHash(); }}
           on:clearCreateQuery={() => { routeCreateBlock = false; routeCreateAllocation = false; const h = window.location.hash; if (h.includes('createBlock=1') || h.includes('createAllocation=1')) { const p = new URLSearchParams((h.split('?')[1] || '')); p.delete('createBlock'); p.delete('createAllocation'); const q = p.toString(); window.location.hash = 'networks' + (q ? '?' + q : '') } }}
         />
       {:else if route === 'admin'}
         <Admin />
+      {:else if route === 'reserved-blocks'}
+        <ReservedBlocks />
+      {:else if route === 'subnet-calculator'}
+        <SubnetCalculator />
       {:else}
         <Dashboard />
       {/if}
@@ -244,6 +286,24 @@
       on:done={onTourDone}
       on:skip={onTourDone}
     />
+    <button
+      type="button"
+      class="floating-theme-btn"
+      on:click={toggleTheme}
+      title={$theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+      aria-label={$theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+    >
+      {#if $theme === 'dark'}
+        <svg class="floating-theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <circle cx="12" cy="12" r="5" />
+          <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
+        </svg>
+      {:else}
+        <svg class="floating-theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+        </svg>
+      {/if}
+    </button>
   </div>
 {/if}
 
@@ -268,6 +328,37 @@
   .loading-message {
     font-size: 0.95rem;
   }
+
+  /* Floating theme toggle (bottom right), same as Landing and Docs */
+  .floating-theme-btn {
+    position: fixed;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    z-index: 100;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 3rem;
+    height: 3rem;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: var(--surface);
+    color: var(--text-muted);
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15), 0 0 0 1px var(--border);
+    transition: color 0.15s, background 0.15s, box-shadow 0.15s;
+  }
+  .floating-theme-btn:hover {
+    color: var(--text);
+    background: var(--surface-elevated, var(--surface));
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2), 0 0 0 1px var(--border);
+  }
+  .floating-theme-btn .floating-theme-icon {
+    width: 1.375rem;
+    height: 1.375rem;
+  }
+
   .main {
     flex: 1;
     min-width: 0;
@@ -277,73 +368,6 @@
     overflow: auto;
   }
 
-  :global(:root) {
-    --radius: 10px;
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
-    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.06), 0 2px 4px -2px rgba(0, 0, 0, 0.04);
-    --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
-    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
-  }
-  :global(:root[data-theme='dark']) {
-    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.2);
-    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.25);
-    --bg: #18181b;
-    --surface: #27272a;
-    --surface-elevated: #3f3f46;
-    --border: #3f3f46;
-    --text: #fafafa;
-    --text-muted: #a1a1aa;
-    --accent: #6366f1;
-    --accent-dim: #6366f125;
-    --btn-primary-text: #fff;
-    --btn-primary-hover-bg: #4f46e5;
-    --btn-primary-hover-border: #4f46e5;
-    --table-row-hover: rgba(255, 255, 255, 0.03);
-    --table-header-bg: rgba(255, 255, 255, 0.04);
-    --success: #22c55e;
-    --warn: #eab308;
-    --danger: #ef4444;
-  }
-  :global(:root[data-theme='light']) {
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
-    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.06), 0 2px 4px -2px rgba(0, 0, 0, 0.04);
-    --bg: #f4f4f5;
-    --surface: #ffffff;
-    --surface-elevated: #ffffff;
-    --border: #e4e4e7;
-    --text: #18181b;
-    --text-muted: #71717a;
-    --accent: #6366f1;
-    --accent-dim: #6366f115;
-    --btn-primary-text: #fff;
-    --btn-primary-hover-bg: #4f46e5;
-    --btn-primary-hover-border: #4f46e5;
-    --table-row-hover: rgba(0, 0, 0, 0.02);
-    --table-header-bg: rgba(0, 0, 0, 0.03);
-    --success: #16a34a;
-    --warn: #ca8a04;
-    --danger: #dc2626;
-  }
-  :global(:root:not([data-theme])) {
-    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.2);
-    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.25);
-    --bg: #18181b;
-    --surface: #27272a;
-    --surface-elevated: #3f3f46;
-    --border: #3f3f46;
-    --text: #fafafa;
-    --text-muted: #a1a1aa;
-    --accent: #6366f1;
-    --accent-dim: #6366f125;
-    --btn-primary-text: #fff;
-    --btn-primary-hover-bg: #4f46e5;
-    --btn-primary-hover-border: #4f46e5;
-    --table-row-hover: rgba(255, 255, 255, 0.03);
-    --table-header-bg: rgba(255, 255, 255, 0.04);
-    --success: #22c55e;
-    --warn: #eab308;
-    --danger: #ef4444;
-  }
   :global(*) {
     box-sizing: border-box;
   }
@@ -354,36 +378,85 @@
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
   }
+  /* Uniform buttons: same style, size, color across the UI. Primary = blue text + blue border. */
   :global(.btn) {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    font-family: var(--font-sans);
+    color: var(--text);
+    background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    background: var(--surface);
-    color: var(--text);
-    font-family: var(--font-sans);
-    font-size: 0.9rem;
-    font-weight: 500;
+    box-shadow: var(--shadow-sm);
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s, color 0.15s;
   }
   :global(.btn:hover:not(:disabled)) {
     background: var(--surface-elevated);
-    border-color: var(--border);
+    border-color: var(--text-muted);
   }
   :global(.btn:disabled) {
     opacity: 0.6;
     cursor: not-allowed;
   }
   :global(.btn-primary) {
-    background: var(--accent);
+    color: var(--accent);
     border-color: var(--accent);
-    color: var(--btn-primary-text);
+    background: var(--surface);
   }
   :global(.btn-primary:hover:not(:disabled)) {
-    background: var(--btn-primary-hover-bg);
-    border-color: var(--btn-primary-hover-border);
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  :global(.btn-small) {
+    padding: 0.35rem 0.65rem;
+    font-size: 0.85rem;
+  }
+  :global(.btn-danger) {
+    color: var(--danger, #dc2626);
+    border-color: var(--border);
+    background: var(--surface);
+  }
+  :global(.btn-danger:hover:not(:disabled)) {
+    background: rgba(220, 38, 38, 0.08);
+    border-color: var(--danger, #dc2626);
+    color: var(--danger, #dc2626);
+  }
+  :global(.table-empty-cell) {
+    color: var(--text-muted);
+    padding: 1.5rem 1rem;
+    text-align: center;
+  }
+  /* Standardized page headers: same height, title size, and spacing on every page */
+  :global(.page-header) {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    min-height: 2.25rem;
+  }
+  :global(.page-header-text) {
+    flex: 1;
+    min-width: 0;
+  }
+  :global(.page-title) {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    line-height: 1.3;
+  }
+  :global(.page-desc) {
+    margin: 0.25rem 0 0;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    line-height: 1.4;
   }
 </style>

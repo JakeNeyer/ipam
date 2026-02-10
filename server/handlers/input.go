@@ -39,11 +39,12 @@ type listBlocksInput struct {
 }
 
 type listAllocationsInput struct {
-	Limit     int    `query:"limit"`
-	Offset    int    `query:"offset"`
-	Name      string `query:"name"`
-	BlockName string `query:"block_name"`
-	_         struct{} `additionalProperties:"false"`
+	Limit         int       `query:"limit"`
+	Offset        int       `query:"offset"`
+	Name          string    `query:"name"`
+	BlockName     string    `query:"block_name"`
+	EnvironmentID uuid.UUID `query:"environment_id"`
+	_             struct{}  `additionalProperties:"false"`
 }
 
 type suggestEnvironmentBlockCIDRInput struct {
@@ -101,4 +102,17 @@ type updateAllocationInput struct {
 	ID   uuid.UUID `json:"id" minLength:"1" maxLength:"255" path:"id"`
 	Name string    `json:"name" minLength:"1" maxLength:"255"`
 	_    struct{}  `additionalProperties:"false"`
+}
+
+// Reserved block input types (admin only)
+type createReservedBlockInput struct {
+	Name   string `json:"name" maxLength:"255"`
+	CIDR   string `json:"cidr" minLength:"9" maxLength:"50"`
+	Reason string `json:"reason,omitempty" maxLength:"500"`
+	_      struct{} `additionalProperties:"false"`
+}
+
+type getReservedBlockInput struct {
+	ID uuid.UUID `path:"id"`
+	_  struct{}  `additionalProperties:"false"`
 }

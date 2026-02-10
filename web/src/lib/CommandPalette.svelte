@@ -1,5 +1,6 @@
 <script>
   import { createEventDispatcher } from 'svelte'
+  import Icon from '@iconify/svelte'
   import { listEnvironments, listBlocks, listAllocations } from './api.js'
 
   export let open = false
@@ -12,6 +13,7 @@
     { type: 'nav', id: 'dashboard', label: 'Go to Dashboard', keywords: 'dashboard home' },
     { type: 'nav', id: 'environments', label: 'Go to Environments', keywords: 'environments envs' },
     { type: 'nav', id: 'networks', label: 'Go to Networks', keywords: 'networks blocks allocations' },
+    { type: 'nav', id: 'subnet-calculator', label: 'Go to Subnet calculator', keywords: 'subnet calculator cidr divide' },
     { type: 'nav', id: 'docs', label: 'Go to Docs', keywords: 'docs documentation guide' },
     { type: 'create', id: 'create-env', label: 'Create environment', keywords: 'new environment' },
     { type: 'create', id: 'create-block', label: 'Create network block', keywords: 'new block' },
@@ -19,7 +21,7 @@
   ]
 
   $: baseCommands = currentUser?.role === 'admin'
-    ? [...STATIC_COMMANDS, { type: 'nav', id: 'admin', label: 'Go to Admin', keywords: 'admin users' }]
+    ? [...STATIC_COMMANDS, { type: 'nav', id: 'reserved-blocks', label: 'Go to Reserved blocks', keywords: 'reserved blocks blacklist' }, { type: 'nav', id: 'admin', label: 'Go to Admin', keywords: 'admin users' }]
     : STATIC_COMMANDS
 
   function matchCommand(c, q) {
@@ -103,7 +105,7 @@
     } else if (item.type === 'search-block') {
       dispatch('navigate', { path: 'networks', block: item.payload.name })
     } else if (item.type === 'search-alloc') {
-      dispatch('navigate', { path: 'networks', block: item.payload.block_name })
+      dispatch('navigate', { path: 'networks', block: item.payload.block_name, allocation: item.payload.name })
     }
     close()
   }
@@ -155,7 +157,7 @@
   <div class="backdrop" role="dialog" aria-modal="true" aria-label="Command palette" on:click={handleBackdropClick}>
     <div class="palette" on:click|stopPropagation>
       <div class="palette-header">
-        <span class="palette-icon" aria-hidden="true">⌘</span>
+        <span class="palette-icon" aria-hidden="true"><Icon icon="lucide:command" width="1rem" height="1rem" /></span>
         <input
           bind:this={inputEl}
           type="text"
@@ -190,8 +192,13 @@
         {/if}
       </div>
       <div class="palette-footer">
-        <span>Search: environments, blocks, allocations</span>
-        <span><kbd>↑</kbd><kbd>↓</kbd> <kbd>↵</kbd> <kbd>Esc</kbd></span>
+        <span class="palette-footer-hint">Search: environments, blocks, allocations</span>
+        <span class="palette-footer-keys">
+          <kbd><Icon icon="lucide:chevron-up" width="0.75em" height="0.75em" inline /></kbd>
+          <kbd><Icon icon="lucide:chevron-down" width="0.75em" height="0.75em" inline /></kbd>
+          <kbd>↵</kbd>
+          <kbd>Esc</kbd>
+        </span>
       </div>
     </div>
   </div>
@@ -289,17 +296,37 @@
   }
   .palette-footer {
     display: flex;
+    align-items: center;
+    justify-content: space-between;
     gap: 1rem;
     padding: 0.5rem 1rem;
     border-top: 1px solid var(--border);
     font-size: 0.75rem;
     color: var(--text-muted);
   }
-  .palette-footer kbd {
-    padding: 0.1rem 0.25rem;
+  .palette-footer-hint {
+    flex-shrink: 0;
+  }
+  .palette-footer-keys {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex-shrink: 0;
+  }
+  .palette-footer-keys kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.5em;
+    padding: 0.2rem 0.35rem;
     font-size: 0.7rem;
+    font-family: inherit;
+    line-height: 1;
     background: var(--surface-elevated);
     border: 1px solid var(--border);
     border-radius: 3px;
+  }
+  .palette-footer-keys kbd :global(svg) {
+    display: block;
   }
 </style>

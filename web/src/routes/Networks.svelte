@@ -1,8 +1,11 @@
 <script>
   import { createEventDispatcher } from 'svelte'
   import { onMount } from 'svelte'
+  import { tick } from 'svelte'
+  import Icon from '@iconify/svelte'
   import ErrorModal from '../lib/ErrorModal.svelte'
   import CidrWizard from '../lib/CidrWizard.svelte'
+  import DataTable from '../lib/DataTable.svelte'
   import SearchableSelect from '../lib/SearchableSelect.svelte'
   import { cidrRange } from '../lib/cidr.js'
   import { listEnvironments, listBlocks, listAllocations, createBlock, createAllocation, updateBlock, deleteBlock, deleteAllocation } from '../lib/api.js'
@@ -10,6 +13,7 @@
   export let environmentId = null
   export let orphanedOnly = false
   export let blockNameFilter = null
+  export let allocationFilter = null
   export let openCreateBlockFromQuery = false
   export let openCreateAllocationFromQuery = false
   const dispatch = createEventDispatcher()
@@ -31,9 +35,9 @@
     openedCreateBlockFromQuery = false
   }
   $: if (openCreateAllocationFromQuery && !openedCreateAllocFromQuery) {
-    showCreateAlloc = true
     openedCreateAllocFromQuery = true
     dispatch('clearCreateQuery')
+    if (blocks.length > 0) showCreateAlloc = true
   } else if (!openCreateAllocationFromQuery) {
     openedCreateAllocFromQuery = false
   }
@@ -79,6 +83,10 @@
   let allocPageSize = 25
   let allocTotal = 0
 
+  let blockFilterOptions = []
+  let allocationFilterOptions = []
+  let allocationBlockNamesFromFilter = null
+
   let openBlockMenuId = null
   let openAllocMenuId = null
   let blockMenuTriggerEl = null
@@ -100,18 +108,54 @@
       if (blockNameFilter && String(blockNameFilter).trim() !== '') blockOpts.name = String(blockNameFilter).trim()
       if (effectiveFilter === 'orphaned') blockOpts.orphaned_only = true
       else if (effectiveFilter !== 'all') blockOpts.environment_id = effectiveFilter
+      const blockFilterOpts = { limit: 500, offset: 0 }
+      if (effectiveFilter === 'orphaned') blockFilterOpts.orphaned_only = true
+      else if (effectiveFilter !== 'all') blockFilterOpts.environment_id = effectiveFilter
       const allocOpts = { limit: allocPageSize, offset: allocPage * allocPageSize }
       if (blockNameFilter && String(blockNameFilter).trim() !== '') allocOpts.block_name = String(blockNameFilter).trim()
-      const [envsRes, blksRes, allocsRes] = await Promise.all([
+      if (allocationFilter && String(allocationFilter).trim() !== '') allocOpts.name = String(allocationFilter).trim()
+      if (effectiveFilter !== 'all' && effectiveFilter !== 'orphaned') allocOpts.environment_id = effectiveFilter
+      const allocOptionsOpts = { limit: 500, offset: 0 }
+      if (blockNameFilter && String(blockNameFilter).trim() !== '') allocOptionsOpts.block_name = String(blockNameFilter).trim()
+      if (effectiveFilter !== 'all' && effectiveFilter !== 'orphaned') allocOptionsOpts.environment_id = effectiveFilter
+      const promises = [
         listEnvironments(),
         listBlocks(blockOpts),
         listAllocations(allocOpts),
-      ])
+        listBlocks(blockFilterOpts),
+        listAllocations(allocOptionsOpts),
+      ]
+      if (allocationFilter && String(allocationFilter).trim() !== '') {
+        const allocByNameOpts = { limit: 500, name: String(allocationFilter).trim() }
+        if (effectiveFilter !== 'all' && effectiveFilter !== 'orphaned') allocByNameOpts.environment_id = effectiveFilter
+        promises.push(listAllocations(allocByNameOpts))
+      }
+      const results = await Promise.all(promises)
+      const envsRes = results[0]
+      const blksRes = results[1]
+      const allocsRes = results[2]
+      const blockNamesRes = results[3]
+      const allocOptionsRes = results[4]
+      const allocBlockNamesRes = results.length > 5 ? results[5] : null
       environments = envsRes.environments
       blocks = blksRes.blocks
       blockTotal = blksRes.total
       allocations = allocsRes.allocations
       allocTotal = allocsRes.total
+      blockFilterOptions = blockNamesRes.blocks.map((b) => ({ value: b.name, label: b.name }))
+      const blockNamesSet = new Set(blockNamesRes.blocks.map((b) => (b.name || '').trim().toLowerCase()))
+      allocationFilterOptions = (allocOptionsRes.allocations || [])
+        .filter((a) => blockNamesSet.has((a.block_name || '').trim().toLowerCase()))
+        .map((a) => ({ value: a.name, label: a.name }))
+      if (allocationFilter && String(allocationFilter).trim() !== '') {
+        if (allocBlockNamesRes && allocBlockNamesRes.allocations && allocBlockNamesRes.allocations.length > 0) {
+          allocationBlockNamesFromFilter = new Set(allocBlockNamesRes.allocations.map((a) => (a.block_name || '').trim()))
+        } else {
+          allocationBlockNamesFromFilter = new Set()
+        }
+      } else {
+        allocationBlockNamesFromFilter = null
+      }
       envFilterName = environmentId
         ? (envsRes.environments.find((e) => e.id === environmentId)?.name ?? null)
         : null
@@ -130,8 +174,9 @@
   $: allocEnd = Math.min(allocPage * allocPageSize + allocPageSize, allocTotal)
   $: allocTotalPages = allocPageSize > 0 ? Math.ceil(allocTotal / allocPageSize) : 0
 
+  $: effectiveFilter, blockNameFilter, allocationFilter, (blockPage = 0, allocPage = 0, load())
+
   onMount(() => {
-    load()
     function handleClickOutside(e) {
       if (!e.target.closest('.actions-menu-wrap')) {
         openBlockMenuId = null
@@ -161,7 +206,7 @@
 
   $: effectiveFilter = orphanedOnly ? 'orphaned' : (environmentId ?? blockFilter)
 
-  let blockSortBy = 'name' // 'name' | 'environment' | 'usage'
+  let blockSortBy = 'name' // 'name' | 'environment' | 'cidr' | 'total_ips' | 'used_ips' | 'available_ips' | 'usage'
   let blockSortDir = 'asc' // 'asc' | 'desc'
 
   function setBlockSort(column) {
@@ -173,9 +218,15 @@
     }
   }
 
-  $: displayedBlocks = (blockNameFilter != null && String(blockNameFilter).trim() !== '')
-    ? blocks.filter((b) => String(b.name || '').trim().toLowerCase() === String(blockNameFilter).trim().toLowerCase())
-    : blocks
+  $: displayedBlocks = (() => {
+    if (allocationFilter && String(allocationFilter).trim() !== '' && allocationBlockNamesFromFilter) {
+      return blocks.filter((b) => allocationBlockNamesFromFilter.has((b.name || '').trim()))
+    }
+    if (blockNameFilter != null && String(blockNameFilter).trim() !== '') {
+      return blocks.filter((b) => String(b.name || '').trim().toLowerCase() === String(blockNameFilter).trim().toLowerCase())
+    }
+    return blocks
+  })()
 
   $: sortedBlocks = (() => {
     const list = [...displayedBlocks]
@@ -188,15 +239,36 @@
         const nb = getEnvironmentName(b.environment_id) ?? (isOrphanedBlock(b) ? 'Orphaned' : '')
         return mult * na.localeCompare(nb, undefined, { sensitivity: 'base' })
       })
+    } else if (blockSortBy === 'cidr') {
+      list.sort((a, b) => mult * (a.cidr || '').localeCompare(b.cidr || '', undefined, { sensitivity: 'base' }))
+    } else if (blockSortBy === 'total_ips') {
+      list.sort((a, b) => mult * ((a.total_ips ?? 0) - (b.total_ips ?? 0)))
+    } else if (blockSortBy === 'used_ips') {
+      list.sort((a, b) => mult * ((a.used_ips ?? 0) - (b.used_ips ?? 0)))
+    } else if (blockSortBy === 'available_ips') {
+      list.sort((a, b) => mult * ((a.available_ips ?? 0) - (b.available_ips ?? 0)))
     } else if (blockSortBy === 'usage') {
       list.sort((a, b) => mult * (utilizationPercent(a) - utilizationPercent(b)))
     }
     return list
   })()
 
-  $: displayedAllocations = allocations
+  $: envBlockNames =
+    effectiveFilter && effectiveFilter !== 'all' && blocks.length > 0
+      ? new Set(blocks.map((b) => (b.name || '').trim().toLowerCase()))
+      : null
 
-  let allocSortBy = 'name' // 'name' | 'block'
+  $: displayedAllocations = (() => {
+    if (allocationFilter && String(allocationFilter).trim() !== '') {
+      return allocations.filter((a) => (a.name || '').trim() === (allocationFilter || '').trim())
+    }
+    if (envBlockNames) {
+      return allocations.filter((a) => envBlockNames.has((a.block_name || '').trim().toLowerCase()))
+    }
+    return allocations
+  })()
+
+  let allocSortBy = 'name' // 'name' | 'block' | 'cidr'
   let allocSortDir = 'asc' // 'asc' | 'desc'
 
   function setAllocSort(column) {
@@ -215,6 +287,8 @@
       list.sort((a, b) => mult * (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }))
     } else if (allocSortBy === 'block') {
       list.sort((a, b) => mult * (a.block_name || '').localeCompare(b.block_name || '', undefined, { sensitivity: 'base' }))
+    } else if (allocSortBy === 'cidr') {
+      list.sort((a, b) => mult * (a.cidr || '').localeCompare(b.cidr || '', undefined, { sensitivity: 'base' }))
     }
     return list
   })()
@@ -326,13 +400,25 @@
     }
   }
 
-  function clearEnvFilter() {
+  async function clearEnvFilter() {
     blockFilter = 'all'
+    blockPage = 0
     dispatch('clearEnv')
     window.location.hash = 'networks'
+    await tick()
+    load()
   }
 
-  function setFilter(value) {
+  async function clearAllFilters() {
+    blockFilter = 'all'
+    blockPage = 0
+    allocPage = 0
+    dispatch('clearEnv')
+    await tick()
+    load()
+  }
+
+  async function setFilter(value) {
     if (value === 'all') {
       blockFilter = 'all'
       dispatch('clearEnv')
@@ -346,6 +432,7 @@
       dispatch('setEnv', value)
     }
     blockPage = 0
+    await tick()
     load()
   }
 
@@ -437,9 +524,10 @@
 </script>
 
 <div class="networks">
-  <header class="header">
-    <div class="header-text">
-      <h1>Networks</h1>
+  <header class="page-header">
+    <div class="page-header-text">
+      <h1 class="page-title">Networks</h1>
+      <p class="page-desc">Network blocks define your IP ranges; allocations are subnets within those blocks. Filter by environment, block, or allocation name; filtering by block shows only that block and its allocations, and filtering by allocation shows only matching allocations and their blocks.</p>
     </div>
   </header>
 
@@ -457,8 +545,26 @@
         placeholder="All"
       />
     </label>
-    {#if effectiveFilter !== 'all' || blockNameFilter}
-      <button type="button" class="btn btn-small" on:click={clearEnvFilter}>Show all</button>
+    <label class="filter-label">
+      <span>Block</span>
+      <SearchableSelect
+        options={[{ value: '', label: 'All' }, ...blockFilterOptions]}
+        value={blockNameFilter != null && String(blockNameFilter).trim() !== '' ? String(blockNameFilter).trim() : ''}
+        on:change={(e) => dispatch('setBlockFilter', { block: e.detail === '' ? null : e.detail })}
+        placeholder="All"
+      />
+    </label>
+    <label class="filter-label">
+      <span>Allocation</span>
+      <SearchableSelect
+        options={[{ value: '', label: 'All' }, ...allocationFilterOptions]}
+        value={allocationFilter != null && String(allocationFilter).trim() !== '' ? String(allocationFilter).trim() : ''}
+        on:change={(e) => dispatch('setAllocationFilter', { allocation: e.detail === '' ? null : e.detail })}
+        placeholder="All"
+      />
+    </label>
+    {#if effectiveFilter !== 'all' || blockNameFilter || (allocationFilter && String(allocationFilter).trim() !== '')}
+      <button type="button" class="btn btn-small" on:click={clearAllFilters}>Show all</button>
     {/if}
   </div>
 
@@ -508,53 +614,83 @@
           </form>
         </div>
       {/if}
-      {#if displayedBlocks.length === 0 && !showCreateBlock}
-        <div class="empty">
-          {#if effectiveFilter === 'orphaned'}
-            No orphaned blocks.
-          {:else if effectiveFilter !== 'all'}
-            No blocks in this environment yet. Create one above.
-          {:else}
-            No blocks yet. Create one above.
-          {/if}
-        </div>
-      {:else if displayedBlocks.length > 0}
-        <div class="table-wrap">
-          <table class="table">
-            <thead>
+      {#if !showCreateBlock}
+        <DataTable>
+          <svelte:fragment slot="header">
+            <tr>
+              <th class="sortable" class:sorted={blockSortBy === 'name'}>
+                <button type="button" class="th-sort" on:click={() => setBlockSort('name')}>
+                  <span class="th-sort-label">Name</span>
+                  {#if blockSortBy === 'name'}
+                    <span class="sort-icon" aria-hidden="true"><Icon icon={blockSortDir === 'asc' ? 'lucide:chevron-up' : 'lucide:chevron-down'} width="0.875em" height="0.875em" /></span>
+                  {/if}
+                </button>
+              </th>
+              <th class="sortable" class:sorted={blockSortBy === 'environment'}>
+                <button type="button" class="th-sort" on:click={() => setBlockSort('environment')}>
+                  <span class="th-sort-label">Environment</span>
+                  {#if blockSortBy === 'environment'}
+                    <span class="sort-icon" aria-hidden="true"><Icon icon={blockSortDir === 'asc' ? 'lucide:chevron-up' : 'lucide:chevron-down'} width="0.875em" height="0.875em" /></span>
+                  {/if}
+                </button>
+              </th>
+              <th class="sortable" class:sorted={blockSortBy === 'cidr'}>
+                <button type="button" class="th-sort" on:click={() => setBlockSort('cidr')}>
+                  <span class="th-sort-label">CIDR</span>
+                  {#if blockSortBy === 'cidr'}
+                    <span class="sort-icon" aria-hidden="true"><Icon icon={blockSortDir === 'asc' ? 'lucide:chevron-up' : 'lucide:chevron-down'} width="0.875em" height="0.875em" /></span>
+                  {/if}
+                </button>
+              </th>
+              <th class="sortable" class:sorted={blockSortBy === 'total_ips'}>
+                <button type="button" class="th-sort" on:click={() => setBlockSort('total_ips')}>
+                  <span class="th-sort-label">Total IPs</span>
+                  {#if blockSortBy === 'total_ips'}
+                    <span class="sort-icon" aria-hidden="true"><Icon icon={blockSortDir === 'asc' ? 'lucide:chevron-up' : 'lucide:chevron-down'} width="0.875em" height="0.875em" /></span>
+                  {/if}
+                </button>
+              </th>
+              <th class="sortable" class:sorted={blockSortBy === 'used_ips'}>
+                <button type="button" class="th-sort" on:click={() => setBlockSort('used_ips')}>
+                  <span class="th-sort-label">Used</span>
+                  {#if blockSortBy === 'used_ips'}
+                    <span class="sort-icon" aria-hidden="true"><Icon icon={blockSortDir === 'asc' ? 'lucide:chevron-up' : 'lucide:chevron-down'} width="0.875em" height="0.875em" /></span>
+                  {/if}
+                </button>
+              </th>
+              <th class="sortable" class:sorted={blockSortBy === 'available_ips'}>
+                <button type="button" class="th-sort" on:click={() => setBlockSort('available_ips')}>
+                  <span class="th-sort-label">Available</span>
+                  {#if blockSortBy === 'available_ips'}
+                    <span class="sort-icon" aria-hidden="true"><Icon icon={blockSortDir === 'asc' ? 'lucide:chevron-up' : 'lucide:chevron-down'} width="0.875em" height="0.875em" /></span>
+                  {/if}
+                </button>
+              </th>
+              <th class="sortable" class:sorted={blockSortBy === 'usage'}>
+                <button type="button" class="th-sort" on:click={() => setBlockSort('usage')}>
+                  <span class="th-sort-label">Usage</span>
+                  {#if blockSortBy === 'usage'}
+                    <span class="sort-icon" aria-hidden="true"><Icon icon={blockSortDir === 'asc' ? 'lucide:chevron-up' : 'lucide:chevron-down'} width="0.875em" height="0.875em" /></span>
+                  {/if}
+                </button>
+              </th>
+              <th class="actions">Actions</th>
+            </tr>
+          </svelte:fragment>
+          <svelte:fragment slot="body">
+            {#if displayedBlocks.length === 0}
               <tr>
-                <th class="sortable" class:sorted={blockSortBy === 'name'}>
-                  <button type="button" class="th-sort" on:click={() => setBlockSort('name')}>
-                    Name
-                    {#if blockSortBy === 'name'}
-                      <span class="sort-icon" aria-hidden="true">{blockSortDir === 'asc' ? '▲' : '▼'}</span>
-                    {/if}
-                  </button>
-                </th>
-                <th class="sortable" class:sorted={blockSortBy === 'environment'}>
-                  <button type="button" class="th-sort" on:click={() => setBlockSort('environment')}>
-                    Environment
-                    {#if blockSortBy === 'environment'}
-                      <span class="sort-icon" aria-hidden="true">{blockSortDir === 'asc' ? '▲' : '▼'}</span>
-                    {/if}
-                  </button>
-                </th>
-                <th>CIDR</th>
-                <th>Total IPs</th>
-                <th>Used</th>
-                <th>Available</th>
-                <th class="sortable" class:sorted={blockSortBy === 'usage'}>
-                  <button type="button" class="th-sort" on:click={() => setBlockSort('usage')}>
-                    Usage
-                    {#if blockSortBy === 'usage'}
-                      <span class="sort-icon" aria-hidden="true">{blockSortDir === 'asc' ? '▲' : '▼'}</span>
-                    {/if}
-                  </button>
-                </th>
-                <th class="actions">Actions</th>
+                <td colspan="7" class="table-empty-cell">
+                  {#if effectiveFilter === 'orphaned'}
+                    No orphaned blocks.
+                  {:else if effectiveFilter !== 'all'}
+                    No blocks in this environment yet. Create one above.
+                  {:else}
+                    No blocks yet. Create one above.
+                  {/if}
+                </td>
               </tr>
-            </thead>
-            <tbody>
+            {:else}
               {#each sortedBlocks as block}
                 {@const blockRange = cidrRange(block.cidr)}
                 <tr>
@@ -624,7 +760,7 @@
                             blockDropdownStyle = { left: r.right, top: r.bottom + 2 };
                             openBlockMenuId = block.id;
                           }
-                        }} title="Actions">⋮</button>
+                        }} title="Actions"><Icon icon="lucide:ellipsis-vertical" width="1.25em" height="1.25em" /></button>
                         {#if openBlockMenuId === block.id}
                           <div class="menu-dropdown menu-dropdown-fixed" role="menu" style="position:fixed;left:{blockDropdownStyle.left}px;top:{blockDropdownStyle.top}px;transform:translateX(-100%);z-index:1000">
                             <button type="button" role="menuitem" on:click|stopPropagation={() => { startEditBlock(block); openBlockMenuId = null }}>Edit</button>
@@ -636,34 +772,36 @@
                   {/if}
                 </tr>
               {/each}
-            </tbody>
-          </table>
-        </div>
-        <div class="pagination">
-          <span class="pagination-info">Showing {blockStart}–{blockEnd} of {blockTotal}</span>
-          <div class="pagination-controls">
-            <button type="button" class="btn btn-small" disabled={blockPage <= 0} on:click={() => { blockPage -= 1; load() }}>Previous</button>
-            <span class="pagination-page">Page {blockPage + 1} of {blockTotalPages || 1}</span>
-            <button type="button" class="btn btn-small" disabled={blockPage >= blockTotalPages - 1} on:click={() => { blockPage += 1; load() }}>Next</button>
+            {/if}
+          </svelte:fragment>
+        </DataTable>
+        {#if displayedBlocks.length > 0}
+          <div class="pagination">
+            <span class="pagination-info">Showing {blockStart}–{blockEnd} of {blockTotal}</span>
+            <div class="pagination-controls">
+              <button type="button" class="btn btn-small" disabled={blockPage <= 0} on:click={() => { blockPage -= 1; load() }}>Previous</button>
+              <span class="pagination-page">Page {blockPage + 1} of {blockTotalPages || 1}</span>
+              <button type="button" class="btn btn-small" disabled={blockPage >= blockTotalPages - 1} on:click={() => { blockPage += 1; load() }}>Next</button>
+            </div>
+            <label class="page-size">
+              <span>Per page</span>
+              <select bind:value={blockPageSize} on:change={() => { blockPage = 0; load() }}>
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+              </select>
+            </label>
           </div>
-          <label class="page-size">
-            <span>Per page</span>
-            <select bind:value={blockPageSize} on:change={() => { blockPage = 0; load() }}>
-              <option value={10}>10</option>
-              <option value={25}>25</option>
-              <option value={50}>50</option>
-            </select>
-          </label>
-        </div>
+        {/if}
       {/if}
     </section>
 
     <section class="section">
       <div class="section-header">
         <h2>Allocations</h2>
-        <button class="btn btn-primary" on:click={() => { showCreateAlloc = true; allocError = ''; allocName = ''; allocBlockName = ''; allocCidr = '' }}>Create allocation</button>
+        <button class="btn btn-primary" disabled={blocks.length === 0} on:click={() => { showCreateAlloc = true; allocError = ''; allocName = ''; allocBlockName = ''; allocCidr = '' }} title={blocks.length === 0 ? 'Create a network block first' : ''}>Create allocation</button>
       </div>
-      {#if showCreateAlloc}
+      {#if showCreateAlloc && blocks.length > 0}
         <div class="form-card">
           <h3>New allocation</h3>
           <form on:submit|preventDefault={handleCreateAllocation}>
@@ -702,41 +840,55 @@
             </div>
           </form>
         </div>
-      {/if}
-      {#if displayedAllocations.length === 0 && !showCreateAlloc}
-        <div class="empty">
-          {#if effectiveFilter !== 'all'}
-            No allocations in the filtered blocks yet.
-          {:else}
-            No allocations yet. Create one above.
-          {/if}
-        </div>
-      {:else if displayedAllocations.length > 0}
-        <div class="table-wrap">
-          <table class="table">
-            <thead>
-              <tr>
+      {:else}
+        <DataTable>
+          <svelte:fragment slot="header">
+            <tr>
                 <th class="sortable" class:sorted={allocSortBy === 'name'}>
-                  <button type="button" class="th-sort" on:click={() => setAllocSort('name')}>
-                    Name
-                    {#if allocSortBy === 'name'}
-                      <span class="sort-icon" aria-hidden="true">{allocSortDir === 'asc' ? '▲' : '▼'}</span>
-                    {/if}
-                  </button>
-                </th>
-                <th class="sortable" class:sorted={allocSortBy === 'block'}>
-                  <button type="button" class="th-sort" on:click={() => setAllocSort('block')}>
-                    Block
-                    {#if allocSortBy === 'block'}
-                      <span class="sort-icon" aria-hidden="true">{allocSortDir === 'asc' ? '▲' : '▼'}</span>
-                    {/if}
-                  </button>
-                </th>
-                <th>CIDR</th>
-                <th class="actions">Actions</th>
+                <button type="button" class="th-sort" on:click={() => setAllocSort('name')}>
+                  <span class="th-sort-label">Name</span>
+                  {#if allocSortBy === 'name'}
+                    <span class="sort-icon" aria-hidden="true"><Icon icon={allocSortDir === 'asc' ? 'lucide:chevron-up' : 'lucide:chevron-down'} width="0.875em" height="0.875em" /></span>
+                  {/if}
+                </button>
+              </th>
+              <th class="sortable" class:sorted={allocSortBy === 'block'}>
+                <button type="button" class="th-sort" on:click={() => setAllocSort('block')}>
+                  <span class="th-sort-label">Block</span>
+                  {#if allocSortBy === 'block'}
+                    <span class="sort-icon" aria-hidden="true"><Icon icon={allocSortDir === 'asc' ? 'lucide:chevron-up' : 'lucide:chevron-down'} width="0.875em" height="0.875em" /></span>
+                  {/if}
+                </button>
+              </th>
+              <th class="sortable" class:sorted={allocSortBy === 'cidr'}>
+                <button type="button" class="th-sort" on:click={() => setAllocSort('cidr')}>
+                  <span class="th-sort-label">CIDR</span>
+                  {#if allocSortBy === 'cidr'}
+                    <span class="sort-icon" aria-hidden="true"><Icon icon={allocSortDir === 'asc' ? 'lucide:chevron-up' : 'lucide:chevron-down'} width="0.875em" height="0.875em" /></span>
+                  {/if}
+                </button>
+              </th>
+              <th class="actions">Actions</th>
+            </tr>
+          </svelte:fragment>
+          <svelte:fragment slot="body">
+            {#if blocks.length === 0}
+              <tr>
+                <td colspan="4" class="table-empty-cell">Create a network block above before adding allocations.</td>
               </tr>
-            </thead>
-            <tbody>
+            {:else if displayedAllocations.length === 0}
+              <tr>
+                <td colspan="4" class="table-empty-cell">
+                  {#if allocationFilter && String(allocationFilter).trim() !== ''}
+                    No allocations match the allocation filter.
+                  {:else if effectiveFilter !== 'all'}
+                    No allocations in the filtered blocks yet.
+                  {:else}
+                    No allocations yet. Create one above.
+                  {/if}
+                </td>
+              </tr>
+            {:else}
               {#each sortedAllocations as alloc}
                 {@const allocRange = cidrRange(alloc.cidr)}
                 <tr>
@@ -760,7 +912,7 @@
                           allocDropdownStyle = { left: r.right, top: r.bottom + 2 };
                           openAllocMenuId = alloc.id;
                         }
-                      }} title="Actions">⋮</button>
+                      }} title="Actions"><Icon icon="lucide:ellipsis-vertical" width="1.25em" height="1.25em" /></button>
                       {#if openAllocMenuId === alloc.id}
                         <div class="menu-dropdown menu-dropdown-fixed" role="menu" style="position:fixed;left:{allocDropdownStyle.left}px;top:{allocDropdownStyle.top}px;transform:translateX(-100%);z-index:1000">
                           <button type="button" role="menuitem" class="menu-item-danger" on:click|stopPropagation={() => { openDeleteAllocConfirm(alloc); openAllocMenuId = null }}>Delete</button>
@@ -770,25 +922,27 @@
                   </td>
                 </tr>
               {/each}
-            </tbody>
-          </table>
-        </div>
-        <div class="pagination">
-          <span class="pagination-info">Showing {allocStart}–{allocEnd} of {allocTotal}</span>
-          <div class="pagination-controls">
-            <button type="button" class="btn btn-small" disabled={allocPage <= 0} on:click={() => { allocPage -= 1; load() }}>Previous</button>
-            <span class="pagination-page">Page {allocPage + 1} of {allocTotalPages || 1}</span>
-            <button type="button" class="btn btn-small" disabled={allocPage >= allocTotalPages - 1} on:click={() => { allocPage += 1; load() }}>Next</button>
+            {/if}
+          </svelte:fragment>
+        </DataTable>
+        {#if displayedAllocations.length > 0}
+          <div class="pagination">
+            <span class="pagination-info">Showing {allocStart}–{allocEnd} of {allocTotal}</span>
+            <div class="pagination-controls">
+              <button type="button" class="btn btn-small" disabled={allocPage <= 0} on:click={() => { allocPage -= 1; load() }}>Previous</button>
+              <span class="pagination-page">Page {allocPage + 1} of {allocTotalPages || 1}</span>
+              <button type="button" class="btn btn-small" disabled={allocPage >= allocTotalPages - 1} on:click={() => { allocPage += 1; load() }}>Next</button>
+            </div>
+            <label class="page-size">
+              <span>Per page</span>
+              <select bind:value={allocPageSize} on:change={() => { allocPage = 0; load() }}>
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+              </select>
+            </label>
           </div>
-          <label class="page-size">
-            <span>Per page</span>
-            <select bind:value={allocPageSize} on:change={() => { allocPage = 0; load() }}>
-              <option value={10}>10</option>
-              <option value={25}>25</option>
-              <option value={50}>50</option>
-            </select>
-          </label>
-        </div>
+        {/if}
       {/if}
     </section>
 
@@ -841,15 +995,6 @@
   .networks {
     padding-top: 0.5rem;
   }
-  .header {
-    margin-bottom: 1.5rem;
-  }
-  .header h1 {
-    margin: 0;
-    font-size: 1.35rem;
-    font-weight: 600;
-    letter-spacing: -0.02em;
-  }
   .loading {
     color: var(--text-muted);
     padding: 2rem;
@@ -888,10 +1033,6 @@
     outline: none;
     border-color: var(--accent);
   }
-  .btn-small {
-    padding: 0.35rem 0.75rem;
-    font-size: 0.85rem;
-  }
   .form-card select {
     width: 100%;
     padding: 0.5rem 0.75rem;
@@ -903,6 +1044,9 @@
     font-size: 0.9rem;
     cursor: pointer;
     color-scheme: dark;
+  }
+  :global(.dark) .form-card select {
+    background: var(--bg);
   }
   :global([data-theme='light']) .form-card select {
     color-scheme: light;
@@ -986,43 +1130,6 @@
     font-size: 0.95rem;
     font-weight: 500;
     color: var(--text-muted);
-  }
-  .btn {
-    padding: 0.5rem 1rem;
-    border-radius: var(--radius);
-    font-family: var(--font-sans);
-    font-size: 0.9rem;
-    cursor: pointer;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: var(--text);
-    transition: background 0.15s, border-color 0.15s;
-  }
-  .btn:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.06);
-    border-color: var(--text-muted);
-  }
-  .btn:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-  .btn-primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--btn-primary-text);
-  }
-  .btn-primary:hover:not(:disabled) {
-    background: var(--btn-primary-hover-bg);
-    border-color: var(--btn-primary-hover-border);
-  }
-  .btn-danger {
-    background: rgba(248, 81, 73, 0.2);
-    border-color: var(--danger);
-    color: #ff7b72;
-  }
-  .btn-danger:hover:not(:disabled) {
-    background: rgba(248, 81, 73, 0.35);
-    border-color: #ff7b72;
   }
   .modal-backdrop {
     position: fixed;
@@ -1126,76 +1233,6 @@
   .empty {
     color: var(--text-muted);
     padding: 1rem 0;
-  }
-  .table-wrap {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow-sm);
-    overflow-x: auto;
-  }
-  .table {
-    width: 100%;
-    min-width: max-content;
-    border-collapse: collapse;
-  }
-  .table th {
-    text-align: left;
-    padding: 0.75rem 1rem;
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-muted);
-    background: var(--table-header-bg);
-    border-bottom: 1px solid var(--border);
-  }
-  .table th.sortable {
-    padding: 0;
-  }
-  .table th .th-sort {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    width: 100%;
-    padding: 0.75rem 1rem;
-    text-align: left;
-    font-size: inherit;
-    font-weight: inherit;
-    text-transform: inherit;
-    letter-spacing: inherit;
-    color: inherit;
-    background: none;
-    border: none;
-    cursor: pointer;
-    font-family: inherit;
-    transition: color 0.15s, background 0.15s;
-  }
-  .table th .th-sort:hover {
-    color: var(--text);
-    background: rgba(255, 255, 255, 0.04);
-  }
-  .table th.sortable.sorted .th-sort {
-    color: var(--accent);
-  }
-  .table th .sort-icon {
-    font-size: 0.65rem;
-    opacity: 0.9;
-  }
-  .table td {
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid var(--border);
-  }
-  .table tr:last-child td {
-    border-bottom: none;
-  }
-  .table tr:hover td {
-    background: var(--table-row-hover);
-  }
-  .table .actions {
-    text-align: right;
-    white-space: nowrap;
-    min-width: 120px;
   }
   .actions-menu-wrap {
     position: relative;
@@ -1310,12 +1347,6 @@
   .inline-actions {
     display: flex;
     gap: 0.35rem;
-  }
-  .table thead th:first-child {
-    min-width: 160px;
-  }
-  .table td.name {
-    min-width: 160px;
   }
   .name {
     font-weight: 500;

@@ -203,7 +203,7 @@
             <span class="result-range">{cidrRange(blockCidrComputed).start} – {cidrRange(blockCidrComputed).end}</span>
           {/if}
           <span class="ip-count">{blockIpCount.toLocaleString()} IPs</span>
-          <button type="button" class="wizard-btn" on:click={applyBlockCidr} disabled={disabled}>
+          <button type="button" class="btn btn-primary btn-small" on:click={applyBlockCidr} disabled={disabled}>
             Use manual CIDR
           </button>
         </div>
@@ -220,7 +220,7 @@
               <span class="result-range">{suggestedRange.start} – {suggestedRange.end}</span>
             {/if}
             <span class="ip-count">{blockIpCount.toLocaleString()} IPs</span>
-            <button type="button" class="wizard-btn" on:click={applySuggestedBlockCidr} disabled={disabled || suggestedBlockLoading} title="Use suggested CIDR that does not overlap existing blocks in this environment">
+            <button type="button" class="btn btn-primary btn-small" on:click={applySuggestedBlockCidr} disabled={disabled || suggestedBlockLoading} title="Use suggested CIDR that does not overlap existing blocks in this environment">
               Use this CIDR
             </button>
           {:else if selectedPrefix < 9}
@@ -271,7 +271,7 @@
             {/if}
           {/if}
           <span class="ip-count">{allocationIpCount.toLocaleString()} IPs</span>
-          <button type="button" class="wizard-btn" on:click={applyAllocationCidr} disabled={disabled || suggestedLoading} title={suggestedCidrFromApi ? 'Uses bin-packed suggestion from existing allocations' : ''}>
+          <button type="button" class="btn btn-primary btn-small" on:click={applyAllocationCidr} disabled={disabled || suggestedLoading} title={suggestedCidrFromApi ? 'Uses bin-packed suggestion from existing allocations' : ''}>
             Use this CIDR
           </button>
         </div>
@@ -368,6 +368,9 @@
     cursor: pointer;
     color-scheme: dark;
   }
+  :global(.dark) .prefix-select {
+    background: var(--bg);
+  }
   :global([data-theme='light']) .prefix-select {
     color-scheme: light;
   }
@@ -452,25 +455,7 @@
     font-family: var(--font-mono);
     margin-top: 0.15rem;
   }
-  .wizard-btn {
+  .wizard-result .btn {
     margin-left: auto;
-    padding: 0.4rem 0.9rem;
-    border-radius: var(--radius);
-    font-family: var(--font-sans);
-    font-size: 0.85rem;
-    font-weight: 500;
-    cursor: pointer;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: var(--text);
-    transition: background 0.15s, border-color 0.15s;
-  }
-  .wizard-btn:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.06);
-    border-color: var(--text-muted);
-  }
-  .wizard-btn:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
   }
 </style>

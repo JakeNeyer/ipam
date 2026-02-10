@@ -30,7 +30,7 @@ func blockNamesMatch(a, b string) bool {
 }
 
 // computeUsedIPsForBlock returns the sum of IPs allocated from this block (allocations with matching block name).
-func computeUsedIPsForBlock(s *store.Store, blockName string) int {
+func computeUsedIPsForBlock(s store.Storer, blockName string) int {
 	allocs, err := s.ListAllocations()
 	if err != nil {
 		return 0
@@ -45,7 +45,7 @@ func computeUsedIPsForBlock(s *store.Store, blockName string) int {
 }
 
 // CreateBlock handler
-func NewCreateBlockUseCase(s *store.Store) usecase.Interactor {
+func NewCreateBlockUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input createBlockInput, output *blockOutput) error {
 		if input.Name == "" || input.CIDR == "" {
 			return status.Wrap(errors.New("name and CIDR are required"), status.InvalidArgument)
@@ -89,6 +89,15 @@ func NewCreateBlockUseCase(s *store.Store) usecase.Interactor {
 				)
 			}
 		}
+		// Block must not overlap any reserved (blacklisted) CIDR.
+		if reserved, err := s.OverlapsReservedBlock(block.CIDR); err != nil {
+			return status.Wrap(err, status.Internal)
+		} else if reserved != nil {
+			return status.Wrap(
+				fmt.Errorf("CIDR %s overlaps reserved block %s", block.CIDR, reserved.CIDR),
+				status.InvalidArgument,
+			)
+		}
 
 		if err := s.CreateBlock(block); err != nil {
 			return status.Wrap(err, status.Internal)
@@ -111,7 +120,7 @@ func NewCreateBlockUseCase(s *store.Store) usecase.Interactor {
 }
 
 // ListBlocks handler
-func NewListBlocksUseCase(s *store.Store) usecase.Interactor {
+func NewListBlocksUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input listBlocksInput, output *blockListOutput) error {
 		limit, offset := input.Limit, input.Offset
 		if limit <= 0 {
@@ -159,7 +168,7 @@ func NewListBlocksUseCase(s *store.Store) usecase.Interactor {
 }
 
 // GetBlock handler
-func NewGetBlockUseCase(s *store.Store) usecase.Interactor {
+func NewGetBlockUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input getBlockInput, output *blockOutput) error {
 		block, err := s.GetBlock(input.ID)
 		if err != nil {
@@ -189,7 +198,7 @@ func NewGetBlockUseCase(s *store.Store) usecase.Interactor {
 }
 
 // UpdateBlock handler
-func NewUpdateBlockUseCase(s *store.Store) usecase.Interactor {
+func NewUpdateBlockUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input updateBlockInput, output *blockOutput) error {
 		block, err := s.GetBlock(input.ID)
 		if err != nil {
@@ -224,6 +233,14 @@ func NewUpdateBlockUseCase(s *store.Store) usecase.Interactor {
 				)
 			}
 		}
+		if reserved, err := s.OverlapsReservedBlock(block.CIDR); err != nil {
+			return status.Wrap(err, status.Internal)
+		} else if reserved != nil {
+			return status.Wrap(
+				fmt.Errorf("CIDR %s overlaps reserved block %s", block.CIDR, reserved.CIDR),
+				status.InvalidArgument,
+			)
+		}
 		if err := s.UpdateBlock(input.ID, block); err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -251,7 +268,7 @@ func NewUpdateBlockUseCase(s *store.Store) usecase.Interactor {
 }
 
 // DeleteBlock handler. Cascades: deletes all allocations in this block, then the block.
-func NewDeleteBlockUseCase(s *store.Store) usecase.Interactor {
+func NewDeleteBlockUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input getBlockInput, output *struct{}) error {
 		block, err := s.GetBlock(input.ID)
 		if err != nil {
@@ -279,7 +296,7 @@ func NewDeleteBlockUseCase(s *store.Store) usecase.Interactor {
 }
 
 // GetBlockUsage handler
-func NewGetBlockUsageUseCase(s *store.Store) usecase.Interactor {
+func NewGetBlockUsageUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input getBlockInput, output *blockUsageOutput) error {
 		block, err := s.GetBlock(input.ID)
 		if err != nil {
@@ -314,7 +331,7 @@ func NewGetBlockUsageUseCase(s *store.Store) usecase.Interactor {
 
 // SuggestBlockCIDR handler returns a suggested CIDR for the block at the given prefix length,
 // considering existing allocations and bin-packing to fill gaps first.
-func NewSuggestBlockCIDRUseCase(s *store.Store) usecase.Interactor {
+func NewSuggestBlockCIDRUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input suggestBlockCIDRInput, output *suggestBlockCIDROutput) error {
 		if input.Prefix < 1 || input.Prefix > 32 {
 			return status.Wrap(errors.New("prefix must be between 1 and 32"), status.InvalidArgument)
@@ -332,6 +349,24 @@ func NewSuggestBlockCIDRUseCase(s *store.Store) usecase.Interactor {
 		for _, a := range allocs {
 			if blockNamesMatch(a.Block.Name, block.Name) {
 				allocatedCIDRs = append(allocatedCIDRs, a.Block.CIDR)
+			}
+		}
+		// Exclude reserved ranges that overlap this block (contained in block, or reserve contains/overlaps block)
+		reserved, err := s.ListReservedBlocks()
+		if err != nil {
+			return status.Wrap(err, status.Internal)
+		}
+		for _, r := range reserved {
+			overlap, _ := network.Overlaps(block.CIDR, r.CIDR)
+			if !overlap {
+				continue
+			}
+			contained, _ := network.Contains(block.CIDR, r.CIDR)
+			if contained {
+				allocatedCIDRs = append(allocatedCIDRs, r.CIDR)
+			} else {
+				// Reserved contains or partially overlaps block; exclude whole block from suggestion
+				allocatedCIDRs = append(allocatedCIDRs, block.CIDR)
 			}
 		}
 

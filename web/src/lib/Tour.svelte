@@ -110,12 +110,12 @@
         <button type="button" class="tour-skip" on:click={skip}>Skip</button>
         <div class="tour-nav">
           {#if !isFirst}
-            <button type="button" class="tour-back" on:click={back}>Back</button>
+            <button type="button" class="btn btn-small" on:click={back}>Back</button>
           {/if}
           {#if isLast}
-            <button type="button" class="tour-next tour-done" on:click={done}>Done</button>
+            <button type="button" class="btn btn-primary btn-small" on:click={done}>Done</button>
           {:else}
-            <button type="button" class="tour-next" on:click={next}>Next</button>
+            <button type="button" class="btn btn-primary btn-small" on:click={next}>Next</button>
           {/if}
         </div>
       </div>
@@ -186,7 +186,8 @@
     background: none;
     border: none;
     color: var(--text-muted);
-    font-size: 0.85rem;
+    font-size: 0.875rem;
+    font-family: var(--font-sans);
     cursor: pointer;
     padding: 0.25rem 0;
   }
@@ -196,27 +197,6 @@
   .tour-nav {
     display: flex;
     gap: 0.5rem;
-  }
-  .tour-back,
-  .tour-next {
-    padding: 0.4rem 0.75rem;
-    border-radius: var(--radius);
-    font-size: 0.875rem;
-    font-weight: 500;
-    cursor: pointer;
-    border: 1px solid var(--border);
-    background: var(--surface-elevated);
-    color: var(--text);
-  }
-  .tour-back:hover,
-  .tour-next:hover {
-    background: var(--border);
-  }
-  .tour-next.tour-done,
-  .tour-next:not(.tour-done):hover {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--btn-primary-text, #fff);
   }
   .tour-progress {
     margin-top: 0.75rem;

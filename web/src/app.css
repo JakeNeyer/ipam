@@ -1,0 +1,8 @@
+/* Tailwind + Skeleton (order matters) */
+@import 'tailwindcss';
+@import '@skeletonlabs/skeleton';
+@import '@skeletonlabs/skeleton/themes/wintry';
+@import './theme-wintry-legacy.css';
+
+/* Class-based dark mode so Settings toggle (theme.js) controls wintry dark/light */
+@custom-variant dark (&:where(.dark, .dark *));

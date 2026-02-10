@@ -1,0 +1,49 @@
+/* Map Skeleton Wintry theme to legacy CSS vars used by existing components.
+   Dark mode: html has data-theme="wintry" and class="dark" (Settings → Dark mode).
+   Light mode: html has data-theme="wintry" and no .dark class (Settings → Light mode). */
+
+/* Wintry dark mode – surface/elevated slightly lighter than bg for floating; minimal borders; shadows for depth */
+[data-theme='wintry'] {
+	--bg: var(--body-background-color-dark);
+	--surface: var(--color-surface-900);
+	--surface-elevated: var(--color-surface-800);
+	--border: var(--color-surface-900);
+	--text: var(--base-font-color-dark);
+	--text-muted: var(--color-surface-500);
+	--accent: var(--color-primary-500);
+	--accent-dim: oklch(0.62 0.19 260 / 0.2);
+	--btn-primary-text: var(--color-primary-contrast-500);
+	--btn-primary-hover-bg: var(--color-primary-600);
+	--btn-primary-hover-border: var(--color-primary-600);
+	--table-row-hover: oklch(1 0 0 / 0.04);
+	--table-header-bg: oklch(1 0 0 / 0.04);
+	--table-row-border: var(--color-surface-700);
+	--shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35), 0 1px 2px rgba(0, 0, 0, 0.25);
+	--shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
+	--radius: var(--radius-base);
+	--font-sans: var(--base-font-family);
+	--font-mono: ui-monospace, monospace;
+	--success: var(--color-success-500);
+	--warn: var(--color-warning-500);
+	--danger: var(--color-error-500);
+	--graph-node-stroke: var(--color-surface-600);
+	--graph-edge-stroke: var(--color-surface-600);
+}
+
+/* Wintry light mode – surface/elevated slightly lighter than bg for floating; minimal borders; shadows for depth */
+[data-theme='wintry']:not(.dark) {
+	--bg: oklch(0.965 0.003 265);
+	--surface: oklch(0.995 0.001 265);
+	--surface-elevated: oklch(1 0 0);
+	--border: oklch(0.97 0.002 265);
+	--text: var(--base-font-color);
+	--text-muted: var(--color-surface-600);
+	--accent-dim: oklch(0.62 0.19 260 / 0.12);
+	--table-row-hover: oklch(0 0 0 / 0.02);
+	--table-header-bg: oklch(0 0 0 / 0.02);
+	--table-row-border: oklch(0 0 0 / 0.08);
+	--shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+	--shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+	--graph-node-stroke: oklch(0.82 0.008 265);
+	--graph-edge-stroke: oklch(0.75 0.01 265);
+}

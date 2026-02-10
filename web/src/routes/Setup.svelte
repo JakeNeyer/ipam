@@ -1,5 +1,5 @@
 <script>
-  import '../lib/theme.js'
+  import { theme } from '../lib/theme.js'
   import { setup as apiSetup, login } from '../lib/api.js'
   import { user, setupRequired } from '../lib/auth.js'
 
@@ -25,17 +25,31 @@
       return
     }
     submitting = true
+    const trimmedEmail = email.trim()
     try {
-      await apiSetup(email.trim(), password)
-      const u = await login(email.trim(), password)
+      // Step 1: create initial admin (POST /api/setup)
+      await apiSetup(trimmedEmail, password)
+      console.debug('[setup] account created, logging in…')
+    } catch (err) {
+      console.error('[setup] create account failed:', err?.message ?? err, err)
+      error = err?.message ? `Could not create account: ${err.message}` : 'Could not create account.'
+      submitting = false
+      return
+    }
+    try {
+      // Step 2: log in to get session (POST /api/auth/login)
+      const u = await login(trimmedEmail, password)
       if (u) {
         user.set(u)
         setupRequired.set(false)
+        console.debug('[setup] logged in successfully')
       } else {
-        error = 'Account created. Please sign in.'
+        console.warn('[setup] login returned no user; check Network tab for POST /api/auth/login response')
+        error = 'Account created. Please sign in with your email and password.'
       }
     } catch (err) {
-      error = err.message || 'Setup failed.'
+      console.error('[setup] login after setup failed:', err?.message ?? err, err)
+      error = err?.message ? `Account created but sign-in failed: ${err.message}` : 'Account created. Please sign in with your email and password.'
     } finally {
       submitting = false
     }
@@ -44,7 +58,8 @@
 
 <div class="setup-page">
   <div class="setup-card">
-    <h1 class="setup-title">IPAM Setup</h1>
+    <img src={$theme === 'light' ? '/images/logo-light.svg' : '/images/logo.svg'} alt="IPAM" class="setup-logo" />
+    <h1 class="setup-title">Setup</h1>
     <p class="setup-subtitle">Create the initial admin account to get started.</p>
     <form class="setup-form" on:submit={handleSubmit}>
       {#if error}
@@ -87,6 +102,13 @@
     border: 1px solid var(--border);
     border-radius: var(--radius);
     box-shadow: var(--shadow-md);
+  }
+  .setup-logo {
+    display: block;
+    width: 100%;
+    height: auto;
+    margin: 0 auto 1rem;
+    object-fit: contain;
   }
   .setup-title {
     margin: 0 0 0.25rem 0;
@@ -131,10 +153,5 @@
   }
   .setup-submit {
     margin-top: 0.5rem;
-    padding: 0.6rem 1rem;
-    font-size: 1rem;
-  }
-  :global(.btn) {
-    font-family: var(--font-sans);
   }
 </style>

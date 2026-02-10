@@ -1,6 +1,7 @@
 <script>
   import { createEventDispatcher } from 'svelte'
   import { onMount } from 'svelte'
+  import Icon from '@iconify/svelte'
   import ErrorModal from '../lib/ErrorModal.svelte'
   import { cidrRange } from '../lib/cidr.js'
   import { listEnvironments, listAllocations, createEnvironment, updateEnvironment, deleteEnvironment, getEnvironment } from '../lib/api.js'
@@ -52,6 +53,29 @@
   let envPage = 0
   let envPageSize = 10
   let envTotal = 0
+
+  let envSortBy = 'name' // 'name' | 'id'
+  let envSortDir = 'asc' // 'asc' | 'desc'
+
+  function setEnvSort(column) {
+    if (envSortBy === column) {
+      envSortDir = envSortDir === 'asc' ? 'desc' : 'asc'
+    } else {
+      envSortBy = column
+      envSortDir = 'asc'
+    }
+  }
+
+  $: sortedEnvironments = (() => {
+    const list = [...environments]
+    const mult = envSortDir === 'asc' ? 1 : -1
+    if (envSortBy === 'name') {
+      list.sort((a, b) => mult * (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }))
+    } else if (envSortBy === 'id') {
+      list.sort((a, b) => mult * (String(a.id || '').localeCompare(String(b.id || ''), undefined, { sensitivity: 'base' })))
+    }
+    return list
+  })()
 
   async function load() {
     loading = true
@@ -236,9 +260,10 @@
 </script>
 
 <div class="environments">
-  <header class="header">
-    <div class="header-text">
-      <h1>Environments</h1>
+  <header class="page-header">
+    <div class="page-header-text">
+      <h1 class="page-title">Environments</h1>
+      <p class="page-desc">Logical groupings for your network blocks (e.g. production, staging). Create an environment, then add blocks and allocations from the Networks page.</p>
     </div>
     <button class="btn btn-primary" on:click={openCreate}>Create environment</button>
   </header>
@@ -277,8 +302,6 @@
 
   {#if loading}
     <div class="loading">Loading…</div>
-  {:else if envTotal === 0 && !showCreate}
-    <div class="empty">No environments yet. Create one above.</div>
   {:else}
     <div class="list-toolbar">
       {#if openEnvironmentId}
@@ -289,13 +312,32 @@
       <table class="table">
         <thead>
           <tr>
-            <th>Name</th>
-            <th>ID</th>
+            <th class="sortable" class:sorted={envSortBy === 'name'}>
+              <button type="button" class="th-sort" on:click|stopPropagation={() => setEnvSort('name')}>
+                <span class="th-sort-label">Name</span>
+                {#if envSortBy === 'name'}
+                  <span class="sort-icon" aria-hidden="true"><Icon icon={envSortDir === 'asc' ? 'lucide:chevron-up' : 'lucide:chevron-down'} width="0.875em" height="0.875em" /></span>
+                {/if}
+              </button>
+            </th>
+            <th class="sortable" class:sorted={envSortBy === 'id'}>
+              <button type="button" class="th-sort" on:click|stopPropagation={() => setEnvSort('id')}>
+                <span class="th-sort-label">ID</span>
+                {#if envSortBy === 'id'}
+                  <span class="sort-icon" aria-hidden="true"><Icon icon={envSortDir === 'asc' ? 'lucide:chevron-up' : 'lucide:chevron-down'} width="0.875em" height="0.875em" /></span>
+                {/if}
+              </button>
+            </th>
             <th class="actions">Actions</th>
           </tr>
         </thead>
         <tbody>
-          {#each environments as env}
+          {#if envTotal === 0 && !showCreate}
+            <tr>
+              <td colspan="3" class="table-empty-cell">No environments yet. Create one above.</td>
+            </tr>
+          {:else}
+          {#each sortedEnvironments as env}
             <tr class="env-row" class:expanded={expandedEnvId === env.id} role="button" tabindex="0" on:click={() => editingId !== env.id && toggleEnvRow(env)} on:keydown={(e) => e.key === 'Enter' && editingId !== env.id && toggleEnvRow(env)}>
               {#if editingId === env.id}
                 <td colspan="2" class="edit-cell">
@@ -321,7 +363,7 @@
                         menuDropdownStyle = { left: r.right, top: r.bottom + 2 };
                         openMenuId = env.id;
                       }
-                    }} title="Actions">⋮</button>
+                    }} title="Actions"><Icon icon="lucide:ellipsis-vertical" width="1.25em" height="1.25em" /></button>
                     {#if openMenuId === env.id}
                       <div class="menu-dropdown menu-dropdown-fixed" role="menu" style="position:fixed;left:{menuDropdownStyle.left}px;top:{menuDropdownStyle.top}px;transform:translateX(-100%);z-index:1000">
                         <button type="button" role="menuitem" on:click|stopPropagation={() => { startEdit(env); openMenuId = null }}>Edit</button>
@@ -345,7 +387,7 @@
                         menuDropdownStyle = { left: r.right, top: r.bottom + 2 };
                         openMenuId = env.id;
                       }
-                    }} title="Actions">⋮</button>
+                    }} title="Actions"><Icon icon="lucide:ellipsis-vertical" width="1.25em" height="1.25em" /></button>
                     {#if openMenuId === env.id}
                       <div class="menu-dropdown menu-dropdown-fixed" role="menu" style="position:fixed;left:{menuDropdownStyle.left}px;top:{menuDropdownStyle.top}px;transform:translateX(-100%);z-index:1000">
                         <button type="button" role="menuitem" on:click|stopPropagation={() => { startEdit(env); openMenuId = null }}>Edit</button>
@@ -382,7 +424,7 @@
                                 <span class="block-range">{cidrRange(block.cidr).start} – {cidrRange(block.cidr).end}</span>
                               {/if}
                               <span class="block-ips">{block.total_ips?.toLocaleString() ?? 0} IPs</span>
-                              <span class="block-expand">{expandedBlockName === block.name ? '▼' : '▶'}</span>
+                              <span class="block-expand"><Icon icon={expandedBlockName === block.name ? 'lucide:chevron-down' : 'lucide:chevron-right'} width="1em" height="1em" /></span>
                             </div>
                             {#if expandedBlockName === block.name}
                               <div class="allocations-summary">
@@ -414,6 +456,7 @@
               </tr>
             {/if}
           {/each}
+          {/if}
         </tbody>
       </table>
     </div>
@@ -512,63 +555,6 @@
     background: var(--surface);
     color: var(--text);
     font-size: 0.9rem;
-  }
-  .header {
-    margin-bottom: 1.5rem;
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 1rem;
-  }
-  .header-text {
-    flex: 1;
-  }
-  .header h1 {
-    margin: 0;
-    font-size: 1.35rem;
-    font-weight: 600;
-    letter-spacing: -0.02em;
-  }
-  .btn {
-    padding: 0.5rem 1rem;
-    border-radius: var(--radius);
-    font-family: var(--font-sans);
-    font-size: 0.9rem;
-    cursor: pointer;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: var(--text);
-    transition: background 0.15s, border-color 0.15s;
-  }
-  .btn:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.06);
-    border-color: var(--text-muted);
-  }
-  .btn:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-  .btn-primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--btn-primary-text);
-  }
-  .btn-primary:hover:not(:disabled) {
-    background: var(--btn-primary-hover-bg);
-    border-color: var(--btn-primary-hover-border);
-  }
-  .btn-small {
-    padding: 0.35rem 0.75rem;
-    font-size: 0.85rem;
-  }
-  .btn-danger {
-    background: rgba(248, 81, 73, 0.2);
-    border-color: var(--danger);
-    color: #ff7b72;
-  }
-  .btn-danger:hover:not(:disabled) {
-    background: rgba(248, 81, 73, 0.35);
-    border-color: #ff7b72;
   }
   .actions {
     text-align: right;
@@ -799,9 +785,54 @@
     background: var(--table-header-bg);
     border-bottom: 1px solid var(--border);
   }
+  .table th.sortable {
+    padding: 0;
+  }
+  .table th .th-sort {
+    display: inline-flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.35rem;
+    width: 100%;
+    min-width: 0;
+    padding: 0.75rem 1rem;
+    text-align: left;
+    white-space: nowrap;
+    font-size: inherit;
+    font-weight: inherit;
+    text-transform: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+    transition: color 0.15s, background 0.15s;
+  }
+  .table th .th-sort:hover {
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.04);
+  }
+  .table th.sortable.sorted .th-sort {
+    color: var(--accent);
+  }
+  .table th .th-sort-label {
+    flex-shrink: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .table th .sort-icon {
+    flex-shrink: 0;
+    flex-grow: 0;
+    font-size: 0.65rem;
+  }
   .table td {
     padding: 0.75rem 1rem;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--table-row-border);
   }
   .table tr:last-child td {
     border-bottom: none;
@@ -836,7 +867,7 @@
   .detail-row td {
     vertical-align: top;
     padding: 0;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--table-row-border);
   }
   .detail-cell {
     padding: 1rem 1.5rem 1rem 3rem;

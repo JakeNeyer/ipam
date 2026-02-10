@@ -62,3 +62,16 @@ type allocationListOutput struct {
 	Allocations []*allocationOutput `json:"allocations"`
 	Total       int                 `json:"total"`
 }
+
+// Reserved block output types
+type reservedBlockOutput struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	CIDR      string `json:"cidr"`
+	Reason    string `json:"reason,omitempty"`
+	CreatedAt string `json:"created_at"`
+}
+
+type reservedBlockListOutput struct {
+	ReservedBlocks []*reservedBlockOutput `json:"reserved_blocks"`
+}

@@ -5,12 +5,14 @@ import (
 	"github.com/JakeNeyer/ipam/server/handlers"
 	"github.com/JakeNeyer/ipam/store"
 	"github.com/swaggest/openapi-go/openapi31"
+	"github.com/swaggest/rest/nethttp"
 	"github.com/swaggest/rest/response/gzip"
 	"github.com/swaggest/rest/web"
+	swguicfg "github.com/swaggest/swgui"
 	swgui "github.com/swaggest/swgui/v5emb"
 )
 
-func NewServer(s *store.Store) *web.Service {
+func NewServer(s store.Storer) *web.Service {
 	svc := web.NewService(openapi31.NewReflector())
 
 	svc.OpenAPISchema().SetTitle("IPAM Service")
@@ -22,17 +24,41 @@ func NewServer(s *store.Store) *web.Service {
 	)
 
 	// Setup routes (no auth; only when no users exist).
-	svc.Handle("/api/setup/status", handlers.GetSetupStatusHandler(s))
-	svc.Handle("/api/setup", handlers.PostSetupHandler(s))
+	getSetupStatusUC := handlers.NewGetSetupStatusUseCase(s)
+	svc.Get("/api/setup/status", getSetupStatusUC)
+
+	postSetupUC := handlers.NewPostSetupUseCase(s)
+	svc.Post("/api/setup", postSetupUC)
+	svc.Post("/api/setup/status", postSetupUC) // alias so POST to status (e.g. form action) also creates admin
 
 	// Auth routes (no auth required for login/logout).
-	svc.Handle("/api/auth/login", handlers.LoginHandler(s))
-	svc.Handle("/api/auth/logout", handlers.LogoutHandler(s))
-	svc.Handle("/api/auth/me", handlers.MeHandler())
-	svc.Handle("/api/auth/me/tour-completed", handlers.TourCompletedHandler(s))
+	loginUC := handlers.NewLoginUseCase(s)
+	svc.Post("/api/auth/login", loginUC)
+	logoutUC := handlers.NewLogoutUseCase(s)
+	svc.Post("/api/auth/logout", logoutUC, nethttp.SuccessStatus(204))
+
+	meUC := handlers.NewMeUseCase()
+	svc.Get("/api/auth/me", meUC)
+
+	tourCompletedUC := handlers.NewTourCompletedUseCase(s)
+	svc.Post("/api/auth/me/tour-completed", tourCompletedUC)
+
+	listTokensUC := handlers.NewListTokensUseCase(s)
+	svc.Get("/api/auth/me/tokens", listTokensUC)
+	createTokenUC := handlers.NewCreateTokenUseCase(s)
+	svc.Post("/api/auth/me/tokens", createTokenUC)
+	deleteTokenUC := handlers.NewDeleteTokenUseCase(s)
+	svc.Delete("/api/auth/me/tokens/{id}", deleteTokenUC)
 
 	// Admin routes (auth + admin role required).
 	svc.Handle("/api/admin/users", handlers.AdminUsersHandler(s))
+
+	listReservedUC := handlers.NewListReservedBlocksUseCase(s)
+	svc.Get("/api/admin/reserved-blocks", listReservedUC)
+	createReservedUC := handlers.NewCreateReservedBlockUseCase(s)
+	svc.Post("/api/admin/reserved-blocks", createReservedUC)
+	deleteReservedUC := handlers.NewDeleteReservedBlockUseCase(s)
+	svc.Delete("/api/admin/reserved-blocks/{id}", deleteReservedUC)
 
 	// Environment use case handlers.
 	createEnvUC := handlers.NewCreateEnvironmentUseCase(s)
@@ -91,10 +117,13 @@ func NewServer(s *store.Store) *web.Service {
 	deleteAllocUC := handlers.NewDeleteAllocationUseCase(s)
 	svc.Delete("/api/allocations/{id}", deleteAllocUC)
 
-	svc.Handle("/api/export/csv", handlers.ExportCSVHandler(s))
+	exportCSVUC := handlers.NewExportCSVUseCase(s)
+	svc.Get("/api/export/csv", exportCSVUC, func(h *nethttp.Handler) { (*h).SetResponseEncoder(handlers.NewCSVResponseEncoder()) })
 
-	// Swagger UI endpoint at /docs.
-	svc.Docs("/docs", swgui.New)
+	// Swagger UI endpoint at /docs with Wintry-style dark theme.
+	svc.Docs("/docs", swgui.NewWithConfig(swguicfg.Config{
+		AppendHead: swaggerThemeCSS(),
+	}))
 
 	return svc
 }

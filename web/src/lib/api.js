@@ -94,17 +94,21 @@ export async function createEnvironment(name, initialBlock = null) {
   return post('/environments', body)
 }
 
+function envIdPath(id) {
+  return '/environments/' + encodeURIComponent(String(id))
+}
+
 export async function getEnvironment(id) {
-  const data = await get('/environments/' + id)
+  const data = await get(envIdPath(id))
   return data
 }
 
 export async function updateEnvironment(id, name) {
-  return put('/environments/' + id, { name })
+  return put(envIdPath(id), { name })
 }
 
 export async function deleteEnvironment(id) {
-  return del('/environments/' + id)
+  return del(envIdPath(id))
 }
 
 /**
@@ -152,7 +156,7 @@ export async function suggestEnvironmentBlockCidr(environmentId, prefix) {
 }
 
 /**
- * @param {{ limit?: number, offset?: number, name?: string, block_name?: string }} opts
+ * @param {{ limit?: number, offset?: number, name?: string, block_name?: string, environment_id?: string }} opts
  * @returns {{ allocations: Array, total: number }}
  */
 export async function listAllocations(opts = {}) {
@@ -160,6 +164,7 @@ export async function listAllocations(opts = {}) {
   const params = { limit: limit || 500, offset: opts.offset ?? 0 }
   if (opts.name != null && opts.name !== '') params.name = opts.name
   if (opts.block_name != null && opts.block_name !== '') params.block_name = opts.block_name
+  if (opts.environment_id != null && opts.environment_id !== '') params.environment_id = opts.environment_id
   const data = await get('/allocations', params)
   return { allocations: data.allocations ?? [], total: data.total ?? 0 }
 }
@@ -204,6 +209,81 @@ export async function completeTour() {
   if (!res.ok) await handleError(res)
   if (res.status === 204) return
   return res.json()
+}
+
+/**
+ * List API tokens for the current user.
+ * @returns {{ tokens: Array<{ id: string, name: string, created_at: string, expires_at?: string | null }> }}
+ */
+export async function listTokens() {
+  const data = await get('/auth/me/tokens')
+  return { tokens: data.tokens ?? [] }
+}
+
+/**
+ * Create an API token. The raw token is only returned once.
+ * @param {string} name
+ * @param {{ expires_at?: string | null }} [options] - Optional. expires_at: RFC3339 date; omit = never expires.
+ * @returns {{ token: { id: string, name: string, token: string, created_at: string, expires_at?: string | null } }}
+ */
+export async function createToken(name, options = {}) {
+  const body = { name }
+  if (options.expires_at) body.expires_at = options.expires_at
+  const data = await post('/auth/me/tokens', body)
+  return data
+}
+
+/**
+ * Delete an API token by id.
+ * @param {string} id
+ */
+export async function deleteToken(id) {
+  const res = await fetch(`${API_BASE}/auth/me/tokens/${id}`, {
+    ...FETCH_OPTS,
+    method: 'DELETE',
+  })
+  if (!res.ok) await handleError(res)
+  if (res.status === 204) return
+}
+
+/**
+ * List reserved blocks (blacklisted CIDR ranges). Admin only.
+ * @returns {{ reserved_blocks: Array<{ id: string, cidr: string, reason: string, created_at: string }> }}
+ */
+export async function listReservedBlocks() {
+  const data = await get('/admin/reserved-blocks')
+  return { reserved_blocks: data.reserved_blocks ?? [] }
+}
+
+/**
+ * Create a reserved block. Admin only.
+ * @param {{ name?: string, cidr: string, reason?: string }} body - name (optional), cidr, reason (optional)
+ * @returns {{ id: string, name: string, cidr: string, reason: string, created_at: string }}
+ */
+export async function createReservedBlock(body) {
+  const b = {
+    name: (body.name ?? '').trim(),
+    cidr: (body.cidr ?? '').trim(),
+  }
+  if (body.reason != null) b.reason = String(body.reason).trim()
+  const data = await post('/admin/reserved-blocks', b)
+  return data
+}
+
+/**
+ * Delete a reserved block by id. Admin only.
+ * @param {string} id
+ */
+export async function deleteReservedBlock(id) {
+  const res = await fetch(`${API_BASE}/admin/reserved-blocks/${id}`, {
+    ...FETCH_OPTS,
+    method: 'DELETE',
+  })
+  if (!res.ok) await handleError(res)
+  if (res.status === 204) return
+  const text = await res.text()
+  if (!text) return
+  return JSON.parse(text)
 }
 
 /**
