@@ -121,6 +121,10 @@ func UpdateUserRoleHandler(s store.Storer) http.HandlerFunc {
 			auth.WriteJSONError(w, "invalid user id", http.StatusBadRequest)
 			return
 		}
+		if userID == user.ID {
+			auth.WriteJSONError(w, "cannot change your own role", http.StatusBadRequest)
+			return
+		}
 
 		var req UpdateUserRoleRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

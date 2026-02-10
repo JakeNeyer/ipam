@@ -3,6 +3,7 @@
   import Icon from '@iconify/svelte'
   import '../lib/theme.js'
   import { listUsers, listTokens, deleteToken, listSignupInvites, revokeSignupInvite, updateUserRole, deleteUser } from '../lib/api.js'
+  import { user } from '../lib/auth.js'
   import ApiTokensModal from '../lib/ApiTokensModal.svelte'
   import AddUserModal from '../lib/AddUserModal.svelte'
   import SignupInviteModal from '../lib/SignupInviteModal.svelte'
@@ -320,7 +321,7 @@
                   <select
                     class="role-select"
                     value={u.role}
-                    disabled={updatingUserRoleId === u.id || deletingUserId === u.id}
+                    disabled={updatingUserRoleId === u.id || deletingUserId === u.id || $user?.id === u.id}
                     on:change={(e) => handleUpdateUserRole(u.id, e.currentTarget.value)}
                   >
                     <option value="user">user</option>
