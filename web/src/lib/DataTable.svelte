@@ -29,7 +29,8 @@
     border-collapse: collapse;
     font-size: 0.9rem;
   }
-  .table th {
+  /* Slotted content (header/body from parent) - use :global so styles apply to slot output */
+  .table-wrap :global(.table th) {
     text-align: left;
     padding: 0.75rem 1rem;
     font-size: 0.75rem;
@@ -40,10 +41,9 @@
     background: var(--table-header-bg, var(--bg));
     border-bottom: 1px solid var(--border);
   }
-  .table th.sortable {
+  .table-wrap :global(.table th.sortable) {
     padding: 0;
   }
-  /* :global() so these apply to slotted header content (from Networks, etc.) */
   .table-wrap :global(th .th-sort) {
     display: inline-flex;
     flex-direction: row;
@@ -95,31 +95,31 @@
     display: block;
     vertical-align: middle;
   }
-  .table td {
+  .table-wrap :global(.table td) {
     padding: 0.75rem 1rem;
     border-bottom: 1px solid var(--table-row-border, var(--border));
     vertical-align: middle;
   }
-  .table tbody tr:last-child td {
+  .table-wrap :global(.table tbody tr:last-child td) {
     border-bottom: none;
   }
-  .table tbody tr:hover td {
+  .table-wrap :global(.table tbody tr:hover td) {
     background: var(--table-row-hover, rgba(255, 255, 255, 0.02));
   }
-  .table .actions,
-  .table .table-actions {
+  .table-wrap :global(.table .actions),
+  .table-wrap :global(.table .table-actions) {
     text-align: right;
     white-space: nowrap;
     min-width: 120px;
   }
-  .table thead th:first-child {
+  .table-wrap :global(.table thead th:first-child) {
     min-width: 160px;
   }
-  .table td.name {
+  .table-wrap :global(.table td.name) {
     min-width: 160px;
   }
-  .table td.cidr-cell code,
-  .table td.cidr code {
+  .table-wrap :global(.table td.cidr-cell code),
+  .table-wrap :global(.table td.cidr code) {
     font-size: 0.85em;
     background: var(--table-header-bg, var(--bg));
     padding: 0.15em 0.4em;

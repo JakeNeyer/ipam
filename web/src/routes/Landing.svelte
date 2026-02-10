@@ -313,7 +313,7 @@
       </div>
       <div class="terraform-snippet">
         {#if terraformTab === 'aws'}
-          <pre class="terraform-code" id="terraform-panel-aws" role="tabpanel" aria-labelledby="terraform-tab-aws" tabindex="0"><code>provider "ipam" {'{'}
+          <div id="terraform-panel-aws" role="tabpanel" aria-labelledby="terraform-tab-aws" tabindex="0" class="terraform-panel"><pre class="terraform-code"><code>provider "ipam" {'{'}
   endpoint = "https://ipam.example.com"
   token    = var.ipam_token
 {'}'}
@@ -344,9 +344,9 @@ resource "aws_subnet" "app" {'{'}
   vpc_id     = aws_vpc.main.id
   cidr_block = ipam_allocation.app.cidr
   availability_zone = "us-east-1a"
-{'}'}</code></pre>
+{'}'}</code></pre></div>
         {:else if terraformTab === 'azure'}
-          <pre class="terraform-code" id="terraform-panel-azure" role="tabpanel" aria-labelledby="terraform-tab-azure" tabindex="0"><code>provider "ipam" {'{'}
+          <div id="terraform-panel-azure" role="tabpanel" aria-labelledby="terraform-tab-azure" tabindex="0" class="terraform-panel"><pre class="terraform-code"><code>provider "ipam" {'{'}
   endpoint = "https://ipam.example.com"
   token    = var.ipam_token
 {'}'}
@@ -380,9 +380,9 @@ resource "azurerm_subnet" "app" {'{'}
   resource_group_name  = azurerm_resource_group.main.name
   virtual_network_name = azurerm_virtual_network.main.name
   address_prefixes     = [ipam_allocation.app.cidr]
-{'}'}</code></pre>
+{'}'}</code></pre></div>
         {:else}
-          <pre class="terraform-code" id="terraform-panel-gcp" role="tabpanel" aria-labelledby="terraform-tab-gcp" tabindex="0"><code>provider "ipam" {'{'}
+          <div id="terraform-panel-gcp" role="tabpanel" aria-labelledby="terraform-tab-gcp" tabindex="0" class="terraform-panel"><pre class="terraform-code"><code>provider "ipam" {'{'}
   endpoint = "https://ipam.example.com"
   token    = var.ipam_token
 {'}'}
@@ -414,7 +414,7 @@ resource "google_compute_subnetwork" "app" {'{'}
   ip_cidr_range = ipam_allocation.app.cidr
   region        = "us-central1"
   network       = google_compute_network.main.id
-{'}'}</code></pre>
+{'}'}</code></pre></div>
         {/if}
       </div>
     </div>

@@ -1,0 +1,8 @@
+.git
+.gitignore
+.dockerignore
+web/node_modules
+web/dist
+web/playwright-browsers
+terraform-provider-ipam
+*.md

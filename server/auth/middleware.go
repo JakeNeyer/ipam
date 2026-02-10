@@ -80,20 +80,22 @@ func WriteJSONError(w http.ResponseWriter, msg string, code int) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
-// SetSessionCookie sets the session cookie on the response.
-func SetSessionCookie(w http.ResponseWriter, sessionID string) {
-	http.SetCookie(w, &http.Cookie{
+// SetSessionCookie sets the session cookie on the response. secure should be true when using HTTPS.
+func SetSessionCookie(w http.ResponseWriter, sessionID string, secure bool) {
+	c := &http.Cookie{
 		Name:     SessionCookieName,
 		Value:    sessionID,
 		Path:     "/",
 		MaxAge:   int(SessionDuration.Seconds()),
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-	})
+		Secure:   secure,
+	}
+	http.SetCookie(w, c)
 }
 
-// ClearSessionCookie clears the session cookie.
-func ClearSessionCookie(w http.ResponseWriter) {
+// ClearSessionCookie clears the session cookie. secure should match the cookie that was set (e.g. request was HTTPS).
+func ClearSessionCookie(w http.ResponseWriter, secure bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     SessionCookieName,
 		Value:    "",
@@ -101,6 +103,7 @@ func ClearSessionCookie(w http.ResponseWriter) {
 		MaxAge:   -1,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
+		Secure:   secure,
 	})
 }
 

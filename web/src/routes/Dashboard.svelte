@@ -599,10 +599,6 @@
     color: var(--warn);
     font-weight: 500;
   }
-  .orphaned-card-icon {
-    flex-shrink: 0;
-    color: var(--warn);
-  }
   .orphaned-card-link {
     font-size: 0.875rem;
     font-weight: 500;

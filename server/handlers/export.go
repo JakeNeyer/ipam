@@ -125,3 +125,63 @@ func (e *csvResponseEncoder) SetupOutput(output interface{}, _ *rest.HandlerTrai
 func (e *csvResponseEncoder) MakeOutput(w http.ResponseWriter, _ rest.HandlerTrait) interface{} {
 	return &exportCSVOutput{}
 }
+
+// ExportCSVHandler returns an http.Handler that writes CSV directly to the response.
+// Use this when the use-case + custom encoder chain does not write the body (e.g. empty download).
+func ExportCSVHandler(s store.Storer) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		envs, err := s.ListEnvironments()
+		if err != nil {
+			http.Error(w, "Failed to list environments", http.StatusInternalServerError)
+			return
+		}
+		blocks, err := s.ListBlocks()
+		if err != nil {
+			http.Error(w, "Failed to list blocks", http.StatusInternalServerError)
+			return
+		}
+		envByID := make(map[string]string)
+		for _, e := range envs {
+			envByID[e.Id.String()] = e.Name
+		}
+		var buf bytes.Buffer
+		wr := csv.NewWriter(&buf)
+		_ = wr.Write([]string{"name", "cidr", "cidr_start", "cidr_end", "environment_name", "total_ips", "used_ips", "available_ips"})
+		for _, b := range blocks {
+			used := computeUsedIPsForBlock(s, b.Name)
+			avail := b.Usage.TotalIPs - used
+			if avail < 0 {
+				avail = 0
+			}
+			envName := envByID[b.EnvironmentID.String()]
+			start, end := cidrStartEnd(b.CIDR)
+			_ = wr.Write([]string{
+				b.Name,
+				b.CIDR,
+				start,
+				end,
+				envName,
+				strconv.Itoa(b.Usage.TotalIPs),
+				strconv.Itoa(used),
+				strconv.Itoa(avail),
+			})
+		}
+		wr.Flush()
+		if wr.Error() != nil {
+			http.Error(w, "Failed to write CSV", http.StatusInternalServerError)
+			return
+		}
+		body := buf.Bytes()
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="ipam-export.csv"`)
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		w.WriteHeader(http.StatusOK)
+		if r.Method != http.MethodHead {
+			_, _ = w.Write(body)
+		}
+	})
+}

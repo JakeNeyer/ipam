@@ -532,7 +532,7 @@
   </header>
 
   <div class="filter-bar">
-    <label class="filter-label">
+    <div class="filter-label" role="group" aria-label="Environment">
       <span>Environment</span>
       <SearchableSelect
         options={[
@@ -544,8 +544,8 @@
         on:change={(e) => setFilter(e.detail)}
         placeholder="All"
       />
-    </label>
-    <label class="filter-label">
+    </div>
+    <div class="filter-label" role="group" aria-label="Block">
       <span>Block</span>
       <SearchableSelect
         options={[{ value: '', label: 'All' }, ...blockFilterOptions]}
@@ -553,8 +553,8 @@
         on:change={(e) => dispatch('setBlockFilter', { block: e.detail === '' ? null : e.detail })}
         placeholder="All"
       />
-    </label>
-    <label class="filter-label">
+    </div>
+    <div class="filter-label" role="group" aria-label="Allocation">
       <span>Allocation</span>
       <SearchableSelect
         options={[{ value: '', label: 'All' }, ...allocationFilterOptions]}
@@ -562,7 +562,7 @@
         on:change={(e) => dispatch('setAllocationFilter', { allocation: e.detail === '' ? null : e.detail })}
         placeholder="All"
       />
-    </label>
+    </div>
     {#if effectiveFilter !== 'all' || blockNameFilter || (allocationFilter && String(allocationFilter).trim() !== '')}
       <button type="button" class="btn btn-small" on:click={clearAllFilters}>Show all</button>
     {/if}
@@ -585,17 +585,17 @@
               <CidrWizard mode="block" environmentId={blockEnvironmentId || environmentId || null} bind:value={blockCidr} disabled={blockSubmitting} />
             </div>
             <div class="form-row">
-              <label>
+              <label for="create-block-cidr">
                 <span>CIDR (from wizard or type here)</span>
-                <input type="text" bind:value={blockCidr} placeholder="e.g. 10.0.0.0/8" disabled={blockSubmitting} />
+                <input id="create-block-cidr" type="text" bind:value={blockCidr} placeholder="e.g. 10.0.0.0/8" disabled={blockSubmitting} />
               </label>
             </div>
             <div class="form-row">
-              <label>
+              <label for="create-block-name">
                 <span>Name</span>
-                <input type="text" bind:value={blockName} placeholder="e.g. prod-vpc" disabled={blockSubmitting} />
+                <input id="create-block-name" type="text" bind:value={blockName} placeholder="e.g. prod-vpc" disabled={blockSubmitting} />
               </label>
-              <label>
+              <div class="form-label-wrap" role="group" aria-label="Environment">
                 <span>Environment</span>
                 <SearchableSelect
                   options={[{ value: '', label: '— None —' }, ...environments.map((e) => ({ value: String(e.id), label: e.name }))]}
@@ -603,7 +603,7 @@
                   placeholder="— None —"
                   disabled={blockSubmitting}
                 />
-              </label>
+              </div>
             </div>
             <div class="form-actions">
               <button type="button" class="btn" on:click={() => (showCreateBlock = false)} disabled={blockSubmitting}>Cancel</button>
@@ -698,7 +698,7 @@
                     <td colspan="7" class="edit-cell">
                       <form class="inline-edit" on:submit|preventDefault={handleUpdateBlock}>
                         <input type="text" bind:value={editBlockName} placeholder="Block name" disabled={editBlockSubmitting} />
-                        <label class="inline-edit-env">
+                        <div class="inline-edit-env" role="group" aria-label="Environment">
                           <span class="sr-only">Environment</span>
                           <SearchableSelect
                             options={[{ value: '', label: '— None —' }, ...environments.map((e) => ({ value: String(e.id), label: e.name }))]}
@@ -706,7 +706,7 @@
                             placeholder="— None —"
                             disabled={editBlockSubmitting}
                           />
-                        </label>
+                        </div>
                         <div class="inline-actions">
                           <button type="button" class="btn btn-small" on:click={cancelEditBlock} disabled={editBlockSubmitting}>Cancel</button>
                           <button type="submit" class="btn btn-primary btn-small" disabled={editBlockSubmitting}>
@@ -783,9 +783,9 @@
               <span class="pagination-page">Page {blockPage + 1} of {blockTotalPages || 1}</span>
               <button type="button" class="btn btn-small" disabled={blockPage >= blockTotalPages - 1} on:click={() => { blockPage += 1; load() }}>Next</button>
             </div>
-            <label class="page-size">
+            <label class="page-size" for="block-page-size">
               <span>Per page</span>
-              <select bind:value={blockPageSize} on:change={() => { blockPage = 0; load() }}>
+              <select id="block-page-size" bind:value={blockPageSize} on:change={() => { blockPage = 0; load() }}>
                 <option value={10}>10</option>
                 <option value={25}>25</option>
                 <option value={50}>50</option>
@@ -806,7 +806,7 @@
           <h3>New allocation</h3>
           <form on:submit|preventDefault={handleCreateAllocation}>
             <div class="form-row">
-              <label id="searchable-select-label">
+              <div role="group" aria-label="Block name" id="searchable-select-label">
                 <span>Block name</span>
                 <SearchableSelect
                   options={[{ value: '', label: '— Select parent block —' }, ...displayedBlocks.map((b) => ({ value: b.name, label: b.name }))]}
@@ -814,22 +814,22 @@
                   placeholder="— Select parent block —"
                   disabled={allocSubmitting}
                 />
-              </label>
+              </div>
             </div>
             <div class="wizard-display">
               <h4 class="wizard-heading">CIDR wizard</h4>
               <CidrWizard mode="allocation" parentCidr={allocParentCidr} blockId={allocBlockId} bind:value={allocCidr} disabled={allocSubmitting} />
             </div>
             <div class="form-row">
-              <label>
+              <label for="create-alloc-cidr">
                 <span>CIDR (from wizard or type here)</span>
-                <input type="text" bind:value={allocCidr} placeholder="e.g. 10.0.1.0/24" disabled={allocSubmitting} />
+                <input id="create-alloc-cidr" type="text" bind:value={allocCidr} placeholder="e.g. 10.0.1.0/24" disabled={allocSubmitting} />
               </label>
             </div>
             <div class="form-row">
-              <label>
+              <label for="create-alloc-name">
                 <span>Name</span>
-                <input type="text" bind:value={allocName} placeholder="e.g. app-subnet" disabled={allocSubmitting} />
+                <input id="create-alloc-name" type="text" bind:value={allocName} placeholder="e.g. app-subnet" disabled={allocSubmitting} />
               </label>
             </div>
             <div class="form-actions">
@@ -933,9 +933,9 @@
               <span class="pagination-page">Page {allocPage + 1} of {allocTotalPages || 1}</span>
               <button type="button" class="btn btn-small" disabled={allocPage >= allocTotalPages - 1} on:click={() => { allocPage += 1; load() }}>Next</button>
             </div>
-            <label class="page-size">
+            <label class="page-size" for="alloc-page-size">
               <span>Per page</span>
-              <select bind:value={allocPageSize} on:change={() => { allocPage = 0; load() }}>
+              <select id="alloc-page-size" bind:value={allocPageSize} on:change={() => { allocPage = 0; load() }}>
                 <option value={10}>10</option>
                 <option value={25}>25</option>
                 <option value={50}>50</option>
@@ -1011,74 +1011,27 @@
     align-items: center;
     gap: 0.5rem;
     margin: 0;
+    font-size: 0.9rem;
+    color: var(--text-muted);
   }
   .filter-label span {
     font-size: 0.85rem;
-    color: var(--text-muted);
+    white-space: nowrap;
   }
   .filter-label :global(.searchable-select) {
     min-width: 160px;
   }
-  .filter-select {
-    padding: 0.4rem 0.75rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface);
-    color: var(--text);
-    font-family: var(--font-sans);
-    font-size: 0.9rem;
-    min-width: 160px;
+  .form-card .form-label-wrap {
+    display: block;
+    flex: 1;
+    min-width: 140px;
   }
-  .filter-select:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
-  .form-card select {
-    width: 100%;
-    padding: 0.5rem 0.75rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface);
-    color: var(--text);
-    font-family: var(--font-sans);
-    font-size: 0.9rem;
-    cursor: pointer;
-    color-scheme: dark;
-  }
-  :global(.dark) .form-card select {
-    background: var(--bg);
-  }
-  :global([data-theme='light']) .form-card select {
-    color-scheme: light;
-  }
-  .form-card select:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
-  .filter-row {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-  }
-  .filter-label {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.9rem;
+  .form-card .form-label-wrap span {
+    display: block;
+    font-size: 0.8rem;
+    font-weight: 500;
     color: var(--text-muted);
-  }
-  .filter-label span {
-    white-space: nowrap;
-  }
-  .filter-input {
-    padding: 0.4rem 0.6rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface);
-    color: var(--text);
-    font-size: 0.9rem;
-    min-width: 10rem;
+    margin-bottom: 0.35rem;
   }
   .pagination {
     display: flex;
@@ -1230,10 +1183,6 @@
     display: flex;
     gap: 0.5rem;
   }
-  .empty {
-    color: var(--text-muted);
-    padding: 1rem 0;
-  }
   .actions-menu-wrap {
     position: relative;
     display: inline-flex;
@@ -1319,20 +1268,6 @@
   .inline-edit-env {
     margin: 0;
   }
-  .inline-edit select {
-    padding: 0.4rem 0.6rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--font-sans);
-    font-size: 0.9rem;
-    min-width: 140px;
-  }
-  .inline-edit select:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
   .sr-only {
     position: absolute;
     width: 1px;
@@ -1350,12 +1285,6 @@
   }
   .name {
     font-weight: 500;
-  }
-  .name-cell {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
   }
   .tag {
     display: inline-block;
@@ -1379,8 +1308,7 @@
   .cidr {
     vertical-align: top;
   }
-  .cidr code,
-  .id code {
+  .cidr code {
     font-family: var(--font-mono);
     font-size: 0.8rem;
     color: var(--text-muted);

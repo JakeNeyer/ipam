@@ -154,8 +154,17 @@
 <svelte:window on:keydown={handleKeydown} />
 
 {#if open}
-  <div class="backdrop" role="dialog" aria-modal="true" aria-label="Command palette" on:click={handleBackdropClick}>
-    <div class="palette" on:click|stopPropagation>
+  <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+  <div
+    class="backdrop"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Command palette"
+    tabindex="-1"
+    on:click={handleBackdropClick}
+    on:keydown={handleKeydown}
+  >
+    <div class="palette" role="presentation" on:click|stopPropagation on:keydown|stopPropagation>
       <div class="palette-header">
         <span class="palette-icon" aria-hidden="true"><Icon icon="lucide:command" width="1rem" height="1rem" /></span>
         <input
@@ -180,6 +189,7 @@
               class:selected={i === selectedIndex}
               role="option"
               aria-selected={i === selectedIndex}
+              aria-current={item.type === 'nav' && item.id === currentRoute ? 'true' : undefined}
               on:click={() => handleSelect(item)}
               on:mouseenter={() => (selectedIndex = i)}
             >

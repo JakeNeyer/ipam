@@ -3,8 +3,10 @@ package handlers
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/JakeNeyer/ipam/internal/logger"
+	"github.com/JakeNeyer/ipam/server/validation"
 	"github.com/JakeNeyer/ipam/store"
 	"github.com/swaggest/usecase"
 	"github.com/swaggest/usecase/status"
@@ -59,9 +61,13 @@ func NewPostSetupUseCase(s store.Storer) usecase.Interactor {
 			logger.Info(logger.MsgSetupAlreadyDone, logger.KeyOperation, "post_setup")
 			return status.Wrap(errors.New("setup already completed"), status.PermissionDenied)
 		}
-		if input.Email == "" || input.Password == "" {
+		if !validation.ValidateEmail(input.Email) {
 			logger.Info(logger.MsgSetupMissingCreds, logger.KeyOperation, "post_setup")
-			return status.Wrap(errors.New("email and password required"), status.InvalidArgument)
+			return status.Wrap(errors.New("valid email required"), status.InvalidArgument)
+		}
+		if !validation.ValidatePassword(input.Password) {
+			logger.Info(logger.MsgSetupMissingCreds, logger.KeyOperation, "post_setup")
+			return status.Wrap(errors.New("password must be at least 8 characters"), status.InvalidArgument)
 		}
 		hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
 		if err != nil {
@@ -69,7 +75,7 @@ func NewPostSetupUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(errors.New("password setup failed, please try again"), status.InvalidArgument)
 		}
 		admin := &store.User{
-			Email:        input.Email,
+			Email:        strings.TrimSpace(strings.ToLower(input.Email)),
 			PasswordHash: string(hash),
 			Role:         store.RoleAdmin,
 		}

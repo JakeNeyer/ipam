@@ -3,8 +3,10 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/JakeNeyer/ipam/server/auth"
+	"github.com/JakeNeyer/ipam/server/validation"
 	"github.com/JakeNeyer/ipam/store"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -55,8 +57,12 @@ func createUser(s store.Storer, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if req.Email == "" || req.Password == "" {
-		http.Error(w, "email and password required", http.StatusBadRequest)
+	if !validation.ValidateEmail(req.Email) {
+		http.Error(w, "valid email required", http.StatusBadRequest)
+		return
+	}
+	if !validation.ValidatePassword(req.Password) {
+		http.Error(w, "password must be at least 8 characters", http.StatusBadRequest)
 		return
 	}
 	role := store.RoleUser
@@ -69,7 +75,7 @@ func createUser(s store.Storer, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	newUser := &store.User{
-		Email:        req.Email,
+		Email:        strings.TrimSpace(strings.ToLower(req.Email)),
 		PasswordHash: string(hash),
 		Role:         role,
 	}

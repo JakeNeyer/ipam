@@ -1,0 +1,25 @@
+# Fly.io app config. Deploy with: fly deploy
+# Create managed Postgres first: fly postgres create --name ipam-db --vm-size shared-cpu-1x --volume-size 1
+# Attach it: fly postgres attach ipam-db
+# That sets DATABASE_URL. Then: fly deploy
+
+app = "ipam"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  # Optional: INITIAL_ADMIN_EMAIL + INITIAL_ADMIN_PASSWORD (use fly secrets set for password) to create first admin on first deploy and skip setup UI
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

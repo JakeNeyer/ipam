@@ -117,8 +117,7 @@ func NewServer(s store.Storer) *web.Service {
 	deleteAllocUC := handlers.NewDeleteAllocationUseCase(s)
 	svc.Delete("/api/allocations/{id}", deleteAllocUC)
 
-	exportCSVUC := handlers.NewExportCSVUseCase(s)
-	svc.Get("/api/export/csv", exportCSVUC, func(h *nethttp.Handler) { (*h).SetResponseEncoder(handlers.NewCSVResponseEncoder()) })
+	svc.Method("GET", "/api/export/csv", handlers.ExportCSVHandler(s))
 
 	// Swagger UI endpoint at /docs with Wintry-style dark theme.
 	svc.Docs("/docs", swgui.NewWithConfig(swguicfg.Config{

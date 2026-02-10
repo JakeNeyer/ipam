@@ -275,9 +275,6 @@
     font-size: 1.1rem;
     font-weight: 600;
   }
-  .admin-card > .admin-card-title {
-    margin-bottom: 1rem;
-  }
   .table-actions {
     text-align: right;
     white-space: nowrap;

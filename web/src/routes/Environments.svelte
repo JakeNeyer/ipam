@@ -341,7 +341,8 @@
             <tr class="env-row" class:expanded={expandedEnvId === env.id} role="button" tabindex="0" on:click={() => editingId !== env.id && toggleEnvRow(env)} on:keydown={(e) => e.key === 'Enter' && editingId !== env.id && toggleEnvRow(env)}>
               {#if editingId === env.id}
                 <td colspan="2" class="edit-cell">
-                  <form class="inline-edit" on:submit|preventDefault={handleUpdate} on:click|stopPropagation>
+                  <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+                  <form class="inline-edit" on:submit|preventDefault={handleUpdate} on:click|stopPropagation on:keydown|stopPropagation>
                     <input type="text" bind:value={editName} placeholder="Name" disabled={editSubmitting} />
                     <div class="inline-actions">
                       <button type="button" class="btn btn-small" on:click={cancelEdit} disabled={editSubmitting}>Cancel</button>
@@ -758,8 +759,7 @@
     display: flex;
     gap: 0.5rem;
   }
-  .loading,
-  .empty {
+  .loading {
     color: var(--text-muted);
     padding: 2rem;
   }

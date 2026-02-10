@@ -123,6 +123,13 @@ Documentation for the provider, resources, and data sources lives in `docs/` and
 
   This requires [Terraform](https://developer.hashicorp.com/terraform/downloads) installed and a buildable provider. The `docs/` in this repo are hand-written to match the generated format so they work without running the generator.
 
+## Releasing
+
+Releases are built and published to [GitHub Releases](https://github.com/JakeNeyer/ipam/releases) via [GoReleaser](https://goreleaser.com). From the **repository root**:
+
+- **CI:** Push a semver tag (e.g. `v0.1.0`) to trigger the release workflow; artifacts are built for Linux, Windows, and macOS (amd64 and arm64) and attached to the release.
+- **Local:** Install [goreleaser](https://goreleaser.com/install/) and run `goreleaser release --clean` (requires `GITHUB_TOKEN`). Use `goreleaser release --snapshot --clean` to test without publishing.
+
 ## Development
 
 - Run unit tests (no live server):  

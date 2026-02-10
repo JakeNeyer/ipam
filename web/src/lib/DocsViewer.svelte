@@ -1,10 +1,12 @@
 <script>
   import { marked } from 'marked'
+  import DOMPurify from 'dompurify'
 
   /** @type {string} Raw markdown content to render. */
   export let content = ''
 
-  $: html = content ? marked.parse(content, { gfm: true }) : ''
+  $: rawHtml = content ? marked.parse(content, { gfm: true }) : ''
+  $: html = rawHtml ? DOMPurify.sanitize(rawHtml, { ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'u', 's', 'a', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'code', 'pre', 'img', 'dl', 'dt', 'dd', 'blockquote', 'hr'], ALLOWED_ATTR: ['href', 'src', 'alt', 'class'] }) : ''
 </script>
 
 <div class="docs-viewer" class:empty={!content}>

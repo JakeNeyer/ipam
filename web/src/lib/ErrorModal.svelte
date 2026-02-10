@@ -6,15 +6,19 @@
 </script>
 
 {#if message}
+  <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
   <div
     class="error-modal-backdrop"
     role="alertdialog"
     aria-modal="true"
     aria-labelledby="error-modal-title"
     aria-describedby="error-modal-desc"
+    tabindex="-1"
     on:click={() => dispatch('close')}
+    on:keydown={(e) => { if (e.key === 'Escape' || e.key === 'Enter') dispatch('close'); }}
   >
-    <div class="error-modal" on:click|stopPropagation>
+    <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+    <div class="error-modal" role="document" on:click|stopPropagation on:keydown|stopPropagation>
       <h3 id="error-modal-title">Error</h3>
       <p id="error-modal-desc" class="error-modal-message">{message}</p>
       <div class="error-modal-actions">

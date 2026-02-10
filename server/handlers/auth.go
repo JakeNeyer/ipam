@@ -8,6 +8,7 @@ import (
 
 	"github.com/JakeNeyer/ipam/internal/logger"
 	"github.com/JakeNeyer/ipam/server/auth"
+	"github.com/JakeNeyer/ipam/server/validation"
 	"github.com/JakeNeyer/ipam/store"
 	"github.com/google/uuid"
 	"github.com/swaggest/rest/response"
@@ -40,11 +41,15 @@ type loginOutput struct {
 func NewLoginUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input loginInput, output *loginOutput) error {
 		logger.Info("login request", logger.KeyOperation, "login", logger.KeyEmail, input.Email)
-		if input.Email == "" || input.Password == "" {
+		if !validation.ValidateEmail(input.Email) {
 			logger.Info(logger.MsgAuthMissingCreds, logger.KeyOperation, "login")
-			return status.Wrap(errors.New("email and password required"), status.InvalidArgument)
+			return status.Wrap(errors.New("valid email required"), status.InvalidArgument)
 		}
-		user, err := s.GetUserByEmail(input.Email)
+		if !validation.ValidatePassword(input.Password) {
+			logger.Info(logger.MsgAuthMissingCreds, logger.KeyOperation, "login")
+			return status.Wrap(errors.New("password must be at least 8 characters"), status.InvalidArgument)
+		}
+		user, err := s.GetUserByEmail(strings.TrimSpace(strings.ToLower(input.Email)))
 		if err != nil {
 			logger.Error(logger.MsgAuthInvalidCreds, logger.KeyOperation, "login", logger.ErrAttr(err))
 			return status.Wrap(errors.New("invalid email or password"), status.Unauthenticated)
@@ -55,7 +60,11 @@ func NewLoginUseCase(s store.Storer) usecase.Interactor {
 		}
 		sessionID := auth.NewSessionID()
 		s.CreateSession(sessionID, user.ID, time.Now().Add(auth.SessionDuration))
-		auth.SetSessionCookie(output.ResponseWriter(), sessionID)
+		secure := false
+		if r := auth.RequestFromContext(ctx); r != nil && r.TLS != nil {
+			secure = true
+		}
+		auth.SetSessionCookie(output.ResponseWriter(), sessionID, secure)
 		logger.Info("login success", logger.KeyOperation, "login", logger.KeyUserID, user.ID.String(), logger.KeyEmail, user.Email)
 		output.User = UserResponse{
 			ID:            user.ID.String(),
@@ -80,12 +89,16 @@ type logoutOutput struct {
 func NewLogoutUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input struct{}, output *logoutOutput) error {
 		r := auth.RequestFromContext(ctx)
+		secure := false
 		if r != nil {
+			if r.TLS != nil {
+				secure = true
+			}
 			if c, err := r.Cookie(auth.SessionCookieName); err == nil && c != nil && c.Value != "" {
 				s.DeleteSession(c.Value)
 			}
 		}
-		auth.ClearSessionCookie(output.ResponseWriter())
+		auth.ClearSessionCookie(output.ResponseWriter(), secure)
 		return nil
 	})
 	u.SetTitle("Logout")

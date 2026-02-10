@@ -50,7 +50,7 @@
 
 <div class="docs-full">
   <aside class="docs-sidebar">
-    <a href="#" class="docs-back" on:click|preventDefault={() => { window.location.hash = '' }}>← Back to IPAM</a>
+    <button type="button" class="docs-back" on:click={() => { window.location.hash = '' }}>← Back to IPAM</button>
     <h2 class="docs-sidebar-title">User guide</h2>
     <nav class="docs-nav" aria-label="Documentation">
       <ul>
@@ -119,6 +119,12 @@
     font-size: 0.9rem;
     color: var(--accent);
     text-decoration: none;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    font-family: inherit;
+    text-align: left;
   }
   .docs-back:hover {
     text-decoration: underline;

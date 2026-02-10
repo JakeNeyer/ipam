@@ -74,7 +74,15 @@
 <svelte:window on:keydown={(e) => open && e.key === 'Escape' && close()} />
 
 {#if open}
-  <div class="modal-backdrop" role="presentation" on:click={close}>
+  <div
+    class="modal-backdrop"
+    role="button"
+    tabindex="0"
+    aria-label="Close modal"
+    on:click={close}
+    on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); close(); } }}
+  >
+    <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
     <div class="modal" role="dialog" aria-labelledby="api-tokens-title" aria-modal="true" on:click={(e) => e.stopPropagation()} on:keydown={(e) => e.stopPropagation()}>
       <div class="modal-header">
         <h2 id="api-tokens-title">Add token</h2>

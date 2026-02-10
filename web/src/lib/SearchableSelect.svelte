@@ -18,6 +18,7 @@
   let listEl = null
   let inputEl = null
   let dropdownStyle = { top: 0, left: 0, width: 200 }
+  const listboxId = 'searchable-select-listbox-' + Math.random().toString(36).slice(2, 11)
 
   $: selectedOption = options.find((o) => o.value === value)
   $: selectedLabel = selectedOption ? selectedOption.label : ''
@@ -133,7 +134,7 @@
   {#if open}
     <div
       class="searchable-select-dropdown searchable-select-dropdown-fixed"
-      role="listbox"
+      role="presentation"
       style="position: fixed; top: {dropdownStyle.top}px; left: {dropdownStyle.left}px; width: {dropdownStyle.width}px; z-index: 1000;"
     >
       <input
@@ -146,9 +147,10 @@
         on:click|stopPropagation
         role="combobox"
         aria-autocomplete="list"
-        aria-expanded="true"
+        aria-expanded={open}
+        aria-controls={listboxId}
       />
-      <ul class="searchable-select-list" bind:this={listEl} role="listbox">
+      <ul id={listboxId} class="searchable-select-list" bind:this={listEl} role="listbox">
         {#each filteredOptions as opt, i}
           <li
             class="searchable-select-option"

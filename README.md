@@ -1,0 +1,56 @@
+# IPAM
+**IPAM** is an IP Address Management application for tracking environments, network blocks (CIDR ranges), and allocations. It provides a REST API, a web UI, and a Terraform provider so you can manage IP space from the dashboard or from infrastructure-as-code.
+
+## Overview
+
+- **API** — Go server with Postgres storage. Manages environments, blocks, allocations, and reserved blocks. OpenAPI/Swagger docs and Bearer token auth.
+- **Web UI** — Svelte app with dashboard, environments, networks, CIDR wizard, subnet calculator, and user guide. Light/dark theme.
+- **Terraform provider** — Manage IPAM resources from Terraform: `ipam_environment`, `ipam_block`, `ipam_allocation`, `ipam_reserved_block`, and data sources.
+
+## Project layout
+
+| Path | Description |
+|------|-------------|
+| `main.go` | API server entrypoint |
+| `server/` | HTTP handlers, auth, middleware |
+| `network/` | IPAM logic (environments, blocks, allocations) |
+| `store/` | Postgres store and migrations |
+| `web/` | Svelte frontend (`npm run dev`, `npm run build`) |
+| `terraform-provider-ipam/` | Terraform provider (see its [README](terraform-provider-ipam/README.md)) |
+| `hack/` | Seed script and Terraform example |
+
+## Quick start
+
+1. Set `DATABASE_URL` and run the API (from repo root): `go run .`
+2. Serve the web UI: `cd web && npm run dev`
+3. Open the app, complete setup (create initial admin), then log in.
+
+## E2E tests (Playwright)
+
+From the repo root, run the API with the built web UI, then run Playwright from `web/`:
+
+1. Build the web UI: `cd web && npm run build`
+2. From repo root: `STATIC_DIR=web/dist go run .` (leave this running)
+3. In another terminal: `cd web && npx playwright install chromium && npm run e2e`
+
+Tests cover auth (login, logout, setup), security (API 401 without session, protected routes), and basic flows (dashboard, nav). For login and post-login tests, set `E2E_LOGIN_EMAIL` and `E2E_LOGIN_PASSWORD`; otherwise those tests are skipped. Base URL defaults to `http://localhost:8011` (override with `BASE_URL`).
+
+See [terraform-provider-ipam/README.md](terraform-provider-ipam/README.md) for using the Terraform provider.
+
+## Deploy to Fly.io
+
+Uses the smallest compute (shared-cpu-1x, 256MB) and Fly Postgres (lowest cost).
+
+1. Install [flyctl](https://fly.io/docs/hands-on/install-flyctl/) and log in: `fly auth login`.
+2. Create the app (from repo root): `fly launch --no-deploy` (or copy `fly.toml` and run `fly apps create ipam`).
+3. Create managed Postgres (smallest):  
+   `fly postgres create --name ipam-db --vm-size shared-cpu-1x --volume-size 1`
+4. Attach Postgres so the app gets `DATABASE_URL`:  
+   `fly postgres attach ipam-db`
+5. (Optional) Set initial admin so you skip the setup UI:  
+   `fly secrets set INITIAL_ADMIN_EMAIL=you@example.com INITIAL_ADMIN_PASSWORD=your-secure-password`  
+   Only used when the database has no users; ignored otherwise.
+6. Deploy:  
+   `fly deploy`
+
+The app listens on `PORT` (8080) and serves the API plus the built web UI. Open the app URL and log in (or complete setup if you didn’t set initial admin).
