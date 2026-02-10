@@ -48,6 +48,8 @@ type Storer interface {
 	GetUser(id uuid.UUID) (*User, error)
 	GetUserByEmail(email string) (*User, error)
 	ListUsers() ([]*User, error)
+	DeleteUser(userID uuid.UUID) error
+	SetUserRole(userID uuid.UUID, role string) error
 	SetUserTourCompleted(userID uuid.UUID, completed bool) error
 
 	// Sessions
@@ -61,4 +63,11 @@ type Storer interface {
 	ListAPITokens(userID uuid.UUID) ([]*APIToken, error)
 	DeleteAPIToken(tokenID, userID uuid.UUID) error
 	GetAPIToken(tokenID uuid.UUID) (*APIToken, error)
+
+	// Signup invites (admin-created, time-bound signup links)
+	CreateSignupInvite(createdBy uuid.UUID, expiresAt time.Time) (*SignupInvite, string, error)
+	GetSignupInviteByToken(rawToken string) (*SignupInvite, error)
+	MarkSignupInviteUsed(inviteID, userID uuid.UUID) error
+	DeleteSignupInvite(id uuid.UUID) error
+	ListSignupInvites(createdBy uuid.UUID) ([]*SignupInvite, error)
 }

@@ -17,18 +17,23 @@ import (
 const apiTokenPrefix = "ipam_"
 const apiTokenSecretBytes = 32
 
+const signupInviteTokenPrefix = "invite_"
+const signupInviteSecretBytes = 32
+
 // Store manages all IPAM data
 type Store struct {
-	environments  map[uuid.UUID]*network.Environment
-	blocks        map[uuid.UUID]*network.Block
-	allocations   map[uuid.UUID]*network.Allocation
+	environments   map[uuid.UUID]*network.Environment
+	blocks         map[uuid.UUID]*network.Block
+	allocations    map[uuid.UUID]*network.Allocation
 	reservedBlocks map[uuid.UUID]*ReservedBlock
-	users         map[uuid.UUID]*User
-	usersByEmail  map[string]uuid.UUID
-	sessions      map[string]*Session
-	tokens        map[uuid.UUID]*APIToken
-	tokenByHash   map[string]uuid.UUID
-	mu            sync.RWMutex
+	users          map[uuid.UUID]*User
+	usersByEmail   map[string]uuid.UUID
+	sessions       map[string]*Session
+	tokens         map[uuid.UUID]*APIToken
+	tokenByHash    map[string]uuid.UUID
+	signupInvites  map[uuid.UUID]*SignupInvite
+	inviteByHash   map[string]uuid.UUID
+	mu             sync.RWMutex
 }
 
 // NewStore creates a new store
@@ -43,6 +48,8 @@ func NewStore() *Store {
 		sessions:       make(map[string]*Session),
 		tokens:         make(map[uuid.UUID]*APIToken),
 		tokenByHash:    make(map[string]uuid.UUID),
+		signupInvites:  make(map[uuid.UUID]*SignupInvite),
+		inviteByHash:   make(map[string]uuid.UUID),
 	}
 }
 
@@ -414,6 +421,66 @@ func (s *Store) ListUsers() ([]*User, error) {
 	return out, nil
 }
 
+func (s *Store) DeleteUser(userID uuid.UUID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	u, exists := s.users[userID]
+	if !exists {
+		return fmt.Errorf("user not found")
+	}
+
+	// Mirror DB behavior:
+	// - users row delete
+	// - sessions/api_tokens cascade delete
+	// - signup_invites created_by cascade delete
+	// - signup_invites.used_by_user_id set null
+	delete(s.users, userID)
+	delete(s.usersByEmail, strings.ToLower(strings.TrimSpace(u.Email)))
+
+	for sid, sess := range s.sessions {
+		if sess != nil && sess.UserID == userID {
+			delete(s.sessions, sid)
+		}
+	}
+
+	for tokenID, tok := range s.tokens {
+		if tok != nil && tok.UserID == userID {
+			delete(s.tokenByHash, tok.KeyHash)
+			delete(s.tokens, tokenID)
+		}
+	}
+
+	for inviteID, inv := range s.signupInvites {
+		if inv == nil {
+			continue
+		}
+		if inv.CreatedBy == userID {
+			delete(s.inviteByHash, inv.TokenHash)
+			delete(s.signupInvites, inviteID)
+			continue
+		}
+		if inv.UsedByUserID != nil && *inv.UsedByUserID == userID {
+			inv.UsedByUserID = nil
+		}
+	}
+	return nil
+}
+
+func (s *Store) SetUserRole(userID uuid.UUID, role string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u, exists := s.users[userID]
+	if !exists {
+		return fmt.Errorf("user not found")
+	}
+	if role != RoleUser && role != RoleAdmin {
+		return fmt.Errorf("invalid role")
+	}
+	u.Role = role
+	return nil
+}
+
 // SetUserTourCompleted marks the onboarding tour as completed for the user.
 func (s *Store) SetUserTourCompleted(userID uuid.UUID, completed bool) error {
 	s.mu.Lock()
@@ -545,4 +612,100 @@ func (s *Store) GetAPIToken(tokenID uuid.UUID) (*APIToken, error) {
 		return nil, fmt.Errorf("token not found")
 	}
 	return tok, nil
+}
+
+// CreateSignupInvite creates a time-bound signup invite. Returns the invite and raw token (only shown once).
+func (s *Store) CreateSignupInvite(createdBy uuid.UUID, expiresAt time.Time) (*SignupInvite, string, error) {
+	secret := make([]byte, signupInviteSecretBytes)
+	if _, err := rand.Read(secret); err != nil {
+		return nil, "", err
+	}
+	rawToken := signupInviteTokenPrefix + hex.EncodeToString(secret)
+	tokenHash := hashToken(rawToken)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.users[createdBy]; !exists {
+		return nil, "", fmt.Errorf("user not found")
+	}
+	now := time.Now()
+	if expiresAt.Before(now) {
+		return nil, "", fmt.Errorf("expires_at must be in the future")
+	}
+	inv := &SignupInvite{
+		ID:        s.GenerateID(),
+		TokenHash: tokenHash,
+		CreatedBy: createdBy,
+		ExpiresAt: expiresAt,
+		CreatedAt: now,
+	}
+	s.signupInvites[inv.ID] = inv
+	s.inviteByHash[tokenHash] = inv.ID
+	return inv, rawToken, nil
+}
+
+// GetSignupInviteByToken returns the invite for the given raw token if valid and not expired.
+func (s *Store) GetSignupInviteByToken(rawToken string) (*SignupInvite, error) {
+	if rawToken == "" || !strings.HasPrefix(rawToken, signupInviteTokenPrefix) {
+		return nil, fmt.Errorf("invalid token")
+	}
+	tokenHash := hashToken(rawToken)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	id, exists := s.inviteByHash[tokenHash]
+	if !exists {
+		return nil, fmt.Errorf("invite not found")
+	}
+	inv, exists := s.signupInvites[id]
+	if !exists {
+		return nil, fmt.Errorf("invite not found")
+	}
+	if inv.UsedAt != nil {
+		return nil, fmt.Errorf("invite already used")
+	}
+	if time.Now().After(inv.ExpiresAt) {
+		return nil, fmt.Errorf("invite expired")
+	}
+	return inv, nil
+}
+
+// MarkSignupInviteUsed marks the invite as used by the given user (on signup).
+func (s *Store) MarkSignupInviteUsed(inviteID, userID uuid.UUID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	inv, exists := s.signupInvites[inviteID]
+	if !exists {
+		return fmt.Errorf("invite not found")
+	}
+	now := time.Now()
+	inv.UsedAt = &now
+	inv.UsedByUserID = &userID
+	return nil
+}
+
+// DeleteSignupInvite removes the invite (revoke).
+func (s *Store) DeleteSignupInvite(id uuid.UUID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	inv, exists := s.signupInvites[id]
+	if !exists {
+		return fmt.Errorf("invite not found")
+	}
+	delete(s.signupInvites, id)
+	delete(s.inviteByHash, inv.TokenHash)
+	return nil
+}
+
+// ListSignupInvites returns all signup invites created by the given user (for admin UI).
+func (s *Store) ListSignupInvites(createdBy uuid.UUID) ([]*SignupInvite, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*SignupInvite
+	for _, inv := range s.signupInvites {
+		if inv.CreatedBy == createdBy {
+			out = append(out, inv)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out, nil
 }

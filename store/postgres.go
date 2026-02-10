@@ -12,11 +12,11 @@ import (
 	"time"
 
 	"github.com/JakeNeyer/ipam/network"
-	"github.com/google/uuid"
-	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
+	"github.com/google/uuid"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 //go:embed migrations/*.sql
@@ -628,6 +628,33 @@ func (s *PostgresStore) ListUsers() ([]*User, error) {
 	return out, rows.Err()
 }
 
+func (s *PostgresStore) DeleteUser(userID uuid.UUID) error {
+	res, err := s.db.Exec(`DELETE FROM users WHERE id = $1`, userID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
+}
+
+func (s *PostgresStore) SetUserRole(userID uuid.UUID, role string) error {
+	if role != RoleUser && role != RoleAdmin {
+		return fmt.Errorf("invalid role")
+	}
+	res, err := s.db.Exec(`UPDATE users SET role = $1 WHERE id = $2`, role, userID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
+}
+
 func (s *PostgresStore) SetUserTourCompleted(userID uuid.UUID, completed bool) error {
 	res, err := s.db.Exec(`UPDATE users SET tour_completed = $1 WHERE id = $2`, completed, userID)
 	if err != nil {
@@ -663,7 +690,7 @@ func (s *PostgresStore) DeleteSession(sessionID string) {
 
 func (s *PostgresStore) CreateAPIToken(userID uuid.UUID, name string, expiresAt *time.Time) (token *APIToken, rawToken string, err error) {
 	var n int
-	if err := s.db.QueryRow(`SELECT 1 FROM users WHERE id = $1`, userID).Scan(&n); err == sql.ErrNoRows {
+	if err = s.db.QueryRow(`SELECT 1 FROM users WHERE id = $1`, userID).Scan(&n); err == sql.ErrNoRows {
 		return nil, "", fmt.Errorf("user not found")
 	}
 	if err != nil {
@@ -766,4 +793,122 @@ func (s *PostgresStore) GetAPIToken(tokenID uuid.UUID) (*APIToken, error) {
 		t.ExpiresAt = &expiresAt.Time
 	}
 	return &t, nil
+}
+
+func (s *PostgresStore) CreateSignupInvite(createdBy uuid.UUID, expiresAt time.Time) (*SignupInvite, string, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT 1 FROM users WHERE id = $1`, createdBy).Scan(&n)
+	if err == sql.ErrNoRows {
+		return nil, "", fmt.Errorf("user not found")
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	secret := make([]byte, signupInviteSecretBytes)
+	if _, err := rand.Read(secret); err != nil {
+		return nil, "", err
+	}
+	rawToken := signupInviteTokenPrefix + hex.EncodeToString(secret)
+	tokenHash := hashToken(rawToken)
+	now := time.Now()
+	if expiresAt.Before(now) {
+		return nil, "", fmt.Errorf("expires_at must be in the future")
+	}
+	inv := &SignupInvite{
+		ID:        uuid.New(),
+		TokenHash: tokenHash,
+		CreatedBy: createdBy,
+		ExpiresAt: expiresAt,
+		CreatedAt: now,
+	}
+	_, err = s.db.Exec(
+		`INSERT INTO signup_invites (id, token_hash, created_by, expires_at, created_at) VALUES ($1, $2, $3, $4, $5)`,
+		inv.ID, inv.TokenHash, inv.CreatedBy, inv.ExpiresAt, inv.CreatedAt,
+	)
+	if err != nil {
+		return nil, "", err
+	}
+	return inv, rawToken, nil
+}
+
+func (s *PostgresStore) GetSignupInviteByToken(rawToken string) (*SignupInvite, error) {
+	if rawToken == "" || !strings.HasPrefix(rawToken, signupInviteTokenPrefix) {
+		return nil, fmt.Errorf("invalid token")
+	}
+	tokenHash := hashToken(rawToken)
+	var inv SignupInvite
+	var usedAt sql.NullTime
+	var usedByUserID nullUUID
+	err := s.db.QueryRow(
+		`SELECT id, token_hash, created_by, expires_at, created_at, used_at, used_by_user_id FROM signup_invites WHERE token_hash = $1`,
+		tokenHash,
+	).Scan(&inv.ID, &inv.TokenHash, &inv.CreatedBy, &inv.ExpiresAt, &inv.CreatedAt, &usedAt, &usedByUserID)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("invite not found")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if usedAt.Valid {
+		return nil, fmt.Errorf("invite already used")
+	}
+	if time.Now().After(inv.ExpiresAt) {
+		return nil, fmt.Errorf("invite expired")
+	}
+	return &inv, nil
+}
+
+func (s *PostgresStore) MarkSignupInviteUsed(inviteID, userID uuid.UUID) error {
+	res, err := s.db.Exec(
+		`UPDATE signup_invites SET used_at = NOW(), used_by_user_id = $1 WHERE id = $2`,
+		userID, inviteID,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("invite not found")
+	}
+	return nil
+}
+
+func (s *PostgresStore) DeleteSignupInvite(id uuid.UUID) error {
+	res, err := s.db.Exec(`DELETE FROM signup_invites WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("invite not found")
+	}
+	return nil
+}
+
+func (s *PostgresStore) ListSignupInvites(createdBy uuid.UUID) ([]*SignupInvite, error) {
+	rows, err := s.db.Query(
+		`SELECT id, token_hash, created_by, expires_at, created_at, used_at, used_by_user_id FROM signup_invites WHERE created_by = $1 ORDER BY created_at DESC`,
+		createdBy,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*SignupInvite
+	for rows.Next() {
+		var inv SignupInvite
+		var usedAt sql.NullTime
+		var usedByUserID nullUUID
+		if err := rows.Scan(&inv.ID, &inv.TokenHash, &inv.CreatedBy, &inv.ExpiresAt, &inv.CreatedAt, &usedAt, &usedByUserID); err != nil {
+			return nil, err
+		}
+		if usedAt.Valid {
+			inv.UsedAt = &usedAt.Time
+		}
+		if usedByUserID.Valid {
+			inv.UsedByUserID = &usedByUserID.UUID
+		}
+		out = append(out, &inv)
+	}
+	return out, rows.Err()
 }

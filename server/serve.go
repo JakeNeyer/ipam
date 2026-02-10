@@ -31,6 +31,10 @@ func NewServer(s store.Storer) *web.Service {
 	svc.Post("/api/setup", postSetupUC)
 	svc.Post("/api/setup/status", postSetupUC) // alias so POST to status (e.g. form action) also creates admin
 
+	// Signup invite routes (no auth; validate and register with invite token).
+	svc.Handle("/api/signup/validate", handlers.ValidateSignupInviteHandler(s))
+	svc.Handle("/api/signup/register", handlers.RegisterWithInviteHandler(s))
+
 	// Auth routes (no auth required for login/logout).
 	loginLimiter := auth.NewLoginAttemptLimiter(auth.DefaultLoginMaxAttempts, auth.DefaultLoginWindow)
 	loginUC := handlers.NewLoginUseCase(s, loginLimiter)
@@ -53,6 +57,10 @@ func NewServer(s store.Storer) *web.Service {
 
 	// Admin routes (auth + admin role required).
 	svc.Handle("/api/admin/users", handlers.AdminUsersHandler(s))
+	svc.Handle("/api/admin/users/{id}/role", handlers.UpdateUserRoleHandler(s))
+	svc.Handle("/api/admin/users/{id}", handlers.DeleteUserHandler(s))
+	svc.Handle("/api/admin/signup-invites", handlers.AdminSignupInvitesHandler(s))
+	svc.Handle("/api/admin/signup-invites/{id}", handlers.RevokeSignupInviteHandler(s))
 
 	listReservedUC := handlers.NewListReservedBlocksUseCase(s)
 	svc.Get("/api/admin/reserved-blocks", listReservedUC)

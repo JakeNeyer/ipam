@@ -13,6 +13,7 @@
   import Docs from './routes/Docs.svelte'
   import Login from './routes/Login.svelte'
   import Setup from './routes/Setup.svelte'
+  import Signup from './routes/Signup.svelte'
   import Admin from './routes/Admin.svelte'
   import ReservedBlocks from './routes/ReservedBlocks.svelte'
   import SubnetCalculator from './routes/SubnetCalculator.svelte'
@@ -30,6 +31,7 @@
   let routeCreateBlock = false
   let routeCreateAllocation = false
   let routeDocsPage = ''
+  let routeSignupToken = ''
   let paletteOpen = false
 
   function go(path, environmentId = null, opts = {}) {
@@ -81,6 +83,15 @@
     }
     if (path === 'login') {
       route = 'login'
+      return
+    }
+    if (path === 'signup') {
+      route = 'signup'
+      routeSignupToken = ''
+      if (query) {
+        const params = new URLSearchParams(query)
+        routeSignupToken = params.get('token') || ''
+      }
       return
     }
     if (path === 'environments' || path === 'networks') {
@@ -224,7 +235,9 @@
 {:else if route === 'docs'}
   <Docs currentPage={routeDocsPage} />
 {:else if !$user}
-  {#if $setupRequired === null}
+  {#if route === 'signup'}
+    <Signup token={routeSignupToken} />
+  {:else if $setupRequired === null}
     <div class="app loading" role="presentation">
       <div class="loading-message">Loading…</div>
     </div>

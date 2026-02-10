@@ -317,6 +317,71 @@ export async function createUser(email, password, role = 'user') {
   return data?.user ?? null
 }
 
+export async function updateUserRole(id, role) {
+  const data = await fetch(`${API_BASE}/admin/users/${encodeURIComponent(id)}/role`, {
+    ...FETCH_OPTS,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role }),
+  })
+  if (!data.ok) await handleError(data)
+  const res = await data.json()
+  return res?.user ?? null
+}
+
+export async function deleteUser(id) {
+  await del('/admin/users/' + encodeURIComponent(id))
+}
+
+/**
+ * List signup invites (admin only).
+ * @returns {{ invites: Array<{ id, created_at, expires_at, used_at?, used_by_email? }> }}
+ */
+export async function listSignupInvites() {
+  const data = await get('/admin/signup-invites')
+  return { invites: data?.invites ?? [] }
+}
+
+/**
+ * Create a time-bound signup invite link (admin only).
+ * @param {number} expiresInHours - e.g. 24, 48, 168 (7 days)
+ * @returns {{ invite_url: string, token: string, expires_at: string }}
+ */
+export async function createSignupInvite(expiresInHours = 24) {
+  const data = await post('/admin/signup-invites', { expires_in_hours: expiresInHours })
+  return data
+}
+
+/**
+ * Revoke a signup invite (admin only). Fails if invite not found.
+ * @param {string} id - invite id
+ */
+export async function revokeSignupInvite(id) {
+  await del('/admin/signup-invites/' + encodeURIComponent(id))
+}
+
+/**
+ * Validate a signup invite token (no auth).
+ * @param {string} token
+ * @returns {{ valid: boolean, expires_at?: string }}
+ */
+export async function validateSignupInvite(token) {
+  const data = await get('/signup/validate', { token })
+  return data
+}
+
+/**
+ * Register a new user with an invite token (no auth). Sets session on success.
+ * @param {string} token
+ * @param {string} email
+ * @param {string} password
+ * @returns {{ user: { id, email, role, tour_completed } }}
+ */
+export async function registerWithInvite(token, email, password) {
+  const data = await post('/signup/register', { token, email, password })
+  return data
+}
+
 export async function exportCSV() {
   const res = await fetch(`${API_BASE}/export/csv`, FETCH_OPTS)
   if (!res.ok) {

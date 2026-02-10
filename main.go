@@ -88,8 +88,10 @@ func main() {
 	handler = otelhttp.NewHandler(handler, "ipam")
 	handler = middleware.Recover(handler)
 
-	if staticDir := os.Getenv("STATIC_DIR"); staticDir != "" {
+	staticDir := resolveStaticDir()
+	if staticDir != "" {
 		handler = staticHandler(staticDir, handler)
+		logger.Info("serving static files", slog.String("dir", staticDir))
 	}
 
 	addr := "0.0.0.0"
@@ -103,6 +105,48 @@ func main() {
 		logger.Error("server failed", logger.ErrAttr(err))
 		os.Exit(1)
 	}
+}
+
+// resolveStaticDir returns a directory containing index.html for the SPA, or "" if none found.
+// Tries STATIC_DIR, then web/dist relative to CWD or executable, so signup links (GET /) work.
+func resolveStaticDir() string {
+	if d := os.Getenv("STATIC_DIR"); d != "" {
+		if abs, err := filepath.Abs(d); err == nil && staticDirHasIndex(abs) {
+			return abs
+		}
+		return d
+	}
+	cwd, _ := os.Getwd()
+	for _, rel := range []string{"web/dist", "dist", "./web/dist", "./dist"} {
+		dir := filepath.Join(cwd, rel)
+		if dir = filepath.Clean(dir); staticDirHasIndex(dir) {
+			return dir
+		}
+	}
+	// Relative to current binary (e.g. when run from project root)
+	for _, rel := range []string{"web/dist", "dist"} {
+		if staticDirHasIndex(rel) {
+			if abs, err := filepath.Abs(rel); err == nil {
+				return abs
+			}
+			return rel
+		}
+	}
+	if execPath, err := os.Executable(); err == nil {
+		base := filepath.Dir(execPath)
+		for _, rel := range []string{"web/dist", "dist"} {
+			dir := filepath.Join(base, rel)
+			if staticDirHasIndex(dir) {
+				return dir
+			}
+		}
+	}
+	return ""
+}
+
+func staticDirHasIndex(dir string) bool {
+	f, err := os.Stat(filepath.Join(dir, "index.html"))
+	return err == nil && f != nil && !f.IsDir()
 }
 
 // staticHandler serves API/docs from next, everything else from dir (SPA fallback to index.html).

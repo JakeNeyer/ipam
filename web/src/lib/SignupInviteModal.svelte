@@ -1,66 +1,52 @@
 <script>
   import { createEventDispatcher } from 'svelte'
-  import { createToken } from './api.js'
+  import { createSignupInvite } from './api.js'
 
   export let open = false
 
   const dispatch = createEventDispatcher()
 
   const expiresInOptions = [
-    { value: '', label: 'Never' },
-    { value: '7', label: '7 days' },
-    { value: '30', label: '30 days' },
-    { value: '90', label: '90 days' },
-    { value: '365', label: '1 year' }
+    { value: 24, label: '24 hours' },
+    { value: 48, label: '48 hours' },
+    { value: 72, label: '3 days' },
+    { value: 168, label: '7 days' },
+    { value: 720, label: '30 days' }
   ]
 
   let error = ''
-  let createName = ''
-  let createExpiresIn = ''
+  let createExpiresIn = 24
   let creating = false
-  let newToken = null
+  let inviteUrl = ''
   let copied = false
 
-  function getExpiresAt() {
-    const days = parseInt(createExpiresIn, 10)
-    if (!createExpiresIn || isNaN(days) || days <= 0) return null
-    const d = new Date()
-    d.setDate(d.getDate() + days)
-    d.setHours(0, 0, 0, 0)
-    return d.toISOString()
-  }
-
   async function handleCreate() {
-    const name = (createName || '').trim()
-    if (!name) return
     creating = true
     error = ''
-    newToken = null
+    inviteUrl = ''
     try {
-      const expiresAt = getExpiresAt()
-      const res = await createToken(name, expiresAt ? { expires_at: expiresAt } : {})
-      newToken = res?.token ?? null
-      createName = ''
-      createExpiresIn = ''
+      const res = await createSignupInvite(createExpiresIn)
+      inviteUrl = res?.invite_url ?? ''
+      if (!inviteUrl && res?.token) {
+        inviteUrl = window.location.origin + window.location.pathname.replace(/\/$/, '') + '#signup?token=' + encodeURIComponent(res.token)
+      }
     } catch (e) {
-      error = e?.message ?? 'Failed to create token'
+      error = e?.message ?? 'Failed to create signup link'
     } finally {
       creating = false
     }
   }
 
-  function copyToken() {
-    if (!newToken?.token) return
-    navigator.clipboard.writeText(newToken.token).then(() => {
+  function copyLink() {
+    if (!inviteUrl) return
+    navigator.clipboard.writeText(inviteUrl).then(() => {
       copied = true
       setTimeout(() => (copied = false), 2000)
     })
   }
 
   function close() {
-    newToken = null
-    createName = ''
-    createExpiresIn = ''
+    inviteUrl = ''
     error = ''
     dispatch('close')
   }
@@ -78,50 +64,45 @@
     on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); close(); } }}
   >
     <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-    <div class="modal" role="dialog" aria-labelledby="api-tokens-title" aria-modal="true" on:click={(e) => e.stopPropagation()} on:keydown={(e) => e.stopPropagation()}>
+    <div class="modal" role="dialog" aria-labelledby="signup-invite-title" aria-modal="true" on:click={(e) => e.stopPropagation()} on:keydown={(e) => e.stopPropagation()}>
       <div class="modal-header">
-        <h2 id="api-tokens-title">Add token</h2>
+        <h2 id="signup-invite-title">Create signup link</h2>
         <button type="button" class="modal-close" aria-label="Close" on:click={close}>×</button>
       </div>
-      <p class="modal-desc">Use in <code>Authorization: Bearer &lt;token&gt;</code>. Copy the token after creating; it won’t be shown again.</p>
+      <p class="modal-desc">Generate a time-bound link for new users to create an account. Share the link; it can only be used once and will expire.</p>
 
       {#if error}
         <div class="modal-error" role="alert">{error}</div>
       {/if}
 
-      {#if newToken}
+      {#if inviteUrl}
         <div class="new-token-box">
-          <p class="new-token-label">New token (copy it now):</p>
+          <p class="new-token-label">Signup link (share this):</p>
           <div class="new-token-row">
-            <code class="new-token-value">{newToken.token}</code>
-            <button type="button" class="btn btn-primary" on:click={copyToken}>
-              {copied ? 'Copied' : 'Copy'}
+            <code class="new-token-value">{inviteUrl}</code>
+            <button type="button" class="btn btn-primary" on:click={copyLink}>
+              {copied ? 'Copied' : 'Copy link'}
             </button>
           </div>
-          <button type="button" class="btn" on:click={close}>Done</button>
         </div>
       {:else}
         <div class="create-section">
-          <label for="token-name">Name</label>
+          <label for="invite-expires">Link expires in</label>
           <div class="create-row">
-            <input id="token-name" type="text" bind:value={createName} placeholder="e.g. CI / CLI" disabled={creating} />
-            <button type="button" class="btn btn-primary" on:click={handleCreate} disabled={creating || !(createName || '').trim()}>
-              {creating ? 'Creating…' : 'Create token'}
-            </button>
-          </div>
-          <label for="token-expires">Expires in</label>
-          <div class="create-row">
-            <select id="token-expires" bind:value={createExpiresIn} disabled={creating}>
+            <select id="invite-expires" bind:value={createExpiresIn} disabled={creating}>
               {#each expiresInOptions as opt}
                 <option value={opt.value}>{opt.label}</option>
               {/each}
             </select>
+            <button type="button" class="btn btn-primary" on:click={handleCreate} disabled={creating}>
+              {creating ? 'Creating…' : 'Create link'}
+            </button>
           </div>
         </div>
       {/if}
 
       <div class="modal-footer">
-        <button type="button" class="btn" on:click={close}>Close</button>
+        <button type="button" class="btn" on:click={close}>{inviteUrl ? 'Done' : 'Close'}</button>
       </div>
     </div>
   </div>
@@ -178,13 +159,6 @@
     font-size: 0.8125rem;
     color: var(--text-muted);
   }
-  .modal-desc code {
-    font-size: 0.8em;
-    background: var(--table-header-bg);
-    padding: 0.1em 0.3em;
-    border-radius: 3px;
-    color: var(--text-muted);
-  }
   .modal-error {
     margin: 0 1rem 0.75rem;
     padding: 0.4rem 0.6rem;
@@ -210,7 +184,6 @@
     display: flex;
     gap: 0.5rem;
     align-items: center;
-    margin-bottom: 0.5rem;
   }
   .new-token-value {
     flex: 1;
@@ -237,7 +210,6 @@
     gap: 0.5rem;
     align-items: center;
   }
-  .create-row input,
   .create-row select {
     flex: 1;
     padding: 0.45rem 0.65rem;
@@ -246,9 +218,6 @@
     background: var(--bg);
     color: var(--text);
     font-size: 0.875rem;
-  }
-  .create-section .create-row + label {
-    margin-top: 0.75rem;
   }
   .modal-footer {
     padding: 0.65rem 1rem;

@@ -2,19 +2,27 @@
   import { onMount } from 'svelte'
   import Icon from '@iconify/svelte'
   import '../lib/theme.js'
-  import { listUsers, listTokens, deleteToken } from '../lib/api.js'
+  import { listUsers, listTokens, deleteToken, listSignupInvites, revokeSignupInvite, updateUserRole, deleteUser } from '../lib/api.js'
   import ApiTokensModal from '../lib/ApiTokensModal.svelte'
   import AddUserModal from '../lib/AddUserModal.svelte'
+  import SignupInviteModal from '../lib/SignupInviteModal.svelte'
 
   let users = []
   let loading = true
   let error = ''
   let showAddUserModal = false
   let showApiTokensModal = false
+  let showSignupInviteModal = false
+  let invites = []
+  let invitesLoading = true
+  let invitesError = ''
+  let revokingInviteId = null
   let tokens = []
   let tokensLoading = true
   let tokensError = ''
   let deletingTokenId = null
+  let updatingUserRoleId = null
+  let deletingUserId = null
 
   let userSortBy = 'email' // 'email' | 'role'
   let userSortDir = 'asc'
@@ -59,6 +67,80 @@
       error = e.message || 'Failed to load users'
     } finally {
       loading = false
+    }
+  }
+
+  async function handleUpdateUserRole(id, role) {
+    if (!id || !role) return
+    updatingUserRoleId = id
+    try {
+      const updated = await updateUserRole(id, role)
+      if (updated) {
+        users = users.map((u) => (u.id === id ? { ...u, role: updated.role } : u))
+      } else {
+        await load()
+      }
+    } catch (e) {
+      error = e?.message || 'Failed to update user role'
+      await load()
+    } finally {
+      updatingUserRoleId = null
+    }
+  }
+
+  async function handleDeleteUser(id) {
+    if (!id) return
+    deletingUserId = id
+    try {
+      await deleteUser(id)
+      users = users.filter((u) => u.id !== id)
+    } catch (e) {
+      error = e?.message || 'Failed to delete user'
+      await load()
+    } finally {
+      deletingUserId = null
+    }
+  }
+
+  async function loadInvites() {
+    invitesLoading = true
+    invitesError = ''
+    try {
+      const res = await listSignupInvites()
+      invites = res.invites || []
+    } catch (e) {
+      invitesError = e?.message || 'Failed to load signup links'
+      invites = []
+    } finally {
+      invitesLoading = false
+    }
+  }
+
+  async function handleRevokeInvite(id) {
+    if (!id) return
+    revokingInviteId = id
+    try {
+      await revokeSignupInvite(id)
+      await loadInvites()
+    } catch (e) {
+      invitesError = e?.message || 'Failed to revoke link'
+    } finally {
+      revokingInviteId = null
+    }
+  }
+
+  function inviteStatus(inv) {
+    if (inv.used_at) return 'Used'
+    if (new Date(inv.expires_at) < new Date()) return 'Expired'
+    return 'Active'
+  }
+
+  function formatInviteDate(iso) {
+    if (!iso) return ''
+    try {
+      return new Date(iso).toLocaleDateString(undefined, { dateStyle: 'short', timeStyle: 'short' })
+    } catch {
+      return iso
     }
   }
 
@@ -121,6 +203,7 @@
 
   onMount(() => {
     load()
+    loadInvites()
     loadTokens()
   })
 </script>
@@ -132,6 +215,65 @@
 
   <AddUserModal open={showAddUserModal} on:close={() => (showAddUserModal = false)} on:created={load} />
   <ApiTokensModal open={showApiTokensModal} on:close={() => { showApiTokensModal = false; loadTokens() }} />
+  <SignupInviteModal open={showSignupInviteModal} on:close={() => { showSignupInviteModal = false; loadInvites() }} />
+
+  <div class="admin-card">
+    <div class="admin-card-header">
+      <h2 class="admin-card-title">Signup links</h2>
+      <button type="button" class="btn btn-primary btn-small" on:click={() => (showSignupInviteModal = true)}>
+        Create signup link
+      </button>
+    </div>
+    <p class="admin-muted">Create a time-bound link for new users to sign up. The link expires after the chosen duration and can only be used once.</p>
+    {#if invitesLoading}
+      <p class="admin-muted">Loading…</p>
+    {:else if invitesError}
+      <p class="admin-error">{invitesError}</p>
+    {:else if invites.length === 0}
+      <p class="admin-muted">No signup links yet.</p>
+    {:else}
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Created</th>
+              <th>Expires</th>
+              <th>Status</th>
+              <th>Used by</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each invites as inv (inv.id)}
+              <tr class:invite-expired={inviteStatus(inv) === 'Expired'}>
+                <td>{formatInviteDate(inv.created_at)}</td>
+                <td>{formatInviteDate(inv.expires_at)}</td>
+                <td>
+                  <span class="invite-status-badge" class:used={inviteStatus(inv) === 'Used'} class:expired={inviteStatus(inv) === 'Expired'}>
+                    {inviteStatus(inv)}
+                  </span>
+                </td>
+                <td>{inv.used_by_email || '—'}</td>
+                <td class="table-actions">
+                  {#if inviteStatus(inv) === 'Active'}
+                    <button
+                      type="button"
+                      class="btn btn-danger btn-small"
+                      disabled={revokingInviteId === inv.id}
+                      on:click={() => handleRevokeInvite(inv.id)}
+                      title="Revoke link"
+                    >
+                      {revokingInviteId === inv.id ? 'Revoking…' : 'Revoke'}
+                    </button>
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
+  </div>
 
   <div class="admin-card">
     <div class="admin-card-header">
@@ -167,13 +309,35 @@
                   {/if}
                 </button>
               </th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
             {#each sortedUsers as u}
               <tr>
                 <td class="name">{u.email}</td>
-                <td><span class="role-badge" class:admin={u.role === 'admin'}>{u.role}</span></td>
+                <td>
+                  <select
+                    class="role-select"
+                    value={u.role}
+                    disabled={updatingUserRoleId === u.id || deletingUserId === u.id}
+                    on:change={(e) => handleUpdateUserRole(u.id, e.currentTarget.value)}
+                  >
+                    <option value="user">user</option>
+                    <option value="admin">admin</option>
+                  </select>
+                </td>
+                <td class="table-actions">
+                  <button
+                    type="button"
+                    class="btn btn-danger btn-small"
+                    disabled={deletingUserId === u.id}
+                    on:click={() => handleDeleteUser(u.id)}
+                    title="Delete user"
+                  >
+                    {deletingUserId === u.id ? 'Deleting…' : 'Delete'}
+                  </button>
+                </td>
               </tr>
             {/each}
           </tbody>
@@ -293,20 +457,35 @@
     font-size: 0.9rem;
     color: var(--text-muted);
   }
-  .role-badge {
+  .role-select {
+    min-width: 6.5rem;
+    padding: 0.35rem 0.55rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 0.85rem;
+  }
+  .invite-status-badge {
     display: inline-block;
     padding: 0.2rem 0.5rem;
     font-size: 0.8rem;
     font-weight: 500;
-    text-transform: capitalize;
     background: var(--surface-elevated);
     border: 1px solid var(--border);
     border-radius: 4px;
   }
-  .role-badge.admin {
-    background: var(--accent-dim);
-    border-color: var(--accent);
-    color: var(--accent);
+  .invite-status-badge.used {
+    background: rgba(34, 197, 94, 0.12);
+    border-color: rgba(34, 197, 94, 0.4);
+    color: #16a34a;
+  }
+  .invite-status-badge.expired {
+    background: var(--surface-elevated);
+    color: var(--text-muted);
+  }
+  tr.invite-expired td {
+    color: var(--text-muted);
   }
   .table-wrap {
     overflow-x: auto;
