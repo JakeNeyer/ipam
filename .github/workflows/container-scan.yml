@@ -1,0 +1,76 @@
+# Build the app image, generate an SBOM with Syft, and scan for vulnerabilities with Grype.
+
+name: Container scan
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: ipam:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run Syft (SBOM)
+        run: |
+          mkdir -p sbom
+          docker run --rm \
+            -v ${{ github.workspace }}/sbom:/out \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            anchore/syft:latest \
+            ipam:scan -o cyclonedx-json=/out/sbom.cyclonedx.json -o spdx-json=/out/sbom.spdx.json
+
+      - name: Upload SBOM (CycloneDX)
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: sbom/sbom.cyclonedx.json
+
+      - name: Upload SBOM (SPDX)
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-spdx
+          path: sbom/sbom.spdx.json
+
+      - name: Run Grype (vulnerability scan)
+        run: |
+          mkdir -p grype-report
+          echo "=== Grype scan (table) ==="
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            anchore/grype:latest ipam:scan -o table
+          echo "=== Grype JSON report ==="
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v ${{ github.workspace }}/grype-report:/out \
+            anchore/grype:latest ipam:scan -o json -o /out/report.json || true
+
+      - name: Upload Grype report
+        uses: actions/upload-artifact@v4
+        with:
+          name: grype-report
+          path: grype-report/
+
+      - name: Fail on high/critical vulnerabilities
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            anchore/grype:latest ipam:scan --fail-on high

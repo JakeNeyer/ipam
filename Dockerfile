@@ -7,7 +7,7 @@ COPY web/ ./
 RUN npm run build
 
 # Build Go API
-FROM golang:1.23-alpine AS go
+FROM golang:1.25-alpine AS go
 WORKDIR /app
 RUN apk add --no-cache git
 COPY go.mod go.sum ./
