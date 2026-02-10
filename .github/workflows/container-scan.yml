@@ -60,8 +60,7 @@ jobs:
           echo "=== Grype JSON report ==="
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
-            -v ${{ github.workspace }}/grype-report:/out \
-            anchore/grype:latest ipam:scan -o json -o /out/report.json || true
+            anchore/grype:latest ipam:scan -o json > grype-report/report.json || true
 
       - name: Upload Grype report
         uses: actions/upload-artifact@v4

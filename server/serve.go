@@ -32,7 +32,8 @@ func NewServer(s store.Storer) *web.Service {
 	svc.Post("/api/setup/status", postSetupUC) // alias so POST to status (e.g. form action) also creates admin
 
 	// Auth routes (no auth required for login/logout).
-	loginUC := handlers.NewLoginUseCase(s)
+	loginLimiter := auth.NewLoginAttemptLimiter(auth.DefaultLoginMaxAttempts, auth.DefaultLoginWindow)
+	loginUC := handlers.NewLoginUseCase(s, loginLimiter)
 	svc.Post("/api/auth/login", loginUC)
 	logoutUC := handlers.NewLogoutUseCase(s)
 	svc.Post("/api/auth/logout", logoutUC, nethttp.SuccessStatus(204))

@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte'
+  import Icon from '@iconify/svelte'
   import SocialIcons from '@rodneylab/svelte-social-icons'
   import { theme } from '../lib/theme.js'
 
@@ -289,7 +290,10 @@
           aria-controls="terraform-panel-aws"
           id="terraform-tab-aws"
           on:click={() => (terraformTab = 'aws')}
-        >AWS</button>
+        >
+          <Icon icon="simple-icons:amazonaws" class="terraform-tab-icon" aria-hidden="true" />
+          <span>AWS</span>
+        </button>
         <button
           type="button"
           class="terraform-tab"
@@ -299,7 +303,10 @@
           aria-controls="terraform-panel-azure"
           id="terraform-tab-azure"
           on:click={() => (terraformTab = 'azure')}
-        >Azure</button>
+        >
+          <Icon icon="simple-icons:microsoftazure" class="terraform-tab-icon" aria-hidden="true" />
+          <span>Azure</span>
+        </button>
         <button
           type="button"
           class="terraform-tab"
@@ -309,7 +316,10 @@
           aria-controls="terraform-panel-gcp"
           id="terraform-tab-gcp"
           on:click={() => (terraformTab = 'gcp')}
-        >GCP</button>
+        >
+          <Icon icon="simple-icons:googlecloud" class="terraform-tab-icon" aria-hidden="true" />
+          <span>GCP</span>
+        </button>
       </div>
       <div class="terraform-snippet">
         {#if terraformTab === 'aws'}
@@ -1087,6 +1097,9 @@ resource "google_compute_subnetwork" "app" {'{'}
   }
 
   .terraform-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
     padding: 0.5rem 1rem;
     font-size: 0.875rem;
     font-weight: 500;
@@ -1096,6 +1109,13 @@ resource "google_compute_subnetwork" "app" {'{'}
     border-radius: var(--radius) var(--radius) 0 0;
     cursor: pointer;
     transition: color 0.15s, background 0.15s;
+  }
+
+  .terraform-tab-icon {
+    width: 1.25rem;
+    height: 1.25rem;
+    flex-shrink: 0;
+    color: inherit;
   }
 
   .terraform-tab:hover {

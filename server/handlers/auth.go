@@ -38,25 +38,47 @@ type loginOutput struct {
 }
 
 // NewLoginUseCase returns a use case for POST /api/auth/login.
-func NewLoginUseCase(s store.Storer) usecase.Interactor {
+// If limiter is non-nil, failed login attempts per client IP are limited to mitigate brute-force.
+func NewLoginUseCase(s store.Storer, limiter *auth.LoginAttemptLimiter) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input loginInput, output *loginOutput) error {
+		r := auth.RequestFromContext(ctx)
+		ip := auth.ClientIP(r)
+		if limiter != nil && limiter.IsBlocked(ip) {
+			logger.Info("login blocked: too many attempts", logger.KeyOperation, "login", "ip", ip)
+			return status.Wrap(errors.New("too many failed login attempts; try again later"), status.ResourceExhausted)
+		}
 		logger.Info("login request", logger.KeyOperation, "login", logger.KeyEmail, input.Email)
 		if !validation.ValidateEmail(input.Email) {
 			logger.Info(logger.MsgAuthMissingCreds, logger.KeyOperation, "login")
+			if limiter != nil {
+				limiter.RecordFailure(ip)
+			}
 			return status.Wrap(errors.New("valid email required"), status.InvalidArgument)
 		}
 		if !validation.ValidatePassword(input.Password) {
 			logger.Info(logger.MsgAuthMissingCreds, logger.KeyOperation, "login")
+			if limiter != nil {
+				limiter.RecordFailure(ip)
+			}
 			return status.Wrap(errors.New("password must be at least 8 characters"), status.InvalidArgument)
 		}
 		user, err := s.GetUserByEmail(strings.TrimSpace(strings.ToLower(input.Email)))
 		if err != nil {
 			logger.Error(logger.MsgAuthInvalidCreds, logger.KeyOperation, "login", logger.ErrAttr(err))
+			if limiter != nil {
+				limiter.RecordFailure(ip)
+			}
 			return status.Wrap(errors.New("invalid email or password"), status.Unauthenticated)
 		}
 		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(input.Password)); err != nil {
 			logger.Info(logger.MsgAuthPasswordMismatch, logger.KeyOperation, "login", logger.KeyEmail, input.Email)
+			if limiter != nil {
+				limiter.RecordFailure(ip)
+			}
 			return status.Wrap(errors.New("invalid email or password"), status.Unauthenticated)
+		}
+		if limiter != nil {
+			limiter.RecordSuccess(ip)
 		}
 		sessionID := auth.NewSessionID()
 		s.CreateSession(sessionID, user.ID, time.Now().Add(auth.SessionDuration))
@@ -76,7 +98,7 @@ func NewLoginUseCase(s store.Storer) usecase.Interactor {
 	})
 	u.SetTitle("Login")
 	u.SetDescription("Authenticate with email and password; sets session cookie")
-	u.SetExpectedErrors(status.InvalidArgument, status.Unauthenticated)
+	u.SetExpectedErrors(status.InvalidArgument, status.Unauthenticated, status.ResourceExhausted)
 	return u
 }
 
