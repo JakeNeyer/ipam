@@ -162,6 +162,45 @@
         <p class="feature-desc">Wall off address ranges from being used.</p>
       </div>
     </div>
+    <div class="coming-soon-wrap">
+      <p class="coming-soon-label">Coming soon</p>
+      <div class="coming-soon-grid">
+        <div class="feature-card feature-card-coming-soon">
+          <div class="feature-icon-wrap">
+            <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 7h18M3 12h18M3 17h18" />
+              <path d="M7 3v18M12 3v18M17 3v18" />
+            </svg>
+          </div>
+          <h3 class="feature-title">Cloud Provider Inventory</h3>
+          <p class="feature-desc">Track networks by plugging in directly to your cloud provider.</p>
+        </div>
+        <div class="feature-card feature-card-coming-soon">
+          <div class="feature-icon-wrap">
+            <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="7" height="7" rx="1" />
+              <rect x="14" y="3" width="7" height="7" rx="1" />
+              <rect x="8.5" y="14" width="7" height="7" rx="1" />
+              <path d="M10 7h4M17.5 10v4M6.5 10v4M10 17h4" />
+            </svg>
+          </div>
+          <h3 class="feature-title">Network Diagram Export</h3>
+          <p class="feature-desc">Generate diagrams for your networks compatible with your favorite tools like draw.io.</p>
+        </div>
+        <div class="feature-card feature-card-coming-soon">
+          <div class="feature-icon-wrap">
+            <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 12h3l2-4 4 8 2-4h7" />
+              <circle cx="5" cy="12" r="2" />
+              <circle cx="12" cy="16" r="2" />
+              <circle cx="19" cy="12" r="2" />
+            </svg>
+          </div>
+          <h3 class="feature-title">Network Advisor</h3>
+          <p class="feature-desc">The network advisor helps you plan and optimize IP allocation.</p>
+        </div>
+      </div>
+    </div>
   </section>
 
   <section id="command-palette" class="section command-palette-section">
@@ -978,6 +1017,30 @@ resource "google_compute_subnetwork" "app" {'{'}
     color: var(--text-muted);
     line-height: 1.5;
     margin: 0;
+  }
+
+  .coming-soon-wrap {
+    margin-top: 2rem;
+  }
+
+  .coming-soon-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1.5rem;
+  }
+
+  .coming-soon-label {
+    margin: 0 0 0.75rem;
+    text-align: left;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .feature-card-coming-soon {
+    border-style: dashed;
   }
 
   /* API section */
