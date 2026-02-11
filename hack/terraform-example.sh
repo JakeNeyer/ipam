@@ -57,6 +57,9 @@ export TF_VAR_ipam_endpoint="$IPAM_ENDPOINT"
 export TF_VAR_ipam_token="$IPAM_TOKEN"
 
 cd "$EXAMPLE_DIR"
+# When using -plugin-dir with a local build, the lock file may have checksums from a different
+# platform or an older build; remove it so init records the current binary and avoids mismatch errors.
+rm -f .terraform.lock.hcl
 echo "Running terraform init..."
 # -plugin-dir points at a directory with registry layout so Terraform finds the provider locally (no registry query)
 terraform init -plugin-dir="$PLUGIN_ROOT"

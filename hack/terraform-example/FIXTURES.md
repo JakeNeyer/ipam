@@ -77,7 +77,8 @@ The example `main.tf` declares:
 
 - **ipam_environment.hack** – name `tf-hack-env`
 - **ipam_block.hack** – name `tf-hack-block`, CIDR `10.200.0.0/24`, in that environment
-- **ipam_allocation.hack** – name `tf-hack-alloc`, CIDR `10.200.0.0/26`, in that block
+- **ipam_allocation.hack** – name `tf-hack-alloc`, CIDR `10.200.0.0/26`, in that block (explicit CIDR)
+- **ipam_allocation.hack_auto** – name `tf-hack-alloc-auto`, auto-allocated /26 via `/api/allocations/auto` (prefix_length)
 
 Run `terraform destroy` when finished to remove these resources from IPAM.
 

@@ -88,6 +88,10 @@ import NetworkAdvisor from './routes/NetworkAdvisor.svelte'
       route = 'login'
       return
     }
+    if (path === 'setup') {
+      route = 'setup'
+      return
+    }
     if (path === 'signup') {
       route = 'signup'
       routeSignupToken = ''
@@ -236,19 +240,29 @@ import NetworkAdvisor from './routes/NetworkAdvisor.svelte'
   <div class="app loading" role="presentation">
     <div class="loading-message">Loading…</div>
   </div>
-{:else if route === 'landing' && !$user && $setupRequired === false}
-  <Landing />
-{:else if route === 'docs'}
-  <Docs currentPage={routeDocsPage} />
-{:else if !$user}
-  {#if route === 'signup'}
-    <Signup token={routeSignupToken} />
-  {:else if $setupRequired === null}
+{:else if route === 'landing' && !$user}
+  {#if $setupRequired === null}
     <div class="app loading" role="presentation">
       <div class="loading-message">Loading…</div>
     </div>
   {:else if $setupRequired}
     <Setup />
+  {:else}
+    <Landing />
+  {/if}
+{:else if route === 'docs'}
+  <Docs currentPage={routeDocsPage} />
+{:else if !$user}
+  {#if route === 'signup'}
+    <Signup token={routeSignupToken} />
+  {:else if route === 'login'}
+    <Login />
+  {:else if route === 'setup' || ($setupRequired !== null && $setupRequired)}
+    <Setup />
+  {:else if $setupRequired === null}
+    <div class="app loading" role="presentation">
+      <div class="loading-message">Loading…</div>
+    </div>
   {:else}
     <Login />
   {/if}

@@ -1,7 +1,9 @@
 package provider
 
 import (
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -154,6 +156,57 @@ resource "ipam_allocation" "acc" {
 `,
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ipam_allocation.acc", "name", "acc-alloc-updated"),
+				),
+			},
+			{
+				ResourceName:      "ipam_allocation.acc",
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
+func TestAccAllocationAutoResource(t *testing.T) {
+	testAccPreCheck(t)
+	endpoint := os.Getenv("IPAM_ENDPOINT")
+	token := os.Getenv("IPAM_TOKEN")
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccProviderConfig(endpoint, token) + `
+resource "ipam_environment" "acc" {
+  name = "acc-auto-alloc-env"
+}
+
+resource "ipam_block" "acc" {
+  name           = "acc-auto-alloc-block"
+  cidr           = "10.104.0.0/16"
+  environment_id = ipam_environment.acc.id
+}
+
+resource "ipam_allocation" "acc" {
+  name           = "acc-auto-alloc"
+  block_name     = ipam_block.acc.name
+  prefix_length = 24
+}
+`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("ipam_allocation.acc", "id"),
+					resource.TestCheckResourceAttr("ipam_allocation.acc", "name", "acc-auto-alloc"),
+					resource.TestCheckResourceAttr("ipam_allocation.acc", "block_name", "acc-auto-alloc-block"),
+					resource.TestCheckResourceAttrSet("ipam_allocation.acc", "cidr"),
+					resource.TestCheckResourceAttrWith("ipam_allocation.acc", "cidr", func(value string) error {
+						if value == "" {
+							return fmt.Errorf("cidr must be set by API for auto allocation")
+						}
+						if !strings.HasSuffix(value, "/24") {
+							return fmt.Errorf("expected /24 allocation, got %s", value)
+						}
+						return nil
+					}),
 				),
 			},
 			{

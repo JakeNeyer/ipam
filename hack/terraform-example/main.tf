@@ -33,6 +33,13 @@ resource "ipam_allocation" "hack" {
   cidr       = "10.200.0.0/26"
 }
 
+# Auto-allocate: next available /26 in the block (uses POST /api/allocations/auto)
+resource "ipam_allocation" "hack_auto" {
+  name           = "tf-hack-alloc-auto"
+  block_name     = ipam_block.hack.name
+  prefix_length  = 26
+}
+
 output "environment_id" {
   value = ipam_environment.hack.id
 }
@@ -47,4 +54,12 @@ output "allocation_id" {
 
 output "allocation_cidr" {
   value = ipam_allocation.hack.cidr
+}
+
+output "allocation_auto_id" {
+  value = ipam_allocation.hack_auto.id
+}
+
+output "allocation_auto_cidr" {
+  value = ipam_allocation.hack_auto.cidr
 }

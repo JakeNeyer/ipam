@@ -59,7 +59,7 @@ curl -X POST http://localhost:8080/api/blocks \
   -H "Content-Type: application/json" \
   -d '{"name": "prod-block", "cidr": "10.0.0.0/16", "environment_id": "<env-id>"}'
 
-# Auto-allocate the next available /24 in the block (bin-packing)
+# Auto-allocate the next available /24 in the block
 curl -X POST http://localhost:8080/api/allocations/auto \
   -H "Authorization: Bearer $IPAM_TOKEN" \
   -H "Content-Type: application/json" \
