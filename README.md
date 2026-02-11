@@ -1,13 +1,6 @@
 # IPAM
 **IPAM** is an IP Address Management application for tracking environments, network blocks (CIDR ranges), and allocations. It provides a REST API, a web UI, and a Terraform provider so you can manage IP space from the dashboard or from infrastructure-as-code.
 
-## Overview
-
-- **API** — Go server with Postgres storage. Manages environments, blocks, allocations, and reserved blocks. OpenAPI/Swagger docs and Bearer token auth.
-- **Web UI** — Svelte app with dashboard, environments, networks, CIDR wizard, subnet calculator, and user guide. Light/dark theme.
-- **Terraform provider** — Manage IPAM resources from Terraform: `ipam_environment`, `ipam_block`, `ipam_allocation`, `ipam_reserved_block`, and data sources.
-
-
 ## Quick start
 
 1. Set `DATABASE_URL` and run the API (from repo root): `go run .`
