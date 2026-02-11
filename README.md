@@ -22,41 +22,6 @@ From the repo root, run the API with the built web UI, then run Playwright from 
 
 Tests cover auth (login, logout, setup), security (API 401 without session, protected routes), and basic flows (dashboard, nav). For login and post-login tests, set `E2E_LOGIN_EMAIL` and `E2E_LOGIN_PASSWORD`; otherwise those tests are skipped. Base URL defaults to `http://localhost:8011` (override with `BASE_URL`).
 
-## Deploy to Fly.io
-
-1. Install [flyctl](https://fly.io/docs/hands-on/install-flyctl/) and log in: `fly auth login`.
-2. Create the app (from repo root): `fly launch --no-deploy` (or copy `fly.toml` and run `fly apps create ipam`).
-3. Create managed Postgres (smallest):  
-   `fly postgres create --name ipam-db --vm-size shared-cpu-1x --volume-size 1`
-4. Attach Postgres so the app gets `DATABASE_URL`:  
-   `fly postgres attach ipam-db`
-5. (Optional) Set initial admin so you skip the setup UI:  
-   `fly secrets set INITIAL_ADMIN_EMAIL=you@example.com INITIAL_ADMIN_PASSWORD=your-secure-password`  
-   Only used when the database has no users; ignored otherwise.
-6. Deploy:  
-   `fly deploy`
-
-The app listens on `PORT` (8080) and serves the API plus the built web UI. Open the app URL and log in (or complete setup if you didn’t set initial admin).
-
-### Update an existing Fly.io deployment
-
-Use these steps whenever you want to roll out the newest version.
-
-1. Pull latest code and verify your branch is up to date:
-   - `git checkout main`
-   - `git pull`
-2. From the repo root, deploy the latest commit:
-   - `fly deploy`
-3. Watch deployment status:
-   - `fly status`
-   - `fly logs`
-4. Verify the running release:
-   - Open your app URL (`fly open`) and confirm UI/API behavior.
-   - Optionally verify the image/release in Fly:
-     - `fly releases`
-5. If the deployment fails, roll back to the previous stable release:
-   - `fly releases`
-   - `fly deploy --image <previous-image-ref>`
 
 ## License
 
