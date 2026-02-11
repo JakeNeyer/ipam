@@ -21,8 +21,6 @@ See [terraform-provider-ipam/README.md](terraform-provider-ipam/README.md) for u
 
 ## Deploy to Fly.io
 
-Uses the smallest compute (shared-cpu-1x, 256MB) and Fly Postgres (lowest cost).
-
 1. Install [flyctl](https://fly.io/docs/hands-on/install-flyctl/) and log in: `fly auth login`.
 2. Create the app (from repo root): `fly launch --no-deploy` (or copy `fly.toml` and run `fly apps create ipam`).
 3. Create managed Postgres (smallest):  
