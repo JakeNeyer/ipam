@@ -1,4 +1,8 @@
 # IPAM
+
+[![Test](https://github.com/JakeNeyer/ipam/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/JakeNeyer/ipam/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/github/license/JakeNeyer/ipam)](LICENSE)
+
 **IPAM** is an IP Address Management application for tracking environments, network blocks (CIDR ranges), and allocations. It provides a REST API, a web UI, and a Terraform provider so you can manage IP space from the dashboard or from infrastructure-as-code.
 
 ## Quick start
@@ -16,8 +20,6 @@ From the repo root, run the API with the built web UI, then run Playwright from 
 3. In another terminal: `cd web && npx playwright install chromium && npm run e2e`
 
 Tests cover auth (login, logout, setup), security (API 401 without session, protected routes), and basic flows (dashboard, nav). For login and post-login tests, set `E2E_LOGIN_EMAIL` and `E2E_LOGIN_PASSWORD`; otherwise those tests are skipped. Base URL defaults to `http://localhost:8011` (override with `BASE_URL`).
-
-See [terraform-provider-ipam/README.md](terraform-provider-ipam/README.md) for using the Terraform provider.
 
 ## Deploy to Fly.io
 
