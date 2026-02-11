@@ -7,7 +7,6 @@ import (
 	"embed"
 	"encoding/hex"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -122,49 +121,150 @@ func uuidPtr(u uuid.UUID) interface{} {
 	return u
 }
 
+func nullStr(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+func (s *PostgresStore) CreateOrganization(org *Organization) error {
+	if org.ID == uuid.Nil {
+		org.ID = s.GenerateID()
+	}
+	if org.CreatedAt.IsZero() {
+		org.CreatedAt = time.Now()
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO organizations (id, name, created_at) VALUES ($1, $2, $3)`,
+		org.ID, org.Name, org.CreatedAt,
+	)
+	return err
+}
+
+func (s *PostgresStore) GetOrganization(id uuid.UUID) (*Organization, error) {
+	var o Organization
+	err := s.db.QueryRow(`SELECT id, name, created_at FROM organizations WHERE id = $1`, id).Scan(&o.ID, &o.Name, &o.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("organization not found")
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &o, nil
+}
+
+func (s *PostgresStore) ListOrganizations() ([]*Organization, error) {
+	rows, err := s.db.Query(`SELECT id, name, created_at FROM organizations ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Organization
+	for rows.Next() {
+		var o Organization
+		if err := rows.Scan(&o.ID, &o.Name, &o.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &o)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) UpdateOrganization(org *Organization) error {
+	res, err := s.db.Exec(`UPDATE organizations SET name = $1 WHERE id = $2`, org.Name, org.ID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("organization not found")
+	}
+	return nil
+}
+
+func (s *PostgresStore) DeleteOrganization(id uuid.UUID) error {
+	users, err := s.ListUsers(&id)
+	if err != nil {
+		return err
+	}
+	if len(users) > 0 {
+		return fmt.Errorf("organization has users; remove or reassign them first")
+	}
+	envs, _, err := s.ListEnvironmentsFiltered("", &id, 1, 0)
+	if err != nil {
+		return err
+	}
+	if len(envs) > 0 {
+		return fmt.Errorf("organization has environments; remove them first")
+	}
+	res, err := s.db.Exec(`DELETE FROM organizations WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("organization not found")
+	}
+	return nil
+}
+
 func (s *PostgresStore) CreateEnvironment(env *network.Environment) error {
 	_, err := s.db.Exec(
-		`INSERT INTO environments (id, name) VALUES ($1, $2)`,
-		env.Id, env.Name,
+		`INSERT INTO environments (id, name, organization_id) VALUES ($1, $2, $3)`,
+		env.Id, env.Name, uuidPtr(env.OrganizationID),
 	)
 	return err
 }
 
 func (s *PostgresStore) GetEnvironment(id uuid.UUID) (*network.Environment, error) {
 	var name string
-	err := s.db.QueryRow(`SELECT id, name FROM environments WHERE id = $1`, id).Scan(&id, &name)
+	var orgID nullUUID
+	err := s.db.QueryRow(`SELECT id, name, organization_id FROM environments WHERE id = $1`, id).Scan(&id, &name, &orgID)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("environment not found")
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &network.Environment{Id: id, Name: name, Block: []network.Block{}}, nil
+	orgUUID := uuid.Nil
+	if orgID.Valid {
+		orgUUID = orgID.UUID
+	}
+	return &network.Environment{Id: id, Name: name, OrganizationID: orgUUID, Block: []network.Block{}}, nil
 }
 
 func (s *PostgresStore) ListEnvironments() ([]*network.Environment, error) {
-	out, _, err := s.ListEnvironmentsFiltered("", 0, 0)
+	out, _, err := s.ListEnvironmentsFiltered("", nil, 0, 0)
 	return out, err
 }
 
-func (s *PostgresStore) ListEnvironmentsFiltered(name string, limit, offset int) ([]*network.Environment, int, error) {
+func (s *PostgresStore) ListEnvironmentsFiltered(name string, organizationID *uuid.UUID, limit, offset int) ([]*network.Environment, int, error) {
 	name = strings.TrimSpace(name)
 	nameLower := strings.ToLower(name)
+	countQ := `SELECT COUNT(*) FROM environments WHERE ($1 = '' OR LOWER(name) LIKE '%' || $1 || '%')`
+	countArgs := []interface{}{nameLower}
+	if organizationID != nil {
+		countQ += ` AND organization_id = $2`
+		countArgs = append(countArgs, *organizationID)
+	}
 	var total int
-	err := s.db.QueryRow(
-		`SELECT COUNT(*) FROM environments WHERE $1 = '' OR LOWER(name) LIKE '%' || $1 || '%'`,
-		nameLower,
-	).Scan(&total)
-	if err != nil {
+	if err := s.db.QueryRow(countQ, countArgs...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	q := `SELECT id, name FROM environments WHERE $1 = '' OR LOWER(name) LIKE '%' || $1 || '%' ORDER BY name`
-	args := []interface{}{nameLower}
-	if limit > 0 {
-		q += ` LIMIT $2 OFFSET $3`
-		args = append(args, limit, offset)
+	selQ := `SELECT id, name, organization_id FROM environments WHERE ($1 = '' OR LOWER(name) LIKE '%' || $1 || '%')`
+	selArgs := []interface{}{nameLower}
+	if organizationID != nil {
+		selQ += ` AND organization_id = $2`
+		selArgs = append(selArgs, *organizationID)
 	}
-	rows, err := s.db.Query(q, args...)
+	selQ += ` ORDER BY name`
+	argIdx := len(selArgs) + 1
+	if limit > 0 {
+		selQ += fmt.Sprintf(` LIMIT $%d OFFSET $%d`, argIdx, argIdx+1)
+		selArgs = append(selArgs, limit, offset)
+	}
+	rows, err := s.db.Query(selQ, selArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -173,10 +273,15 @@ func (s *PostgresStore) ListEnvironmentsFiltered(name string, limit, offset int)
 	for rows.Next() {
 		var id uuid.UUID
 		var n string
-		if err := rows.Scan(&id, &n); err != nil {
+		var orgID nullUUID
+		if err := rows.Scan(&id, &n, &orgID); err != nil {
 			return nil, 0, err
 		}
-		out = append(out, &network.Environment{Id: id, Name: n, Block: []network.Block{}})
+		orgUUID := uuid.Nil
+		if orgID.Valid {
+			orgUUID = orgID.UUID
+		}
+		out = append(out, &network.Environment{Id: id, Name: n, OrganizationID: orgUUID, Block: []network.Block{}})
 	}
 	return out, total, rows.Err()
 }
@@ -222,7 +327,7 @@ func (s *PostgresStore) CreateBlock(block *network.Block) error {
 	}
 	total := block.Usage.TotalIPs
 	if total == 0 {
-		total = 1 << 20 // placeholder if not set
+		total = 1 << 20
 	}
 	_, err := s.db.Exec(
 		`INSERT INTO blocks (id, name, cidr, environment_id, total_ips) VALUES ($1, $2, $3, $4, $5)`,
@@ -261,11 +366,11 @@ func (s *PostgresStore) GetBlock(id uuid.UUID) (*network.Block, error) {
 }
 
 func (s *PostgresStore) ListBlocks() ([]*network.Block, error) {
-	out, _, err := s.ListBlocksFiltered("", nil, false, 0, 0)
+	out, _, err := s.ListBlocksFiltered("", nil, nil, false, 0, 0)
 	return out, err
 }
 
-func (s *PostgresStore) ListBlocksFiltered(name string, environmentID *uuid.UUID, orphanedOnly bool, limit, offset int) ([]*network.Block, int, error) {
+func (s *PostgresStore) ListBlocksFiltered(name string, environmentID *uuid.UUID, organizationID *uuid.UUID, orphanedOnly bool, limit, offset int) ([]*network.Block, int, error) {
 	var countArgs []interface{}
 	countQ := `SELECT COUNT(*) FROM blocks WHERE 1=1`
 	idx := 1
@@ -277,6 +382,11 @@ func (s *PostgresStore) ListBlocksFiltered(name string, environmentID *uuid.UUID
 	if environmentID != nil {
 		countQ += fmt.Sprintf(` AND environment_id = $%d`, idx)
 		countArgs = append(countArgs, *environmentID)
+		idx++
+	}
+	if organizationID != nil {
+		countQ += fmt.Sprintf(` AND (environment_id IN (SELECT id FROM environments WHERE organization_id = $%d))`, idx)
+		countArgs = append(countArgs, *organizationID)
 		idx++
 	}
 	if orphanedOnly {
@@ -297,6 +407,11 @@ func (s *PostgresStore) ListBlocksFiltered(name string, environmentID *uuid.UUID
 	if environmentID != nil {
 		selQ += fmt.Sprintf(` AND environment_id = $%d`, i)
 		selArgs = append(selArgs, *environmentID)
+		i++
+	}
+	if organizationID != nil {
+		selQ += fmt.Sprintf(` AND (environment_id IN (SELECT id FROM environments WHERE organization_id = $%d))`, i)
+		selArgs = append(selArgs, *organizationID)
 		i++
 	}
 	if orphanedOnly {
@@ -339,7 +454,7 @@ func (s *PostgresStore) ListBlocksFiltered(name string, environmentID *uuid.UUID
 }
 
 func (s *PostgresStore) ListBlocksByEnvironment(envID uuid.UUID) ([]*network.Block, error) {
-	blocks, _, err := s.ListBlocksFiltered("", &envID, false, 0, 0)
+	blocks, _, err := s.ListBlocksFiltered("", &envID, nil, false, 0, 0)
 	return blocks, err
 }
 
@@ -402,11 +517,11 @@ func (s *PostgresStore) GetAllocation(id uuid.UUID) (*network.Allocation, error)
 }
 
 func (s *PostgresStore) ListAllocations() ([]*network.Allocation, error) {
-	out, _, err := s.ListAllocationsFiltered("", "", uuid.Nil, 0, 0)
+	out, _, err := s.ListAllocationsFiltered("", "", uuid.Nil, nil, 0, 0)
 	return out, err
 }
 
-func (s *PostgresStore) ListAllocationsFiltered(name string, blockName string, environmentID uuid.UUID, limit, offset int) ([]*network.Allocation, int, error) {
+func (s *PostgresStore) ListAllocationsFiltered(name string, blockName string, environmentID uuid.UUID, organizationID *uuid.UUID, limit, offset int) ([]*network.Allocation, int, error) {
 	name = strings.TrimSpace(name)
 	blockName = strings.TrimSpace(blockName)
 	nameLower := strings.ToLower(name)
@@ -415,23 +530,36 @@ func (s *PostgresStore) ListAllocationsFiltered(name string, blockName string, e
 	var total int
 	countQ := `SELECT COUNT(*) FROM allocations WHERE ($1 = '' OR LOWER(name) LIKE '%' || $1 || '%') AND ($2 = '' OR LOWER(block_name) = $2)`
 	args := []interface{}{nameLower, blockLower}
+	idx := 3
 	if envFilter {
-		countQ += ` AND LOWER(block_name) IN (SELECT LOWER(name) FROM blocks WHERE environment_id = $3)`
+		countQ += fmt.Sprintf(` AND LOWER(block_name) IN (SELECT LOWER(name) FROM blocks WHERE environment_id = $%d)`, idx)
 		args = append(args, environmentID)
+		idx++
+	}
+	if organizationID != nil {
+		countQ += fmt.Sprintf(` AND LOWER(block_name) IN (SELECT LOWER(b.name) FROM blocks b JOIN environments e ON b.environment_id = e.id WHERE e.organization_id = $%d)`, idx)
+		args = append(args, *organizationID)
+		idx++
 	}
 	if err := s.db.QueryRow(countQ, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	selQ := `SELECT id, name, block_name, block_cidr FROM allocations WHERE ($1 = '' OR LOWER(name) LIKE '%' || $1 || '%') AND ($2 = '' OR LOWER(block_name) = $2)`
 	selArgs := []interface{}{nameLower, blockLower}
+	i := 3
 	if envFilter {
-		selQ += ` AND LOWER(block_name) IN (SELECT LOWER(name) FROM blocks WHERE environment_id = $3)`
+		selQ += fmt.Sprintf(` AND LOWER(block_name) IN (SELECT LOWER(name) FROM blocks WHERE environment_id = $%d)`, i)
 		selArgs = append(selArgs, environmentID)
+		i++
+	}
+	if organizationID != nil {
+		selQ += fmt.Sprintf(` AND LOWER(block_name) IN (SELECT LOWER(b.name) FROM blocks b JOIN environments e ON b.environment_id = e.id WHERE e.organization_id = $%d)`, i)
+		selArgs = append(selArgs, *organizationID)
+		i++
 	}
 	selQ += ` ORDER BY name`
 	if limit > 0 {
-		n := len(selArgs) + 1
-		selQ += ` LIMIT $` + strconv.Itoa(n) + ` OFFSET $` + strconv.Itoa(n+1)
+		selQ += fmt.Sprintf(` LIMIT $%d OFFSET $%d`, i, i+1)
 		selArgs = append(selArgs, limit, offset)
 	}
 	rows, err := s.db.Query(selQ, selArgs...)
@@ -482,8 +610,15 @@ func (s *PostgresStore) DeleteAllocation(id uuid.UUID) error {
 	return nil
 }
 
-func (s *PostgresStore) ListReservedBlocks() ([]*ReservedBlock, error) {
-	rows, err := s.db.Query(`SELECT id, name, cidr, reason, created_at FROM reserved_blocks ORDER BY name, cidr`)
+func (s *PostgresStore) ListReservedBlocks(organizationID *uuid.UUID) ([]*ReservedBlock, error) {
+	q := `SELECT id, name, cidr, reason, created_at, organization_id FROM reserved_blocks`
+	args := []interface{}{}
+	if organizationID != nil {
+		q += ` WHERE organization_id = $1`
+		args = append(args, *organizationID)
+	}
+	q += ` ORDER BY name, cidr`
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -491,8 +626,12 @@ func (s *PostgresStore) ListReservedBlocks() ([]*ReservedBlock, error) {
 	var out []*ReservedBlock
 	for rows.Next() {
 		var r ReservedBlock
-		if err := rows.Scan(&r.ID, &r.Name, &r.CIDR, &r.Reason, &r.CreatedAt); err != nil {
+		var orgID nullUUID
+		if err := rows.Scan(&r.ID, &r.Name, &r.CIDR, &r.Reason, &r.CreatedAt, &orgID); err != nil {
 			return nil, err
+		}
+		if orgID.Valid {
+			r.OrganizationID = orgID.UUID
 		}
 		out = append(out, &r)
 	}
@@ -507,20 +646,24 @@ func (s *PostgresStore) CreateReservedBlock(r *ReservedBlock) error {
 		r.CreatedAt = time.Now()
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO reserved_blocks (id, name, cidr, reason, created_at) VALUES ($1, $2, $3, $4, $5)`,
-		r.ID, strings.TrimSpace(r.Name), r.CIDR, r.Reason, r.CreatedAt,
+		`INSERT INTO reserved_blocks (id, name, cidr, reason, created_at, organization_id) VALUES ($1, $2, $3, $4, $5, $6)`,
+		r.ID, strings.TrimSpace(r.Name), r.CIDR, r.Reason, r.CreatedAt, r.OrganizationID,
 	)
 	return err
 }
 
 func (s *PostgresStore) GetReservedBlock(id uuid.UUID) (*ReservedBlock, error) {
 	var r ReservedBlock
-	err := s.db.QueryRow(`SELECT id, name, cidr, reason, created_at FROM reserved_blocks WHERE id = $1`, id).Scan(&r.ID, &r.Name, &r.CIDR, &r.Reason, &r.CreatedAt)
+	var orgID nullUUID
+	err := s.db.QueryRow(`SELECT id, name, cidr, reason, created_at, organization_id FROM reserved_blocks WHERE id = $1`, id).Scan(&r.ID, &r.Name, &r.CIDR, &r.Reason, &r.CreatedAt, &orgID)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("reserved block not found")
 	}
 	if err != nil {
 		return nil, err
+	}
+	if orgID.Valid {
+		r.OrganizationID = orgID.UUID
 	}
 	return &r, nil
 }
@@ -552,8 +695,8 @@ func (s *PostgresStore) DeleteReservedBlock(id uuid.UUID) error {
 	return nil
 }
 
-func (s *PostgresStore) OverlapsReservedBlock(cidr string) (*ReservedBlock, error) {
-	list, err := s.ListReservedBlocks()
+func (s *PostgresStore) OverlapsReservedBlock(cidr string, organizationID *uuid.UUID) (*ReservedBlock, error) {
+	list, err := s.ListReservedBlocks(organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -575,8 +718,8 @@ func (s *PostgresStore) CreateUser(u *User) error {
 	}
 	email := strings.TrimSpace(u.Email)
 	_, err := s.db.Exec(
-		`INSERT INTO users (id, email, password_hash, role, tour_completed) VALUES ($1, $2, $3, $4, $5)`,
-		u.ID.String(), email, u.PasswordHash, u.Role, u.TourCompleted,
+		`INSERT INTO users (id, email, password_hash, role, tour_completed, organization_id, oauth_provider, oauth_provider_user_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		u.ID.String(), email, u.PasswordHash, u.Role, u.TourCompleted, uuidPtr(u.OrganizationID), nullStr(u.OAuthProvider), nullStr(u.OAuthProviderUserID),
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
@@ -589,15 +732,26 @@ func (s *PostgresStore) CreateUser(u *User) error {
 
 func (s *PostgresStore) GetUser(id uuid.UUID) (*User, error) {
 	var u User
+	var orgID nullUUID
+	var oauthProvider, oauthProviderUserID sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, email, password_hash, role, tour_completed FROM users WHERE id = $1`,
+		`SELECT id, email, password_hash, role, tour_completed, organization_id, oauth_provider, oauth_provider_user_id FROM users WHERE id = $1`,
 		id,
-	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.TourCompleted)
+	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.TourCompleted, &orgID, &oauthProvider, &oauthProviderUserID)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("user not found")
 	}
 	if err != nil {
 		return nil, err
+	}
+	if orgID.Valid {
+		u.OrganizationID = orgID.UUID
+	}
+	if oauthProvider.Valid {
+		u.OAuthProvider = oauthProvider.String
+	}
+	if oauthProviderUserID.Valid {
+		u.OAuthProviderUserID = oauthProviderUserID.String
 	}
 	return &u, nil
 }
@@ -605,21 +759,68 @@ func (s *PostgresStore) GetUser(id uuid.UUID) (*User, error) {
 func (s *PostgresStore) GetUserByEmail(email string) (*User, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	var u User
+	var orgID nullUUID
+	var oauthProvider, oauthProviderUserID sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, email, password_hash, role, tour_completed FROM users WHERE LOWER(email) = $1`,
+		`SELECT id, email, password_hash, role, tour_completed, organization_id, oauth_provider, oauth_provider_user_id FROM users WHERE LOWER(email) = $1`,
 		email,
-	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.TourCompleted)
+	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.TourCompleted, &orgID, &oauthProvider, &oauthProviderUserID)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("user not found")
 	}
 	if err != nil {
 		return nil, err
 	}
+	if orgID.Valid {
+		u.OrganizationID = orgID.UUID
+	}
+	if oauthProvider.Valid {
+		u.OAuthProvider = oauthProvider.String
+	}
+	if oauthProviderUserID.Valid {
+		u.OAuthProviderUserID = oauthProviderUserID.String
+	}
 	return &u, nil
 }
 
-func (s *PostgresStore) ListUsers() ([]*User, error) {
-	rows, err := s.db.Query(`SELECT id, email, password_hash, role, tour_completed FROM users ORDER BY email`)
+func (s *PostgresStore) GetUserByOAuth(provider, providerUserID string) (*User, error) {
+	if provider == "" || providerUserID == "" {
+		return nil, fmt.Errorf("user not found")
+	}
+	var u User
+	var orgID nullUUID
+	var oauthProvider, oauthProviderUserID sql.NullString
+	err := s.db.QueryRow(
+		`SELECT id, email, password_hash, role, tour_completed, organization_id, oauth_provider, oauth_provider_user_id FROM users WHERE oauth_provider = $1 AND oauth_provider_user_id = $2`,
+		provider, providerUserID,
+	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.TourCompleted, &orgID, &oauthProvider, &oauthProviderUserID)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("user not found")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if orgID.Valid {
+		u.OrganizationID = orgID.UUID
+	}
+	if oauthProvider.Valid {
+		u.OAuthProvider = oauthProvider.String
+	}
+	if oauthProviderUserID.Valid {
+		u.OAuthProviderUserID = oauthProviderUserID.String
+	}
+	return &u, nil
+}
+
+func (s *PostgresStore) ListUsers(organizationID *uuid.UUID) ([]*User, error) {
+	q := `SELECT id, email, password_hash, role, tour_completed, organization_id, oauth_provider, oauth_provider_user_id FROM users`
+	args := []interface{}{}
+	if organizationID != nil {
+		q += ` WHERE organization_id = $1`
+		args = append(args, *organizationID)
+	}
+	q += ` ORDER BY email`
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -627,8 +828,19 @@ func (s *PostgresStore) ListUsers() ([]*User, error) {
 	var out []*User
 	for rows.Next() {
 		var u User
-		if err := rows.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.TourCompleted); err != nil {
+		var orgID nullUUID
+		var oauthProvider, oauthProviderUserID sql.NullString
+		if err := rows.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.TourCompleted, &orgID, &oauthProvider, &oauthProviderUserID); err != nil {
 			return nil, err
+		}
+		if orgID.Valid {
+			u.OrganizationID = orgID.UUID
+		}
+		if oauthProvider.Valid {
+			u.OAuthProvider = oauthProvider.String
+		}
+		if oauthProviderUserID.Valid {
+			u.OAuthProviderUserID = oauthProviderUserID.String
 		}
 		out = append(out, &u)
 	}
@@ -662,8 +874,32 @@ func (s *PostgresStore) SetUserRole(userID uuid.UUID, role string) error {
 	return nil
 }
 
+func (s *PostgresStore) SetUserOrganization(userID uuid.UUID, organizationID uuid.UUID) error {
+	res, err := s.db.Exec(`UPDATE users SET organization_id = $1 WHERE id = $2`, uuidPtr(organizationID), userID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
+}
+
 func (s *PostgresStore) SetUserTourCompleted(userID uuid.UUID, completed bool) error {
 	res, err := s.db.Exec(`UPDATE users SET tour_completed = $1 WHERE id = $2`, completed, userID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
+}
+
+func (s *PostgresStore) SetUserOAuth(userID uuid.UUID, provider, providerUserID string) error {
+	res, err := s.db.Exec(`UPDATE users SET oauth_provider = $1, oauth_provider_user_id = $2 WHERE id = $3`, provider, providerUserID, userID)
 	if err != nil {
 		return err
 	}
@@ -802,7 +1038,7 @@ func (s *PostgresStore) GetAPIToken(tokenID uuid.UUID) (*APIToken, error) {
 	return &t, nil
 }
 
-func (s *PostgresStore) CreateSignupInvite(createdBy uuid.UUID, expiresAt time.Time) (*SignupInvite, string, error) {
+func (s *PostgresStore) CreateSignupInvite(createdBy uuid.UUID, expiresAt time.Time, organizationID uuid.UUID, role string) (*SignupInvite, string, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT 1 FROM users WHERE id = $1`, createdBy).Scan(&n)
 	if err == sql.ErrNoRows {
@@ -822,15 +1058,17 @@ func (s *PostgresStore) CreateSignupInvite(createdBy uuid.UUID, expiresAt time.T
 		return nil, "", fmt.Errorf("expires_at must be in the future")
 	}
 	inv := &SignupInvite{
-		ID:        uuid.New(),
-		TokenHash: tokenHash,
-		CreatedBy: createdBy,
-		ExpiresAt: expiresAt,
-		CreatedAt: now,
+		ID:             uuid.New(),
+		TokenHash:      tokenHash,
+		CreatedBy:      createdBy,
+		ExpiresAt:      expiresAt,
+		CreatedAt:      now,
+		OrganizationID: organizationID,
+		Role:           role,
 	}
 	_, err = s.db.Exec(
-		`INSERT INTO signup_invites (id, token_hash, created_by, expires_at, created_at) VALUES ($1, $2, $3, $4, $5)`,
-		inv.ID, inv.TokenHash, inv.CreatedBy, inv.ExpiresAt, inv.CreatedAt,
+		`INSERT INTO signup_invites (id, token_hash, created_by, expires_at, created_at, organization_id, role) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		inv.ID, inv.TokenHash, inv.CreatedBy, inv.ExpiresAt, inv.CreatedAt, uuidPtr(organizationID), inv.Role,
 	)
 	if err != nil {
 		return nil, "", err
@@ -846,10 +1084,11 @@ func (s *PostgresStore) GetSignupInviteByToken(rawToken string) (*SignupInvite, 
 	var inv SignupInvite
 	var usedAt sql.NullTime
 	var usedByUserID nullUUID
+	var orgID nullUUID
 	err := s.db.QueryRow(
-		`SELECT id, token_hash, created_by, expires_at, created_at, used_at, used_by_user_id FROM signup_invites WHERE token_hash = $1`,
+		`SELECT id, token_hash, created_by, expires_at, created_at, used_at, used_by_user_id, organization_id, role FROM signup_invites WHERE token_hash = $1`,
 		tokenHash,
-	).Scan(&inv.ID, &inv.TokenHash, &inv.CreatedBy, &inv.ExpiresAt, &inv.CreatedAt, &usedAt, &usedByUserID)
+	).Scan(&inv.ID, &inv.TokenHash, &inv.CreatedBy, &inv.ExpiresAt, &inv.CreatedAt, &usedAt, &usedByUserID, &orgID, &inv.Role)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("invite not found")
 	}
@@ -861,6 +1100,9 @@ func (s *PostgresStore) GetSignupInviteByToken(rawToken string) (*SignupInvite, 
 	}
 	if time.Now().After(inv.ExpiresAt) {
 		return nil, fmt.Errorf("invite expired")
+	}
+	if orgID.Valid {
+		inv.OrganizationID = orgID.UUID
 	}
 	return &inv, nil
 }
@@ -894,7 +1136,7 @@ func (s *PostgresStore) DeleteSignupInvite(id uuid.UUID) error {
 
 func (s *PostgresStore) ListSignupInvites(createdBy uuid.UUID) ([]*SignupInvite, error) {
 	rows, err := s.db.Query(
-		`SELECT id, token_hash, created_by, expires_at, created_at, used_at, used_by_user_id FROM signup_invites WHERE created_by = $1 ORDER BY created_at DESC`,
+		`SELECT id, token_hash, created_by, expires_at, created_at, used_at, used_by_user_id, organization_id, role FROM signup_invites WHERE created_by = $1 ORDER BY created_at DESC`,
 		createdBy,
 	)
 	if err != nil {
@@ -906,7 +1148,8 @@ func (s *PostgresStore) ListSignupInvites(createdBy uuid.UUID) ([]*SignupInvite,
 		var inv SignupInvite
 		var usedAt sql.NullTime
 		var usedByUserID nullUUID
-		if err := rows.Scan(&inv.ID, &inv.TokenHash, &inv.CreatedBy, &inv.ExpiresAt, &inv.CreatedAt, &usedAt, &usedByUserID); err != nil {
+		var orgID nullUUID
+		if err := rows.Scan(&inv.ID, &inv.TokenHash, &inv.CreatedBy, &inv.ExpiresAt, &inv.CreatedAt, &usedAt, &usedByUserID, &orgID, &inv.Role); err != nil {
 			return nil, err
 		}
 		if usedAt.Valid {
@@ -914,6 +1157,9 @@ func (s *PostgresStore) ListSignupInvites(createdBy uuid.UUID) ([]*SignupInvite,
 		}
 		if usedByUserID.Valid {
 			inv.UsedByUserID = &usedByUserID.UUID
+		}
+		if orgID.Valid {
+			inv.OrganizationID = orgID.UUID
 		}
 		out = append(out, &inv)
 	}

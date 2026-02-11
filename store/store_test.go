@@ -52,7 +52,7 @@ func TestCreateReservedBlock(t *testing.T) {
 				if r.CreatedAt.IsZero() {
 					t.Error("CreateReservedBlock() did not set CreatedAt")
 				}
-				list, _ := s.ListReservedBlocks()
+				list, _ := s.ListReservedBlocks(nil)
 				if len(list) != 1 {
 					t.Errorf("ListReservedBlocks() len = %v, want 1", len(list))
 				}
@@ -98,7 +98,7 @@ func TestListReservedBlocks(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			s := NewStore()
 			tt.setup(s)
-			list, err := s.ListReservedBlocks()
+			list, err := s.ListReservedBlocks(nil)
 			if err != nil {
 				t.Errorf("ListReservedBlocks() error = %v", err)
 				return
@@ -265,7 +265,7 @@ func TestOverlapsReservedBlock(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			s := NewStore()
 			tt.setup(s)
-			got, err := s.OverlapsReservedBlock(tt.cidr)
+			got, err := s.OverlapsReservedBlock(tt.cidr, nil)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("OverlapsReservedBlock() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -416,7 +416,7 @@ func TestListEnvironmentsFiltered(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			s := NewStore()
 			tt.setup(s)
-			list, total, err := s.ListEnvironmentsFiltered(tt.nameFilter, tt.limit, tt.offset)
+			list, total, err := s.ListEnvironmentsFiltered(tt.nameFilter, nil, tt.limit, tt.offset)
 			if err != nil {
 				t.Errorf("ListEnvironmentsFiltered() error = %v", err)
 				return

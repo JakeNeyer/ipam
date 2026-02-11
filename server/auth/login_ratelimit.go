@@ -25,7 +25,7 @@ type LoginAttemptLimiter struct {
 
 type attemptEntry struct {
 	count int
-	until time.Time // window end; after this the entry is considered expired
+	until time.Time
 }
 
 // NewLoginAttemptLimiter returns a limiter that blocks an IP after maxAttempts
@@ -98,7 +98,7 @@ func (l *LoginAttemptLimiter) RecordFailure(ip string) {
 	}
 	e.count++
 	if e.count >= l.max {
-		e.until = now.Add(l.window) // extend block from last failure
+		e.until = now.Add(l.window)
 	}
 }
 

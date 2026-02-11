@@ -296,7 +296,7 @@ func (c *Client) DeleteAllocation(id string) error {
 // ListReservedBlocks returns all reserved blocks (admin only).
 func (c *Client) ListReservedBlocks() (*ReservedBlockListResponse, error) {
 	var out ReservedBlockListResponse
-	if err := c.get("/api/admin/reserved-blocks", &out); err != nil {
+	if err := c.get("/api/reserved-blocks", &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -306,7 +306,7 @@ func (c *Client) ListReservedBlocks() (*ReservedBlockListResponse, error) {
 func (c *Client) CreateReservedBlock(name, cidr, reason string) (*ReservedBlockResponse, error) {
 	body := map[string]string{"name": name, "cidr": cidr, "reason": reason}
 	var out ReservedBlockResponse
-	if err := c.post("/api/admin/reserved-blocks", body, &out); err != nil {
+	if err := c.post("/api/reserved-blocks", body, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -314,7 +314,7 @@ func (c *Client) CreateReservedBlock(name, cidr, reason string) (*ReservedBlockR
 
 // DeleteReservedBlock deletes a reserved block (admin only).
 func (c *Client) DeleteReservedBlock(id string) error {
-	return c.delete("/api/admin/reserved-blocks/" + url.PathEscape(id))
+	return c.delete("/api/reserved-blocks/" + url.PathEscape(id))
 }
 
 // API response types (match server JSON; use json tags for lowercase).

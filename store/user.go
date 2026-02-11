@@ -12,12 +12,17 @@ const (
 )
 
 // User represents a user account.
+// OrganizationID is uuid.Nil for the global admin (created at setup); otherwise the user belongs to that organization.
+// OAuthProvider and OAuthProviderUserID are set when the user signs in via OAuth (e.g. "github", "12345"). PasswordHash may be empty for OAuth-only users.
 type User struct {
-	ID            uuid.UUID
-	Email         string
-	PasswordHash  string
-	Role          string // "user" or "admin"
-	TourCompleted bool   // true after user has completed or skipped the onboarding tour
+	ID                  uuid.UUID
+	Email               string
+	PasswordHash        string
+	Role                string
+	TourCompleted       bool
+	OrganizationID      uuid.UUID
+	OAuthProvider       string
+	OAuthProviderUserID  string
 }
 
 // Session represents an active session.

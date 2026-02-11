@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/JakeNeyer/ipam/server/auth"
+	"github.com/JakeNeyer/ipam/server/config"
 	"github.com/JakeNeyer/ipam/server/validation"
 	"github.com/JakeNeyer/ipam/store"
 	"github.com/google/uuid"
@@ -15,13 +16,15 @@ import (
 
 // CreateSignupInviteRequest is the body for POST /api/admin/signup-invites.
 type CreateSignupInviteRequest struct {
-	ExpiresInHours int `json:"expires_in_hours"` // e.g. 24, 48, 168 (7 days)
+	ExpiresInHours int        `json:"expires_in_hours"`
+	OrganizationID uuid.UUID  `json:"organization_id,omitempty"`
+	Role           string     `json:"role,omitempty"`
 }
 
 // CreateSignupInviteResponse is the response for POST /api/admin/signup-invites.
 type CreateSignupInviteResponse struct {
 	InviteURL string    `json:"invite_url"`
-	Token     string    `json:"token"` // only returned once; same token is in invite_url
+	Token     string    `json:"token"`
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
@@ -48,7 +51,7 @@ type SignupInviteResponse struct {
 }
 
 // AdminSignupInvitesHandler handles GET (list) and POST (create) /api/admin/signup-invites. Admin only.
-func AdminSignupInvitesHandler(s store.Storer) http.HandlerFunc {
+func AdminSignupInvitesHandler(s store.Storer, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user := auth.UserFromContext(r.Context())
 		if user == nil || user.Role != store.RoleAdmin {
@@ -59,7 +62,7 @@ func AdminSignupInvitesHandler(s store.Storer) http.HandlerFunc {
 		case http.MethodGet:
 			listSignupInvites(s, user.ID, w)
 		case http.MethodPost:
-			createSignupInvite(s, user, w, r)
+			createSignupInvite(s, user, w, r, cfg)
 		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
@@ -91,7 +94,7 @@ func listSignupInvites(s store.Storer, adminID uuid.UUID, w http.ResponseWriter)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"invites": out})
 }
 
-func createSignupInvite(s store.Storer, user *store.User, w http.ResponseWriter, r *http.Request) {
+func createSignupInvite(s store.Storer, user *store.User, w http.ResponseWriter, r *http.Request, cfg *config.Config) {
 	var req CreateSignupInviteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -101,19 +104,36 @@ func createSignupInvite(s store.Storer, user *store.User, w http.ResponseWriter,
 	if hours < 1 {
 		hours = 24
 	}
-	if hours > 720 { // 30 days max
+	if hours > 720 {
 		hours = 720
 	}
 	expiresAt := time.Now().Add(time.Duration(hours) * time.Hour)
-	inv, rawToken, err := s.CreateSignupInvite(user.ID, expiresAt)
+	orgID := user.OrganizationID
+	role := store.RoleUser
+	if auth.IsGlobalAdmin(user) {
+		orgID = req.OrganizationID
+		if req.Role == store.RoleAdmin {
+			role = store.RoleAdmin
+		}
+	}
+	if err := auth.RequireGlobalAdminForNilOrg(user, orgID); err != nil {
+		auth.WriteJSONError(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	inv, rawToken, err := s.CreateSignupInvite(user.ID, expiresAt, orgID, role)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	_ = inv
-	baseURL := baseURLFromRequest(r)
-	appBasePath := appBasePathFromRequest(r.URL.Path)
-	inviteURL := baseURL + appBasePath + "#signup?token=" + rawToken
+	var baseURL string
+	if cfg != nil && strings.TrimSpace(cfg.AppOrigin) != "" {
+		baseURL = strings.TrimSuffix(strings.TrimSpace(cfg.AppOrigin), "/")
+	} else {
+		baseURL = baseURLFromRequest(r)
+		baseURL = baseURL + strings.TrimSuffix(appBasePathFromRequest(r.URL.Path), "/")
+	}
+	inviteURL := baseURL + "/#signup?token=" + rawToken
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(CreateSignupInviteResponse{
@@ -235,7 +255,19 @@ func RegisterWithInviteHandler(s store.Storer) http.HandlerFunc {
 			auth.WriteJSONError(w, "invalid or expired invite link", http.StatusBadRequest)
 			return
 		}
-		_ = inv
+		inviter, err := s.GetUser(inv.CreatedBy)
+		if err != nil {
+			auth.WriteJSONError(w, "invalid invite", http.StatusBadRequest)
+			return
+		}
+		orgID := inv.OrganizationID
+		if orgID == uuid.Nil {
+			orgID = inviter.OrganizationID
+		}
+		role := inv.Role
+		if role != store.RoleAdmin {
+			role = store.RoleUser
+		}
 		if !validation.ValidateEmail(req.Email) {
 			auth.WriteJSONError(w, "valid email required", http.StatusBadRequest)
 			return
@@ -251,9 +283,10 @@ func RegisterWithInviteHandler(s store.Storer) http.HandlerFunc {
 			return
 		}
 		newUser := &store.User{
-			Email:        email,
-			PasswordHash: string(hash),
-			Role:         store.RoleUser,
+			Email:          email,
+			PasswordHash:   string(hash),
+			Role:           role,
+			OrganizationID: orgID,
 		}
 		if err := s.CreateUser(newUser); err != nil {
 			auth.WriteJSONError(w, err.Error(), http.StatusBadRequest)
@@ -272,12 +305,7 @@ func RegisterWithInviteHandler(s store.Storer) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]UserResponse{
-			"user": {
-				ID:            newUser.ID.String(),
-				Email:         newUser.Email,
-				Role:          newUser.Role,
-				TourCompleted: newUser.TourCompleted,
-			},
+			"user": userToResponse(newUser),
 		})
 	}
 }

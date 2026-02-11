@@ -4,7 +4,7 @@ import (
 	"net/http"
 )
 
-const maxRequestBodyBytes = 1 << 20 // 1MB
+const maxRequestBodyBytes = 1 << 20
 
 // SecurityHeaders sets common OWASP-recommended response headers.
 func SecurityHeaders(next http.Handler) http.Handler {

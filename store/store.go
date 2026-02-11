@@ -11,11 +11,19 @@ type IDGenerator interface {
 	GenerateID() uuid.UUID
 }
 
+type OrganizationStore interface {
+	CreateOrganization(org *Organization) error
+	GetOrganization(id uuid.UUID) (*Organization, error)
+	ListOrganizations() ([]*Organization, error)
+	UpdateOrganization(org *Organization) error
+	DeleteOrganization(id uuid.UUID) error
+}
+
 type EnvironmentStore interface {
 	CreateEnvironment(env *network.Environment) error
 	GetEnvironment(id uuid.UUID) (*network.Environment, error)
 	ListEnvironments() ([]*network.Environment, error)
-	ListEnvironmentsFiltered(name string, limit, offset int) ([]*network.Environment, int, error)
+	ListEnvironmentsFiltered(name string, organizationID *uuid.UUID, limit, offset int) ([]*network.Environment, int, error)
 	UpdateEnvironment(id uuid.UUID, env *network.Environment) error
 	DeleteEnvironment(id uuid.UUID) error
 }
@@ -24,7 +32,7 @@ type BlockStore interface {
 	CreateBlock(block *network.Block) error
 	GetBlock(id uuid.UUID) (*network.Block, error)
 	ListBlocks() ([]*network.Block, error)
-	ListBlocksFiltered(name string, environmentID *uuid.UUID, orphanedOnly bool, limit, offset int) ([]*network.Block, int, error)
+	ListBlocksFiltered(name string, environmentID *uuid.UUID, organizationID *uuid.UUID, orphanedOnly bool, limit, offset int) ([]*network.Block, int, error)
 	ListBlocksByEnvironment(envID uuid.UUID) ([]*network.Block, error)
 	UpdateBlock(id uuid.UUID, block *network.Block) error
 	DeleteBlock(id uuid.UUID) error
@@ -34,28 +42,31 @@ type AllocationStore interface {
 	CreateAllocation(id uuid.UUID, alloc *network.Allocation) error
 	GetAllocation(id uuid.UUID) (*network.Allocation, error)
 	ListAllocations() ([]*network.Allocation, error)
-	ListAllocationsFiltered(name string, blockName string, environmentID uuid.UUID, limit, offset int) ([]*network.Allocation, int, error)
+	ListAllocationsFiltered(name string, blockName string, environmentID uuid.UUID, organizationID *uuid.UUID, limit, offset int) ([]*network.Allocation, int, error)
 	UpdateAllocation(id uuid.UUID, alloc *network.Allocation) error
 	DeleteAllocation(id uuid.UUID) error
 }
 
 type ReservedBlockStore interface {
-	ListReservedBlocks() ([]*ReservedBlock, error)
+	ListReservedBlocks(organizationID *uuid.UUID) ([]*ReservedBlock, error)
 	CreateReservedBlock(r *ReservedBlock) error
 	GetReservedBlock(id uuid.UUID) (*ReservedBlock, error)
 	UpdateReservedBlock(id uuid.UUID, r *ReservedBlock) error
 	DeleteReservedBlock(id uuid.UUID) error
-	OverlapsReservedBlock(cidr string) (*ReservedBlock, error)
+	OverlapsReservedBlock(cidr string, organizationID *uuid.UUID) (*ReservedBlock, error)
 }
 
 type UserStore interface {
 	CreateUser(u *User) error
 	GetUser(id uuid.UUID) (*User, error)
 	GetUserByEmail(email string) (*User, error)
-	ListUsers() ([]*User, error)
+	GetUserByOAuth(provider, providerUserID string) (*User, error)
+	ListUsers(organizationID *uuid.UUID) ([]*User, error)
 	DeleteUser(userID uuid.UUID) error
 	SetUserRole(userID uuid.UUID, role string) error
+	SetUserOrganization(userID uuid.UUID, organizationID uuid.UUID) error
 	SetUserTourCompleted(userID uuid.UUID, completed bool) error
+	SetUserOAuth(userID uuid.UUID, provider, providerUserID string) error
 }
 
 type SessionStore interface {
@@ -73,7 +84,7 @@ type APITokenStore interface {
 }
 
 type SignupInviteStore interface {
-	CreateSignupInvite(createdBy uuid.UUID, expiresAt time.Time) (*SignupInvite, string, error)
+	CreateSignupInvite(createdBy uuid.UUID, expiresAt time.Time, organizationID uuid.UUID, role string) (*SignupInvite, string, error)
 	GetSignupInviteByToken(rawToken string) (*SignupInvite, error)
 	MarkSignupInviteUsed(inviteID, userID uuid.UUID) error
 	DeleteSignupInvite(id uuid.UUID) error
@@ -84,6 +95,7 @@ type SignupInviteStore interface {
 // Implemented by the in-memory Store and PostgresStore.
 type Storer interface {
 	IDGenerator
+	OrganizationStore
 	EnvironmentStore
 	BlockStore
 	AllocationStore

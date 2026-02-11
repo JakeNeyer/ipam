@@ -3,6 +3,10 @@
   import { createSignupInvite } from './api.js'
 
   export let open = false
+  /** When true, show organization and role dropdowns (global admin). */
+  export let isGlobalAdmin = false
+  /** List of { id, name } for organization dropdown. Used when isGlobalAdmin. */
+  export let organizations = []
 
   const dispatch = createEventDispatcher()
 
@@ -16,6 +20,8 @@
 
   let error = ''
   let createExpiresIn = 24
+  let createOrganizationId = ''
+  let createRole = 'user'
   let creating = false
   let inviteUrl = ''
   let copied = false
@@ -25,7 +31,7 @@
     error = ''
     inviteUrl = ''
     try {
-      const res = await createSignupInvite(createExpiresIn)
+      const res = await createSignupInvite(createExpiresIn, createOrganizationId || null, createRole)
       inviteUrl = res?.invite_url ?? ''
       if (!inviteUrl && res?.token) {
         inviteUrl = window.location.origin + window.location.pathname.replace(/\/$/, '') + '#signup?token=' + encodeURIComponent(res.token)
@@ -98,6 +104,24 @@
               {creating ? 'Creating…' : 'Create link'}
             </button>
           </div>
+          {#if isGlobalAdmin && organizations.length > 0}
+            <label for="invite-org">Organization (new user will join)</label>
+            <div class="create-row">
+              <select id="invite-org" bind:value={createOrganizationId} disabled={creating}>
+                <option value="">— Select organization</option>
+                {#each organizations as org (org.id)}
+                  <option value={org.id}>{org.name}</option>
+                {/each}
+              </select>
+            </div>
+            <label for="invite-role">Role</label>
+            <div class="create-row">
+              <select id="invite-role" bind:value={createRole} disabled={creating}>
+                <option value="user">user</option>
+                <option value="admin">admin</option>
+              </select>
+            </div>
+          {/if}
         </div>
       {/if}
 
@@ -197,6 +221,9 @@
   }
   .create-section {
     margin: 0 1rem 0.75rem;
+  }
+  .create-section .create-row + label {
+    margin-top: 0.5rem;
   }
   .create-section label {
     display: block;

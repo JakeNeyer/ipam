@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { theme } from '../lib/theme.js'
-  import { validateSignupInvite, registerWithInvite } from '../lib/api.js'
+  import { getAuthConfig, validateSignupInvite, registerWithInvite } from '../lib/api.js'
   import { user } from '../lib/auth.js'
 
   export let token = ''
@@ -14,8 +14,10 @@
   let validating = true
   let valid = false
   let expiresAt = ''
+  let githubOAuthEnabled = false
 
   onMount(async () => {
+    getAuthConfig().then((c) => { githubOAuthEnabled = c?.githubOAuthEnabled === true }).catch(() => {})
     if (!token || !token.trim()) {
       error = 'Invalid signup link. No token provided.'
       validating = false
@@ -33,6 +35,11 @@
       validating = false
     }
   })
+
+  function signUpWithGitHub() {
+    const base = window.location.origin + window.location.pathname.replace(/\/$/, '') || ''
+    window.location.href = base + '/api/auth/oauth/github/start?invite_token=' + encodeURIComponent(token.trim())
+  }
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -73,7 +80,13 @@
   <div class="signup-card">
     <img src={$theme === 'light' ? '/images/logo-light.svg' : '/images/logo.svg'} alt="IPAM" class="signup-logo" />
     <h1 class="signup-title">Create your account</h1>
-    <p class="signup-subtitle">You’ve been invited to join. Enter your details below.</p>
+    <p class="signup-subtitle">
+      {#if githubOAuthEnabled}
+        You've been invited to join. Sign up with your provider to continue.
+      {:else}
+        You've been invited to join. Enter your details below.
+      {/if}
+    </p>
 
     {#if !token?.trim()}
       <div class="signup-error" role="alert">Invalid signup link. No token provided.</div>
@@ -81,66 +94,73 @@
     {:else if !valid && !validating}
       <div class="signup-error" role="alert">{error}</div>
       <a href="#login" class="signup-link">Sign in</a>
+    {:else if githubOAuthEnabled && valid && !validating}
+      {#if error}
+        <div class="signup-error" role="alert">{error}</div>
+      {/if}
+      <button type="button" class="btn btn-primary signup-github" on:click={signUpWithGitHub} disabled={submitting}>
+        Sign up with GitHub
+      </button>
     {:else}
-      <!-- Form structure per Chromium: username + new-password; action/method help detection -->
-      <form
-        class="signup-form"
-        action="#"
-        method="post"
-        on:submit={handleSubmit}
-        class:signup-form-loading={validating}
-      >
-        {#if validating}
-          <p class="signup-muted">Checking invite link…</p>
-        {/if}
-        {#if error}
-          <div class="signup-error" role="alert">{error}</div>
-        {/if}
-        <label class="signup-label" for="signup-email">
-          <span>Email</span>
-          <input
-            id="signup-email"
-            name="username"
-            type="email"
-            bind:value={email}
-            placeholder="you@example.com"
-            autocomplete="username"
-            required
-            disabled={submitting || validating}
-          />
-        </label>
-        <label class="signup-label" for="signup-password">
-          <span>Password</span>
-          <input
-            id="signup-password"
-            name="password"
-            type="password"
-            bind:value={password}
-            placeholder="At least 8 characters"
-            autocomplete="new-password"
-            required
-            minlength="8"
-            disabled={submitting || validating}
-          />
-        </label>
-        <label class="signup-label" for="signup-confirm-password">
-          <span>Confirm password</span>
-          <input
-            id="signup-confirm-password"
-            name="confirm-password"
-            type="password"
-            bind:value={confirmPassword}
-            placeholder="Confirm password"
-            autocomplete="new-password"
-            required
-            minlength="8"
-            disabled={submitting || validating}
-          />
-        </label>
-        <button type="submit" class="btn btn-primary signup-submit" disabled={submitting || validating}>
-          {submitting ? 'Creating account…' : validating ? 'Please wait…' : 'Create account'}
-        </button>
-      </form>
+      {#if validating}
+        <p class="signup-muted">Checking invite link…</p>
+      {:else}
+        <form
+          class="signup-form"
+          action="#"
+          method="post"
+          on:submit={handleSubmit}
+          class:signup-form-loading={validating}
+        >
+          {#if error}
+            <div class="signup-error" role="alert">{error}</div>
+          {/if}
+          <label class="signup-label" for="signup-email">
+            <span>Email</span>
+            <input
+              id="signup-email"
+              name="username"
+              type="email"
+              bind:value={email}
+              placeholder="you@example.com"
+              autocomplete="username"
+              required
+              disabled={submitting || validating}
+            />
+          </label>
+          <label class="signup-label" for="signup-password">
+            <span>Password</span>
+            <input
+              id="signup-password"
+              name="password"
+              type="password"
+              bind:value={password}
+              placeholder="At least 8 characters"
+              autocomplete="new-password"
+              required
+              minlength="8"
+              disabled={submitting || validating}
+            />
+          </label>
+          <label class="signup-label" for="signup-confirm-password">
+            <span>Confirm password</span>
+            <input
+              id="signup-confirm-password"
+              name="confirm-password"
+              type="password"
+              bind:value={confirmPassword}
+              placeholder="Confirm password"
+              autocomplete="new-password"
+              required
+              minlength="8"
+              disabled={submitting || validating}
+            />
+          </label>
+          <button type="submit" class="btn btn-primary signup-submit" disabled={submitting || validating}>
+            {submitting ? 'Creating account…' : validating ? 'Please wait…' : 'Create account'}
+          </button>
+        </form>
+      {/if}
     {/if}
   </div>
 </div>
@@ -227,5 +247,15 @@
   }
   .signup-submit {
     margin-top: 0.5rem;
+  }
+  .signup-github {
+    width: 100%;
+    margin-bottom: 0.5rem;
+  }
+  .signup-divider {
+    margin: 0 0 1rem 0;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    text-align: center;
   }
 </style>

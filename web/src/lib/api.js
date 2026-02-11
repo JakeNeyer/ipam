@@ -131,6 +131,7 @@ export async function createBlock(name, cidr, environmentId = null) {
   return post('/blocks', body)
 }
 
+// Used only for block environment_id "unset"; never send for global-admin / organization_id (omit field instead).
 const NIL_UUID = '00000000-0000-0000-0000-000000000000'
 
 export async function updateBlock(id, name, environmentId = null) {
@@ -182,9 +183,17 @@ export async function deleteAllocation(id) {
 }
 
 /**
- * Fetches the full CSV export and triggers a file download.
- * Throws on non-OK response.
+ * Auth config (no auth required). Returns { oauth_providers: string[], github_oauth_enabled: boolean }.
  */
+export async function getAuthConfig() {
+  const data = await get('/auth/config')
+  const providers = Array.isArray(data?.oauth_providers) ? data.oauth_providers : []
+  return {
+    oauthProviders: providers,
+    githubOAuthEnabled: data?.github_oauth_enabled === true || providers.includes('github'),
+  }
+}
+
 export async function login(email, password) {
   const data = await post('/auth/login', { email, password })
   return data?.user ?? null
@@ -255,7 +264,7 @@ export async function deleteToken(id) {
  * @returns {{ reserved_blocks: Array<{ id: string, cidr: string, reason: string, created_at: string }> }}
  */
 export async function listReservedBlocks() {
-  const data = await get('/admin/reserved-blocks')
+  const data = await get('/reserved-blocks')
   return { reserved_blocks: data.reserved_blocks ?? [] }
 }
 
@@ -270,7 +279,7 @@ export async function createReservedBlock(body) {
     cidr: (body.cidr ?? '').trim(),
   }
   if (body.reason != null) b.reason = String(body.reason).trim()
-  const data = await post('/admin/reserved-blocks', b)
+  const data = await post('/reserved-blocks', b)
   return data
 }
 
@@ -279,7 +288,7 @@ export async function createReservedBlock(body) {
  * @param {string} id
  */
 export async function deleteReservedBlock(id) {
-  const res = await fetch(`${API_BASE}/admin/reserved-blocks/${id}`, {
+  const res = await fetch(`${API_BASE}/reserved-blocks/${id}`, {
     ...FETCH_OPTS,
     method: 'DELETE',
   })
@@ -296,7 +305,7 @@ export async function deleteReservedBlock(id) {
  * @param {string} name
  */
 export async function updateReservedBlock(id, name) {
-  return put('/admin/reserved-blocks/' + encodeURIComponent(String(id)), { name: String(name ?? '') })
+  return put('/reserved-blocks/' + encodeURIComponent(String(id)), { name: String(name ?? '') })
 }
 
 /**
@@ -325,8 +334,63 @@ export async function listUsers() {
   return { users: data.users ?? [] }
 }
 
-export async function createUser(email, password, role = 'user') {
-  const data = await post('/admin/users', { email, password, role })
+/**
+ * List organizations. Global admin only.
+ * @returns {{ organizations: Array<{ id: string, name: string, created_at: string }> }}
+ */
+export async function listOrganizations() {
+  const data = await get('/admin/organizations')
+  return { organizations: data.organizations ?? [] }
+}
+
+/**
+ * Create an organization. Global admin only.
+ * @param {string} name
+ * @returns {{ organization: { id: string, name: string, created_at: string } }}
+ */
+export async function createOrganization(name) {
+  const data = await post('/admin/organizations', { name })
+  return data
+}
+
+/**
+ * Update an organization's name. Global admin only.
+ * @param {string} id - Organization UUID
+ * @param {string} name
+ * @returns {{ organization: { id: string, name: string, created_at: string } }}
+ */
+export async function updateOrganization(id, name) {
+  const data = await fetch(`${API_BASE}/admin/organizations/${encodeURIComponent(id)}`, {
+    ...FETCH_OPTS,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+  if (!data.ok) await handleError(data)
+  return data.json()
+}
+
+/**
+ * Delete an organization. Global admin only. Fails if the org has users or environments.
+ * @param {string} id - Organization UUID
+ */
+export async function deleteOrganization(id) {
+  await del('/admin/organizations/' + encodeURIComponent(id))
+}
+
+/**
+ * Create a user. Global admin can pass organizationId; org admin creates in their org.
+ * @param {string} email
+ * @param {string} password
+ * @param {string} [role='user']
+ * @param {string|null} [organizationId=null] - Required when global admin; ignored for org admin
+ */
+export async function createUser(email, password, role = 'user', organizationId = null) {
+  const body = { email, password, role }
+  if (organizationId != null && organizationId !== '') {
+    body.organization_id = organizationId
+  }
+  const data = await post('/admin/users', body)
   return data?.user ?? null
 }
 
@@ -347,6 +411,27 @@ export async function deleteUser(id) {
 }
 
 /**
+ * Update a user's organization. Global admin only.
+ * @param {string} userId
+ * @param {string} organizationId - UUID; use '' or null for global admin (no org). We omit the field for "no org" so the zero UUID is never sent.
+ */
+export async function updateUserOrganization(userId, organizationId) {
+  const body = {}
+  if (organizationId != null && organizationId !== '') {
+    body.organization_id = organizationId
+  }
+  const data = await fetch(`${API_BASE}/admin/users/${encodeURIComponent(userId)}/organization`, {
+    ...FETCH_OPTS,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!data.ok) await handleError(data)
+  const res = await data.json()
+  return res?.user ?? null
+}
+
+/**
  * List signup invites (admin only).
  * @returns {{ invites: Array<{ id, created_at, expires_at, used_at?, used_by_email? }> }}
  */
@@ -356,12 +441,21 @@ export async function listSignupInvites() {
 }
 
 /**
- * Create a time-bound signup invite link (admin only).
- * @param {number} expiresInHours - e.g. 24, 48, 168 (7 days)
+ * Create a time-bound signup invite link (admin only). Global admin can pass organizationId and role.
+ * @param {number} [expiresInHours=24]
+ * @param {string|null} [organizationId=null] - Global admin only; org the new user will join
+ * @param {string} [role='user'] - Global admin only; 'user' or 'admin'
  * @returns {{ invite_url: string, token: string, expires_at: string }}
  */
-export async function createSignupInvite(expiresInHours = 24) {
-  const data = await post('/admin/signup-invites', { expires_in_hours: expiresInHours })
+export async function createSignupInvite(expiresInHours = 24, organizationId = null, role = 'user') {
+  const body = { expires_in_hours: expiresInHours }
+  if (organizationId != null && organizationId !== '') {
+    body.organization_id = organizationId
+  }
+  if (role === 'admin') {
+    body.role = 'admin'
+  }
+  const data = await post('/admin/signup-invites', body)
   return data
 }
 

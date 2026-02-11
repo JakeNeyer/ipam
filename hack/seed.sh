@@ -134,15 +134,15 @@ curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/allocations" -H "Con
 echo "  nearly-a/b/c/d in nearly-full-block (240/256 = ~94% utilization)"
 
 echo "Creating reserved blocks (admin-only; blacklisted CIDRs)..."
-curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/admin/reserved-blocks" -H "Content-Type: application/json" \
+curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/reserved-blocks" -H "Content-Type: application/json" \
   -d '{"name":"Future use","cidr":"10.6.0.0/16","reason":"Reserved for future use"}' >/dev/null
 echo "  Future use 10.6.0.0/16 (Reserved for future use)"
 
-curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/admin/reserved-blocks" -H "Content-Type: application/json" \
+curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/reserved-blocks" -H "Content-Type: application/json" \
   -d '{"name":"Prod gap","cidr":"10.0.1.0/24","reason":"Reserved gap in prod-vpc"}' >/dev/null
 echo "  Prod gap 10.0.1.0/24 (Reserved gap in prod-vpc)"
 
-curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/admin/reserved-blocks" -H "Content-Type: application/json" \
+curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/reserved-blocks" -H "Content-Type: application/json" \
   -d '{"name":"DMZ","cidr":"172.16.0.0/24","reason":"DMZ reserve"}' >/dev/null
 echo "  DMZ 172.16.0.0/24 (DMZ reserve)"
 

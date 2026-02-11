@@ -12,7 +12,7 @@ type APIToken struct {
 	ID        uuid.UUID
 	UserID    uuid.UUID
 	Name      string
-	KeyHash   string     // SHA-256 of the raw token
-	CreatedAt time.Time  // When the token was created
-	ExpiresAt *time.Time // When the token expires; nil = never
+	KeyHash   string
+	CreatedAt time.Time
+	ExpiresAt *time.Time
 }

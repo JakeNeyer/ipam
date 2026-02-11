@@ -11,9 +11,11 @@ import (
 	"github.com/JakeNeyer/ipam/internal/logger"
 	"github.com/JakeNeyer/ipam/internal/telemetry"
 	"github.com/JakeNeyer/ipam/server"
+	"github.com/JakeNeyer/ipam/server/config"
 	"github.com/JakeNeyer/ipam/server/middleware"
 	"github.com/JakeNeyer/ipam/server/validation"
 	"github.com/JakeNeyer/ipam/store"
+	"github.com/google/uuid"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -21,6 +23,26 @@ import (
 func otelEnabled() bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv("ENABLE_OTEL")))
 	return v == "true" || v == "1"
+}
+
+func serverOAuthConfig() *config.Config {
+	enabled := strings.ToLower(strings.TrimSpace(os.Getenv("ENABLE_GITHUB_OAUTH"))) == "true" || strings.TrimSpace(os.Getenv("ENABLE_GITHUB_OAUTH")) == "1"
+	clientID := strings.TrimSpace(os.Getenv("GITHUB_CLIENT_ID"))
+	clientSecret := strings.TrimSpace(os.Getenv("GITHUB_CLIENT_SECRET"))
+	if !enabled || clientID == "" || clientSecret == "" {
+		return nil
+	}
+	return &config.Config{
+		OAuth: config.OAuthConfig{
+			Providers: map[string]config.OAuthProviderConfig{
+				"github": {
+					ClientID:     clientID,
+					ClientSecret: clientSecret,
+					Scopes:       []string{"user:email"},
+				},
+			},
+		},
+	}
 }
 
 // ensureInitialAdmin creates the first admin user when INITIAL_ADMIN_EMAIL and
@@ -31,7 +53,7 @@ func ensureInitialAdmin(st store.Storer) {
 	if email == "" || password == "" {
 		return
 	}
-	users, err := st.ListUsers()
+	users, err := st.ListUsers(nil)
 	if err != nil || len(users) > 0 {
 		return
 	}
@@ -45,9 +67,10 @@ func ensureInitialAdmin(st store.Storer) {
 		return
 	}
 	admin := &store.User{
-		Email:        strings.TrimSpace(strings.ToLower(email)),
-		PasswordHash: string(hash),
-		Role:         store.RoleAdmin,
+		Email:          strings.TrimSpace(strings.ToLower(email)),
+		PasswordHash:   string(hash),
+		Role:           store.RoleAdmin,
+		OrganizationID: uuid.Nil,
 	}
 	if err := st.CreateUser(admin); err != nil {
 		logger.Error("initial admin create failed", logger.ErrAttr(err))
@@ -86,7 +109,14 @@ func main() {
 		logger.Info("store", slog.String("type", "in_memory"))
 	}
 	ensureInitialAdmin(st)
-	s := server.NewServer(st)
+	serverCfg := serverOAuthConfig()
+	if serverCfg == nil {
+		serverCfg = &config.Config{}
+	}
+	if appOrigin := strings.TrimSpace(os.Getenv("APP_ORIGIN")); appOrigin != "" {
+		serverCfg.AppOrigin = appOrigin
+	}
+	s := server.NewServer(st, serverCfg)
 
 	handler := middleware.SecurityHeaders(s)
 	handler = middleware.MaxBytes(handler)
@@ -98,10 +128,16 @@ func main() {
 	}
 	handler = middleware.Recover(handler)
 
-	staticDir := resolveStaticDir()
-	if staticDir != "" {
-		handler = staticHandler(staticDir, handler)
-		logger.Info("serving static files", slog.String("dir", staticDir))
+	appOrigin := serverCfg.AppOrigin
+	if appOrigin != "" {
+		handler = unauthorizedHandler(appOrigin, handler)
+		logger.Info("app origin set; non-API requests return 401", slog.String("app_origin", appOrigin))
+	} else {
+		staticDir := resolveStaticDir()
+		if staticDir != "" {
+			handler = staticHandler(staticDir, handler)
+			logger.Info("serving static files", slog.String("dir", staticDir))
+		}
 	}
 
 	addr := "0.0.0.0"
@@ -156,6 +192,21 @@ func resolveStaticDir() string {
 func staticDirHasIndex(dir string) bool {
 	f, err := os.Stat(filepath.Join(dir, "index.html"))
 	return err == nil && f != nil && !f.IsDir()
+}
+
+// unauthorizedHandler returns 401 Unauthorized with a simple HTML body for non-API, non-docs requests (used when APP_ORIGIN is set so the app is served from another origin).
+func unauthorizedHandler(appOrigin string, next http.Handler) http.Handler {
+	origin := strings.TrimSuffix(appOrigin, "/")
+	body := "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Unauthorized</title></head><body><h1>Unauthorized</h1><p>This is the API server. Use the app at <a href=\"" + origin + "\">" + origin + "</a>.</p></body></html>"
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api") || strings.HasPrefix(r.URL.Path, "/docs") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(body))
+	})
 }
 
 // staticHandler serves API/docs from next, everything else from dir (SPA fallback to index.html).

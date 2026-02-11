@@ -14,14 +14,20 @@ import (
 
 // CreateUserRequest is the body for POST /api/admin/users.
 type CreateUserRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-	Role     string `json:"role"` // "user" or "admin"
+	Email          string    `json:"email"`
+	Password       string    `json:"password"`
+	Role           string    `json:"role"`
+	OrganizationID uuid.UUID `json:"organization_id,omitempty"`
 }
 
 // UpdateUserRoleRequest is the body for PATCH /api/admin/users/:id/role.
 type UpdateUserRoleRequest struct {
-	Role string `json:"role"` // "user" or "admin"
+	Role string `json:"role"`
+}
+
+// UpdateUserOrganizationRequest is the body for PATCH /api/admin/users/:id/organization. Global admin only.
+type UpdateUserOrganizationRequest struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
 }
 
 // AdminUsersHandler handles GET (list) and POST (create) /api/admin/users. Admin only.
@@ -34,7 +40,7 @@ func AdminUsersHandler(s store.Storer) http.HandlerFunc {
 		}
 		switch r.Method {
 		case http.MethodGet:
-			listUsers(s, w)
+			listUsers(s, w, r)
 		case http.MethodPost:
 			createUser(s, w, r)
 		default:
@@ -43,15 +49,20 @@ func AdminUsersHandler(s store.Storer) http.HandlerFunc {
 	}
 }
 
-func listUsers(s store.Storer, w http.ResponseWriter) {
-	users, err := s.ListUsers()
+func listUsers(s store.Storer, w http.ResponseWriter, r *http.Request) {
+	user := auth.UserFromContext(r.Context())
+	var orgID *uuid.UUID
+	if user != nil && !auth.IsGlobalAdmin(user) {
+		orgID = &user.OrganizationID
+	}
+	users, err := s.ListUsers(orgID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	out := make([]UserResponse, 0, len(users))
 	for _, u := range users {
-		out = append(out, UserResponse{ID: u.ID.String(), Email: u.Email, Role: u.Role, TourCompleted: u.TourCompleted})
+		out = append(out, userToResponse(u))
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"users": out})
@@ -75,15 +86,29 @@ func createUser(s store.Storer, w http.ResponseWriter, r *http.Request) {
 	if req.Role == store.RoleAdmin {
 		role = store.RoleAdmin
 	}
+	user := auth.UserFromContext(r.Context())
+	if user == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	orgID := user.OrganizationID
+	if auth.IsGlobalAdmin(user) {
+		orgID = req.OrganizationID
+	}
+	if err := auth.RequireGlobalAdminForNilOrg(user, orgID); err != nil {
+		auth.WriteJSONError(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		http.Error(w, "failed to hash password", http.StatusInternalServerError)
 		return
 	}
 	newUser := &store.User{
-		Email:        strings.TrimSpace(strings.ToLower(req.Email)),
-		PasswordHash: string(hash),
-		Role:         role,
+		Email:          strings.TrimSpace(strings.ToLower(req.Email)),
+		PasswordHash:   string(hash),
+		Role:           role,
+		OrganizationID: orgID,
 	}
 	if err := s.CreateUser(newUser); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -92,7 +117,7 @@ func createUser(s store.Storer, w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]UserResponse{
-		"user": {ID: newUser.ID.String(), Email: newUser.Email, Role: newUser.Role, TourCompleted: newUser.TourCompleted},
+		"user": userToResponse(newUser),
 	})
 }
 
@@ -153,12 +178,64 @@ func UpdateUserRoleHandler(s store.Storer) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]UserResponse{
-			"user": {
-				ID:            updated.ID.String(),
-				Email:         updated.Email,
-				Role:          updated.Role,
-				TourCompleted: updated.TourCompleted,
-			},
+			"user": userToResponse(updated),
+		})
+	}
+}
+
+// UpdateUserOrganizationHandler handles PATCH /api/admin/users/:id/organization. Global admin only.
+func UpdateUserOrganizationHandler(s store.Storer) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		user := auth.UserFromContext(r.Context())
+		if user == nil || !auth.IsGlobalAdmin(user) {
+			auth.WriteJSONError(w, "forbidden", http.StatusForbidden)
+			return
+		}
+
+		idStr := strings.TrimPrefix(r.URL.Path, "/api/admin/users/")
+		idStr = strings.TrimSuffix(idStr, "/organization")
+		idStr = strings.Trim(idStr, "/")
+		if idStr == "" {
+			auth.WriteJSONError(w, "user id required", http.StatusBadRequest)
+			return
+		}
+		userID, err := uuid.Parse(idStr)
+		if err != nil {
+			auth.WriteJSONError(w, "invalid user id", http.StatusBadRequest)
+			return
+		}
+
+		var req UpdateUserOrganizationRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			auth.WriteJSONError(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		if err := auth.RequireGlobalAdminForNilOrg(user, req.OrganizationID); err != nil {
+			auth.WriteJSONError(w, err.Error(), http.StatusForbidden)
+			return
+		}
+
+		if err := s.SetUserOrganization(userID, req.OrganizationID); err != nil {
+			if err.Error() == "user not found" {
+				auth.WriteJSONError(w, err.Error(), http.StatusNotFound)
+				return
+			}
+			auth.WriteJSONError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		updated, err := s.GetUser(userID)
+		if err != nil {
+			auth.WriteJSONError(w, "failed to fetch updated user", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]UserResponse{
+			"user": userToResponse(updated),
 		})
 	}
 }
@@ -199,7 +276,7 @@ func DeleteUserHandler(s store.Storer) http.HandlerFunc {
 		}
 
 		if target.Role == store.RoleAdmin {
-			users, err := s.ListUsers()
+			users, err := s.ListUsers(nil)
 			if err != nil {
 				auth.WriteJSONError(w, "failed to list users", http.StatusInternalServerError)
 				return

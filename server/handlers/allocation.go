@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/JakeNeyer/ipam/network"
+	"github.com/JakeNeyer/ipam/server/auth"
 	"github.com/JakeNeyer/ipam/store"
 	"github.com/google/uuid"
 	"github.com/swaggest/usecase"
@@ -28,22 +29,33 @@ func NewCreateAllocationUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(errors.New("invalid CIDR format"), status.InvalidArgument)
 		}
 
-		blocks, err := s.ListBlocks()
+		user := auth.UserFromContext(ctx)
+		if user == nil {
+			return status.Wrap(errors.New("unauthorized"), status.Unauthenticated)
+		}
+		var orgID *uuid.UUID
+		if !auth.IsGlobalAdmin(user) {
+			orgID = &user.OrganizationID
+		}
+		blocks, _, err := s.ListBlocksFiltered(input.BlockName, nil, orgID, false, 0, 0)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
-		if len(blocks) == 0 {
-			return status.Wrap(errors.New("no network blocks exist; create a block first"), status.FailedPrecondition)
-		}
 		var parentBlock *network.Block
 		for _, b := range blocks {
-			if b.Name == input.BlockName {
+			if allocationBlockNamesMatch(b.Name, input.BlockName) {
 				parentBlock = b
 				break
 			}
 		}
 		if parentBlock == nil {
 			return status.Wrap(errors.New("block not found"), status.NotFound)
+		}
+		var reservedOrgID *uuid.UUID
+		if parentBlock.EnvironmentID != uuid.Nil {
+			if env, err := s.GetEnvironment(parentBlock.EnvironmentID); err == nil {
+				reservedOrgID = &env.OrganizationID
+			}
 		}
 
 		contained, err := network.Contains(parentBlock.CIDR, input.CIDR)
@@ -73,7 +85,7 @@ func NewCreateAllocationUseCase(s store.Storer) usecase.Interactor {
 				)
 			}
 		}
-		if reserved, err := s.OverlapsReservedBlock(input.CIDR); err != nil {
+		if reserved, err := s.OverlapsReservedBlock(input.CIDR, reservedOrgID); err != nil {
 			return status.Wrap(err, status.Internal)
 		} else if reserved != nil {
 			return status.Wrap(
@@ -119,16 +131,21 @@ func NewAutoAllocateUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(errors.New("prefix_length must be between 1 and 32"), status.InvalidArgument)
 		}
 
-		blocks, err := s.ListBlocks()
+		user := auth.UserFromContext(ctx)
+		if user == nil {
+			return status.Wrap(errors.New("unauthorized"), status.Unauthenticated)
+		}
+		var orgID *uuid.UUID
+		if !auth.IsGlobalAdmin(user) {
+			orgID = &user.OrganizationID
+		}
+		blocks, _, err := s.ListBlocksFiltered(input.BlockName, nil, orgID, false, 0, 0)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
-		if len(blocks) == 0 {
-			return status.Wrap(errors.New("no network blocks exist; create a block first"), status.FailedPrecondition)
-		}
 		var parentBlock *network.Block
 		for _, b := range blocks {
-			if b.Name == input.BlockName {
+			if allocationBlockNamesMatch(b.Name, input.BlockName) {
 				parentBlock = b
 				break
 			}
@@ -137,7 +154,7 @@ func NewAutoAllocateUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(errors.New("block not found"), status.NotFound)
 		}
 
-		allAllocs, err := s.ListAllocations()
+		allAllocs, _, err := s.ListAllocationsFiltered("", input.BlockName, uuid.Nil, orgID, 0, 0)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -148,7 +165,7 @@ func NewAutoAllocateUseCase(s store.Storer) usecase.Interactor {
 			}
 		}
 
-		reserved, err := s.ListReservedBlocks()
+		reserved, err := s.ListReservedBlocks(orgID)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -200,6 +217,23 @@ func NewAutoAllocateUseCase(s store.Storer) usecase.Interactor {
 // ListAllocations handler
 func NewListAllocationsUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input listAllocationsInput, output *allocationListOutput) error {
+		user := auth.UserFromContext(ctx)
+		if user == nil {
+			return status.Wrap(errors.New("unauthorized"), status.Unauthenticated)
+		}
+		if input.EnvironmentID != uuid.Nil {
+			env, err := s.GetEnvironment(input.EnvironmentID)
+			if err != nil {
+				return status.Wrap(errors.New("environment not found"), status.NotFound)
+			}
+			if !auth.IsGlobalAdmin(user) && env.OrganizationID != user.OrganizationID {
+				return status.Wrap(errors.New("environment not found"), status.NotFound)
+			}
+		}
+		var orgID *uuid.UUID
+		if !auth.IsGlobalAdmin(user) {
+			orgID = &user.OrganizationID
+		}
 		limit, offset := input.Limit, input.Offset
 		if limit <= 0 {
 			limit = defaultListLimit
@@ -210,7 +244,7 @@ func NewListAllocationsUseCase(s store.Storer) usecase.Interactor {
 		if offset < 0 {
 			offset = 0
 		}
-		allocations, total, err := s.ListAllocationsFiltered(input.Name, input.BlockName, input.EnvironmentID, limit, offset)
+		allocations, total, err := s.ListAllocationsFiltered(input.Name, input.BlockName, input.EnvironmentID, orgID, limit, offset)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -233,11 +267,32 @@ func NewListAllocationsUseCase(s store.Storer) usecase.Interactor {
 	return u
 }
 
+// allocationInUserOrg returns true if the allocation's block belongs to an environment in the user's org.
+func allocationInUserOrg(s store.Storer, user *store.User, alloc *network.Allocation) bool {
+	if auth.IsGlobalAdmin(user) {
+		return true
+	}
+	blocks, _, err := s.ListBlocksFiltered(strings.TrimSpace(alloc.Block.Name), nil, &user.OrganizationID, false, 1, 0)
+	if err != nil || len(blocks) == 0 {
+		return false
+	}
+	for _, b := range blocks {
+		if strings.TrimSpace(b.CIDR) == strings.TrimSpace(alloc.Block.CIDR) {
+			return true
+		}
+	}
+	return false
+}
+
 // GetAllocation handler
 func NewGetAllocationUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input getAllocationInput, output *allocationOutput) error {
 		alloc, err := s.GetAllocation(input.ID)
 		if err != nil {
+			return status.Wrap(errors.New("allocation not found"), status.NotFound)
+		}
+		user := auth.UserFromContext(ctx)
+		if user != nil && !allocationInUserOrg(s, user, alloc) {
 			return status.Wrap(errors.New("allocation not found"), status.NotFound)
 		}
 
@@ -259,6 +314,10 @@ func NewUpdateAllocationUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input updateAllocationInput, output *allocationOutput) error {
 		alloc, err := s.GetAllocation(input.ID)
 		if err != nil {
+			return status.Wrap(errors.New("allocation not found"), status.NotFound)
+		}
+		user := auth.UserFromContext(ctx)
+		if user != nil && !allocationInUserOrg(s, user, alloc) {
 			return status.Wrap(errors.New("allocation not found"), status.NotFound)
 		}
 
@@ -309,6 +368,14 @@ func NewDeleteAllocationUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input struct {
 		Id uuid.UUID `path:"id"`
 	}, output *struct{}) error {
+		alloc, err := s.GetAllocation(input.Id)
+		if err != nil {
+			return status.Wrap(errors.New("allocation not found"), status.NotFound)
+		}
+		user := auth.UserFromContext(ctx)
+		if user != nil && !allocationInUserOrg(s, user, alloc) {
+			return status.Wrap(errors.New("allocation not found"), status.NotFound)
+		}
 		if err := s.DeleteAllocation(input.Id); err != nil {
 			return status.Wrap(errors.New("allocation not found"), status.NotFound)
 		}

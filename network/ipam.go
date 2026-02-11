@@ -129,7 +129,7 @@ func NextAvailableCIDRWithAllocations(supernet string, prefixLength int, allocat
 		endU32 := ipToU32(start) + subnetSize - 1
 		endIP := u32ToIP(endU32)
 		if ipLess(g.last, endIP) {
-			continue // subnet doesn't fit in this gap
+			continue
 		}
 		if !supernetNet.Contains(endIP) {
 			continue

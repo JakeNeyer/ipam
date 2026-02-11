@@ -8,6 +8,7 @@ import (
 	"github.com/JakeNeyer/ipam/internal/logger"
 	"github.com/JakeNeyer/ipam/server/validation"
 	"github.com/JakeNeyer/ipam/store"
+	"github.com/google/uuid"
 	"github.com/swaggest/usecase"
 	"github.com/swaggest/usecase/status"
 	"golang.org/x/crypto/bcrypt"
@@ -21,7 +22,7 @@ type getSetupStatusOutput struct {
 // NewGetSetupStatusUseCase returns a use case for GET /api/setup/status.
 func NewGetSetupStatusUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input struct{}, output *getSetupStatusOutput) error {
-		users, err := s.ListUsers()
+		users, err := s.ListUsers(nil)
 		if err != nil {
 			logger.Error(logger.MsgSetupStatusFailed, logger.KeyOperation, "get_setup_status", logger.ErrAttr(err))
 			return status.Wrap(errors.New("setup check failed"), status.InvalidArgument)
@@ -51,7 +52,7 @@ type postSetupOutput struct {
 func NewPostSetupUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input postSetupInput, output *postSetupOutput) error {
 		logger.Info("setup request", logger.KeyOperation, "post_setup", logger.KeyEmail, input.Email)
-		users, err := s.ListUsers()
+		users, err := s.ListUsers(nil)
 		if err != nil {
 			logger.Error(logger.MsgSetupStatusFailed, logger.KeyOperation, "post_setup", logger.ErrAttr(err))
 			return status.Wrap(errors.New("setup check failed, please try again"), status.InvalidArgument)
@@ -74,9 +75,10 @@ func NewPostSetupUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(errors.New("password setup failed, please try again"), status.InvalidArgument)
 		}
 		admin := &store.User{
-			Email:        strings.TrimSpace(strings.ToLower(input.Email)),
-			PasswordHash: string(hash),
-			Role:         store.RoleAdmin,
+			Email:          strings.TrimSpace(strings.ToLower(input.Email)),
+			PasswordHash:   string(hash),
+			Role:           store.RoleAdmin,
+			OrganizationID: uuid.Nil,
 		}
 		if err := s.CreateUser(admin); err != nil {
 			logger.Error(logger.MsgSetupCreateUserFailed, logger.KeyOperation, "post_setup", logger.ErrAttr(err))
@@ -87,12 +89,7 @@ func NewPostSetupUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(errors.New(msg), status.InvalidArgument)
 		}
 		logger.Info("setup success", logger.KeyOperation, "post_setup", logger.KeyUserID, admin.ID.String(), logger.KeyEmail, admin.Email)
-		output.User = UserResponse{
-			ID:            admin.ID.String(),
-			Email:         admin.Email,
-			Role:          admin.Role,
-			TourCompleted: admin.TourCompleted,
-		}
+		output.User = userToResponse(admin)
 		return nil
 	})
 	u.SetTitle("Post setup")

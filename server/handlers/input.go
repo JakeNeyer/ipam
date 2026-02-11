@@ -7,9 +7,10 @@ const maxListLimit = 500
 
 // Environment Input Types
 type createEnvironmentInput struct {
-	Name         string             `json:"name" required:"true" minLength:"1" maxLength:"255"`
-	InitialBlock *initialBlockInput `json:"initial_block,omitempty"`
-	_            struct{}           `additionalProperties:"false"`
+	Name             string             `json:"name" required:"true" minLength:"1" maxLength:"255"`
+	OrganizationID   uuid.UUID          `json:"organization_id,omitempty" format:"uuid"`
+	InitialBlock     *initialBlockInput `json:"initial_block,omitempty"`
+	_                struct{}           `additionalProperties:"false"`
 }
 
 type initialBlockInput struct {
@@ -62,7 +63,7 @@ type updateEnvironmentInput struct {
 // Block Input Types
 type createBlockInput struct {
 	Name          string    `json:"name" required:"true" minLength:"1" maxLength:"255"`
-	CIDR          string    `json:"cidr" required:"true" minLength:"9" maxLength:"18"` // e.g., "10.0.0.0/8"
+	CIDR          string    `json:"cidr" required:"true" minLength:"9" maxLength:"18"`
 	EnvironmentID uuid.UUID `json:"environment_id,omitempty" format:"uuid"`
 	_             struct{}  `additionalProperties:"false"`
 }
@@ -113,10 +114,11 @@ type updateAllocationInput struct {
 
 // Reserved block input types (admin only)
 type createReservedBlockInput struct {
-	Name   string   `json:"name" maxLength:"255"`
-	CIDR   string   `json:"cidr" required:"true" minLength:"9" maxLength:"50"`
-	Reason string   `json:"reason,omitempty" maxLength:"500"`
-	_      struct{} `additionalProperties:"false"`
+	Name           string    `json:"name" maxLength:"255"`
+	CIDR           string    `json:"cidr" required:"true" minLength:"9" maxLength:"50"`
+	Reason         string    `json:"reason,omitempty" maxLength:"500"`
+	OrganizationID uuid.UUID `json:"organization_id,omitempty" format:"uuid"`
+	_              struct{}  `additionalProperties:"false"`
 }
 
 type getReservedBlockInput struct {

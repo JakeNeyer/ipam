@@ -8,6 +8,7 @@ import (
 
 	"github.com/JakeNeyer/ipam/internal/logger"
 	"github.com/JakeNeyer/ipam/server/auth"
+	"github.com/JakeNeyer/ipam/server/config"
 	"github.com/JakeNeyer/ipam/server/validation"
 	"github.com/JakeNeyer/ipam/store"
 	"github.com/google/uuid"
@@ -19,10 +20,19 @@ import (
 
 // UserResponse is the user object returned by auth and admin endpoints.
 type UserResponse struct {
-	ID            string `json:"id"`
-	Email         string `json:"email"`
-	Role          string `json:"role"`
-	TourCompleted bool   `json:"tour_completed"`
+	ID             string `json:"id"`
+	Email          string `json:"email"`
+	Role           string `json:"role"`
+	TourCompleted  bool   `json:"tour_completed"`
+	OrganizationID string `json:"organization_id,omitempty"`
+}
+
+func userToResponse(u *store.User) UserResponse {
+	resp := UserResponse{ID: u.ID.String(), Email: u.Email, Role: u.Role, TourCompleted: u.TourCompleted}
+	if u.OrganizationID != uuid.Nil {
+		resp.OrganizationID = u.OrganizationID.String()
+	}
+	return resp
 }
 
 // loginInput is the request body for POST /api/auth/login.
@@ -39,8 +49,21 @@ type loginOutput struct {
 
 // NewLoginUseCase returns a use case for POST /api/auth/login.
 // If limiter is non-nil, failed login attempts per client IP are limited to mitigate brute-force.
-func NewLoginUseCase(s store.Storer, limiter *auth.LoginAttemptLimiter) usecase.Interactor {
+// If cfg has any OAuth providers enabled, password login is rejected except when the user is the only one in the system (e.g. right after setup).
+func NewLoginUseCase(s store.Storer, limiter *auth.LoginAttemptLimiter, cfg *config.Config) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input loginInput, output *loginOutput) error {
+		if cfg != nil && len(cfg.EnabledOAuthProviders()) > 0 {
+			allowSetupLogin := false
+			if u, err := s.GetUserByEmail(strings.TrimSpace(strings.ToLower(input.Email))); err == nil {
+				users, listErr := s.ListUsers(nil)
+				if listErr == nil && len(users) == 1 && users[0].ID == u.ID {
+					allowSetupLogin = true
+				}
+			}
+			if !allowSetupLogin {
+				return status.Wrap(errors.New("password login is disabled; sign in with your provider"), status.PermissionDenied)
+			}
+		}
 		r := auth.RequestFromContext(ctx)
 		ip := auth.ClientIP(r)
 		if limiter != nil && limiter.IsBlocked(ip) {
@@ -70,6 +93,13 @@ func NewLoginUseCase(s store.Storer, limiter *auth.LoginAttemptLimiter) usecase.
 			}
 			return status.Wrap(errors.New("invalid email or password"), status.Unauthenticated)
 		}
+		if user.PasswordHash == "" {
+			logger.Info(logger.MsgAuthInvalidCreds, logger.KeyOperation, "login", logger.KeyEmail, input.Email)
+			if limiter != nil {
+				limiter.RecordFailure(ip)
+			}
+			return status.Wrap(errors.New("invalid email or password"), status.Unauthenticated)
+		}
 		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(input.Password)); err != nil {
 			logger.Info(logger.MsgAuthPasswordMismatch, logger.KeyOperation, "login", logger.KeyEmail, input.Email)
 			if limiter != nil {
@@ -88,17 +118,12 @@ func NewLoginUseCase(s store.Storer, limiter *auth.LoginAttemptLimiter) usecase.
 		}
 		auth.SetSessionCookie(output.ResponseWriter(), sessionID, secure)
 		logger.Info("login success", logger.KeyOperation, "login", logger.KeyUserID, user.ID.String(), logger.KeyEmail, user.Email)
-		output.User = UserResponse{
-			ID:            user.ID.String(),
-			Email:         user.Email,
-			Role:          user.Role,
-			TourCompleted: user.TourCompleted,
-		}
+		output.User = userToResponse(user)
 		return nil
 	})
 	u.SetTitle("Login")
 	u.SetDescription("Authenticate with email and password; sets session cookie")
-	u.SetExpectedErrors(status.InvalidArgument, status.Unauthenticated, status.ResourceExhausted)
+	u.SetExpectedErrors(status.InvalidArgument, status.Unauthenticated, status.ResourceExhausted, status.PermissionDenied)
 	return u
 }
 
@@ -140,12 +165,7 @@ func NewMeUseCase() usecase.Interactor {
 		if user == nil {
 			return status.Wrap(errors.New("unauthorized"), status.Unauthenticated)
 		}
-		output.User = UserResponse{
-			ID:            user.ID.String(),
-			Email:         user.Email,
-			Role:          user.Role,
-			TourCompleted: user.TourCompleted,
-		}
+		output.User = userToResponse(user)
 		return nil
 	})
 	u.SetTitle("Get current user")
@@ -177,21 +197,21 @@ type apiTokenResponse struct {
 	ID        string  `json:"id"`
 	Name      string  `json:"name"`
 	CreatedAt string  `json:"created_at"`
-	ExpiresAt *string `json:"expires_at,omitempty"` // RFC3339; nil/omit = never
+	ExpiresAt *string `json:"expires_at,omitempty"`
 }
 
 type createTokenResponse struct {
 	ID        string  `json:"id"`
 	Name      string  `json:"name"`
-	Token     string  `json:"token"` // only in create response, show once
+	Token     string  `json:"token"`
 	CreatedAt string  `json:"created_at"`
-	ExpiresAt *string `json:"expires_at,omitempty"` // RFC3339; nil/omit = never
+	ExpiresAt *string `json:"expires_at,omitempty"`
 }
 
 // CreateTokenRequest is the body for POST /api/auth/me/tokens.
 type CreateTokenRequest struct {
 	Name      string  `json:"name"`
-	ExpiresAt *string `json:"expires_at,omitempty"` // RFC3339; optional, omit = never
+	ExpiresAt *string `json:"expires_at,omitempty"`
 }
 
 // listTokensOutput is the response for GET /api/auth/me/tokens.

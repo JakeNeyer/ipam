@@ -9,7 +9,7 @@ type Block struct {
 	CIDR          string    `json:"cidr"`
 	Usage         Usage     `json:"usage"`
 	Children      []Block   `json:"children,omitempty"`
-	EnvironmentID uuid.UUID `json:"environment_id,omitempty"` // uuid.Nil when not assigned
+	EnvironmentID uuid.UUID `json:"environment_id,omitempty"`
 }
 
 type Usage struct {

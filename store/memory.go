@@ -22,6 +22,7 @@ const signupInviteSecretBytes = 32
 
 // Store manages all IPAM data
 type Store struct {
+	organizations  map[uuid.UUID]*Organization
 	environments   map[uuid.UUID]*network.Environment
 	blocks         map[uuid.UUID]*network.Block
 	allocations    map[uuid.UUID]*network.Allocation
@@ -39,6 +40,7 @@ type Store struct {
 // NewStore creates a new store
 func NewStore() *Store {
 	return &Store{
+		organizations:  make(map[uuid.UUID]*Organization),
 		environments:   make(map[uuid.UUID]*network.Environment),
 		blocks:         make(map[uuid.UUID]*network.Block),
 		allocations:    make(map[uuid.UUID]*network.Allocation),
@@ -56,6 +58,72 @@ func NewStore() *Store {
 // GenerateID generates a unique ID
 func (s *Store) GenerateID() uuid.UUID {
 	return uuid.New()
+}
+
+// Organization operations
+func (s *Store) CreateOrganization(org *Organization) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if org.ID == uuid.Nil {
+		org.ID = s.GenerateID()
+	}
+	if org.CreatedAt.IsZero() {
+		org.CreatedAt = time.Now()
+	}
+	s.organizations[org.ID] = org
+	return nil
+}
+
+func (s *Store) GetOrganization(id uuid.UUID) (*Organization, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	org, exists := s.organizations[id]
+	if !exists {
+		return nil, fmt.Errorf("organization not found")
+	}
+	return org, nil
+}
+
+func (s *Store) ListOrganizations() ([]*Organization, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*Organization
+	for _, o := range s.organizations {
+		out = append(out, o)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+func (s *Store) UpdateOrganization(org *Organization) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, exists := s.organizations[org.ID]
+	if !exists {
+		return fmt.Errorf("organization not found")
+	}
+	existing.Name = org.Name
+	return nil
+}
+
+func (s *Store) DeleteOrganization(id uuid.UUID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.organizations[id]; !exists {
+		return fmt.Errorf("organization not found")
+	}
+	for _, u := range s.users {
+		if u.OrganizationID == id {
+			return fmt.Errorf("organization has users; remove or reassign them first")
+		}
+	}
+	for _, env := range s.environments {
+		if env.OrganizationID == id {
+			return fmt.Errorf("organization has environments; remove them first")
+		}
+	}
+	delete(s.organizations, id)
+	return nil
 }
 
 // Environment operations
@@ -77,18 +145,21 @@ func (s *Store) GetEnvironment(id uuid.UUID) (*network.Environment, error) {
 }
 
 func (s *Store) ListEnvironments() ([]*network.Environment, error) {
-	envs, _, err := s.ListEnvironmentsFiltered("", 0, 0)
+	envs, _, err := s.ListEnvironmentsFiltered("", nil, 0, 0)
 	return envs, err
 }
 
-// ListEnvironmentsFiltered returns environments matching name (substring, case-insensitive).
-// If limit <= 0, no limit is applied. offset is 0-based. Returns (items, total, error).
-func (s *Store) ListEnvironmentsFiltered(name string, limit, offset int) ([]*network.Environment, int, error) {
+// ListEnvironmentsFiltered returns environments matching name (substring, case-insensitive), optionally scoped by organizationID.
+// If organizationID is nil, all environments are returned (global admin). If limit <= 0, no limit is applied. offset is 0-based.
+func (s *Store) ListEnvironmentsFiltered(name string, organizationID *uuid.UUID, limit, offset int) ([]*network.Environment, int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	nameLower := strings.ToLower(strings.TrimSpace(name))
 	var matched []*network.Environment
 	for _, env := range s.environments {
+		if organizationID != nil && env.OrganizationID != *organizationID {
+			continue
+		}
 		if nameLower == "" || strings.Contains(strings.ToLower(env.Name), nameLower) {
 			matched = append(matched, env)
 		}
@@ -159,13 +230,13 @@ func (s *Store) GetBlock(id uuid.UUID) (*network.Block, error) {
 }
 
 func (s *Store) ListBlocks() ([]*network.Block, error) {
-	blocks, _, err := s.ListBlocksFiltered("", nil, false, 0, 0)
+	blocks, _, err := s.ListBlocksFiltered("", nil, nil, false, 0, 0)
 	return blocks, err
 }
 
-// ListBlocksFiltered returns blocks matching name (substring), optionally environmentID, and optionally orphaned only.
-// If limit <= 0, no limit is applied. offset is 0-based. Returns (items, total, error).
-func (s *Store) ListBlocksFiltered(name string, environmentID *uuid.UUID, orphanedOnly bool, limit, offset int) ([]*network.Block, int, error) {
+// ListBlocksFiltered returns blocks matching name (substring), optionally environmentID, organizationID, and orphaned only.
+// If organizationID != nil, only blocks in envs belonging to that org are returned. If limit <= 0, no limit is applied.
+func (s *Store) ListBlocksFiltered(name string, environmentID *uuid.UUID, organizationID *uuid.UUID, orphanedOnly bool, limit, offset int) ([]*network.Block, int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	nameLower := strings.ToLower(strings.TrimSpace(name))
@@ -176,6 +247,12 @@ func (s *Store) ListBlocksFiltered(name string, environmentID *uuid.UUID, orphan
 		}
 		if environmentID != nil && block.EnvironmentID != *environmentID {
 			continue
+		}
+		if organizationID != nil && block.EnvironmentID != uuid.Nil {
+			env, exists := s.environments[block.EnvironmentID]
+			if !exists || env.OrganizationID != *organizationID {
+				continue
+			}
 		}
 		if nameLower == "" || strings.Contains(strings.ToLower(block.Name), nameLower) {
 			matched = append(matched, block)
@@ -245,24 +322,36 @@ func (s *Store) GetAllocation(id uuid.UUID) (*network.Allocation, error) {
 }
 
 func (s *Store) ListAllocations() ([]*network.Allocation, error) {
-	allocs, _, err := s.ListAllocationsFiltered("", "", uuid.Nil, 0, 0)
+	allocs, _, err := s.ListAllocationsFiltered("", "", uuid.Nil, nil, 0, 0)
 	return allocs, err
 }
 
-// ListAllocationsFiltered returns allocations matching name (substring), optionally blockName, and optionally environmentID (allocations in blocks belonging to that environment).
-// If limit <= 0, no limit is applied. offset is 0-based. Returns (items, total, error).
-func (s *Store) ListAllocationsFiltered(name string, blockName string, environmentID uuid.UUID, limit, offset int) ([]*network.Allocation, int, error) {
+// ListAllocationsFiltered returns allocations matching name (substring), optionally blockName, environmentID, and organizationID.
+// When organizationID != nil, only allocations in blocks belonging to envs in that org are returned.
+func (s *Store) ListAllocationsFiltered(name string, blockName string, environmentID uuid.UUID, organizationID *uuid.UUID, limit, offset int) ([]*network.Allocation, int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	nameLower := strings.ToLower(strings.TrimSpace(name))
 	blockLower := strings.ToLower(strings.TrimSpace(blockName))
-	var blockNamesInEnv map[string]bool
+	var blockNamesOK map[string]bool
 	if environmentID != uuid.Nil {
-		blockNamesInEnv = make(map[string]bool)
+		blockNamesOK = make(map[string]bool)
 		for _, block := range s.blocks {
 			if block.EnvironmentID == environmentID {
-				blockNamesInEnv[strings.ToLower(strings.TrimSpace(block.Name))] = true
+				blockNamesOK[strings.ToLower(strings.TrimSpace(block.Name))] = true
 			}
+		}
+	} else if organizationID != nil {
+		blockNamesOK = make(map[string]bool)
+		for _, block := range s.blocks {
+			if block.EnvironmentID == uuid.Nil {
+				continue
+			}
+			env, exists := s.environments[block.EnvironmentID]
+			if !exists || env.OrganizationID != *organizationID {
+				continue
+			}
+			blockNamesOK[strings.ToLower(strings.TrimSpace(block.Name))] = true
 		}
 	}
 	var matched []*network.Allocation
@@ -270,10 +359,8 @@ func (s *Store) ListAllocationsFiltered(name string, blockName string, environme
 		if blockLower != "" && strings.ToLower(strings.TrimSpace(alloc.Block.Name)) != blockLower {
 			continue
 		}
-		if environmentID != uuid.Nil {
-			if !blockNamesInEnv[strings.ToLower(strings.TrimSpace(alloc.Block.Name))] {
-				continue
-			}
+		if blockNamesOK != nil && !blockNamesOK[strings.ToLower(strings.TrimSpace(alloc.Block.Name))] {
+			continue
 		}
 		if nameLower == "" || strings.Contains(strings.ToLower(alloc.Name), nameLower) {
 			matched = append(matched, alloc)
@@ -312,11 +399,14 @@ func (s *Store) DeleteAllocation(id uuid.UUID) error {
 }
 
 // ReservedBlock operations (blacklisted CIDR ranges; cannot be used as blocks or allocations).
-func (s *Store) ListReservedBlocks() ([]*ReservedBlock, error) {
+func (s *Store) ListReservedBlocks(organizationID *uuid.UUID) ([]*ReservedBlock, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var out []*ReservedBlock
 	for _, r := range s.reservedBlocks {
+		if organizationID != nil && r.OrganizationID != *organizationID {
+			continue
+		}
 		out = append(out, r)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CIDR < out[j].CIDR })
@@ -367,8 +457,8 @@ func (s *Store) DeleteReservedBlock(id uuid.UUID) error {
 }
 
 // OverlapsReservedBlock returns the first reserved block that overlaps the given CIDR, or nil.
-func (s *Store) OverlapsReservedBlock(cidr string) (*ReservedBlock, error) {
-	list, err := s.ListReservedBlocks()
+func (s *Store) OverlapsReservedBlock(cidr string, organizationID *uuid.UUID) (*ReservedBlock, error) {
+	list, err := s.ListReservedBlocks(organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -420,11 +510,40 @@ func (s *Store) GetUserByEmail(email string) (*User, error) {
 	return s.users[id], nil
 }
 
-func (s *Store) ListUsers() ([]*User, error) {
+func (s *Store) GetUserByOAuth(provider, providerUserID string) (*User, error) {
+	if provider == "" || providerUserID == "" {
+		return nil, fmt.Errorf("user not found")
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, u := range s.users {
+		if u.OAuthProvider == provider && u.OAuthProviderUserID == providerUserID {
+			return u, nil
+		}
+	}
+	return nil, fmt.Errorf("user not found")
+}
+
+func (s *Store) SetUserOAuth(userID uuid.UUID, provider, providerUserID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u, exists := s.users[userID]
+	if !exists {
+		return fmt.Errorf("user not found")
+	}
+	u.OAuthProvider = provider
+	u.OAuthProviderUserID = providerUserID
+	return nil
+}
+
+func (s *Store) ListUsers(organizationID *uuid.UUID) ([]*User, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var out []*User
 	for _, u := range s.users {
+		if organizationID != nil && u.OrganizationID != *organizationID {
+			continue
+		}
 		out = append(out, u)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Email < out[j].Email })
@@ -483,6 +602,17 @@ func (s *Store) SetUserRole(userID uuid.UUID, role string) error {
 		return fmt.Errorf("invalid role")
 	}
 	u.Role = role
+	return nil
+}
+
+func (s *Store) SetUserOrganization(userID uuid.UUID, organizationID uuid.UUID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u, exists := s.users[userID]
+	if !exists {
+		return fmt.Errorf("user not found")
+	}
+	u.OrganizationID = organizationID
 	return nil
 }
 
@@ -620,7 +750,7 @@ func (s *Store) GetAPIToken(tokenID uuid.UUID) (*APIToken, error) {
 }
 
 // CreateSignupInvite creates a time-bound signup invite. Returns the invite and raw token (only shown once).
-func (s *Store) CreateSignupInvite(createdBy uuid.UUID, expiresAt time.Time) (*SignupInvite, string, error) {
+func (s *Store) CreateSignupInvite(createdBy uuid.UUID, expiresAt time.Time, organizationID uuid.UUID, role string) (*SignupInvite, string, error) {
 	secret := make([]byte, signupInviteSecretBytes)
 	if _, err := rand.Read(secret); err != nil {
 		return nil, "", err
@@ -638,11 +768,13 @@ func (s *Store) CreateSignupInvite(createdBy uuid.UUID, expiresAt time.Time) (*S
 		return nil, "", fmt.Errorf("expires_at must be in the future")
 	}
 	inv := &SignupInvite{
-		ID:        s.GenerateID(),
-		TokenHash: tokenHash,
-		CreatedBy: createdBy,
-		ExpiresAt: expiresAt,
-		CreatedAt: now,
+		ID:             s.GenerateID(),
+		TokenHash:      tokenHash,
+		CreatedBy:      createdBy,
+		ExpiresAt:      expiresAt,
+		CreatedAt:      now,
+		OrganizationID: organizationID,
+		Role:           role,
 	}
 	s.signupInvites[inv.ID] = inv
 	s.inviteByHash[tokenHash] = inv.ID

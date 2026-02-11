@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/JakeNeyer/ipam/network"
+	"github.com/JakeNeyer/ipam/server/auth"
 	"github.com/JakeNeyer/ipam/store"
 	"github.com/google/uuid"
 	"github.com/swaggest/usecase"
@@ -55,6 +56,17 @@ func NewCreateBlockUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(errors.New("invalid CIDR format"), status.InvalidArgument)
 		}
 
+		user := auth.UserFromContext(ctx)
+		if user != nil && input.EnvironmentID != uuid.Nil {
+			env, err := s.GetEnvironment(input.EnvironmentID)
+			if err != nil {
+				return status.Wrap(errors.New("environment not found"), status.NotFound)
+			}
+			if !auth.IsGlobalAdmin(user) && env.OrganizationID != user.OrganizationID {
+				return status.Wrap(errors.New("environment not found"), status.NotFound)
+			}
+		}
+
 		totalIPs := calculateTotalIPs(input.CIDR)
 		block := &network.Block{
 			Name:          input.Name,
@@ -88,7 +100,13 @@ func NewCreateBlockUseCase(s store.Storer) usecase.Interactor {
 				)
 			}
 		}
-		if reserved, err := s.OverlapsReservedBlock(block.CIDR); err != nil {
+		var reservedOrgID *uuid.UUID
+		if block.EnvironmentID != uuid.Nil {
+			if env, err := s.GetEnvironment(block.EnvironmentID); err == nil {
+				reservedOrgID = &env.OrganizationID
+			}
+		}
+		if reserved, err := s.OverlapsReservedBlock(block.CIDR, reservedOrgID); err != nil {
 			return status.Wrap(err, status.Internal)
 		} else if reserved != nil {
 			return status.Wrap(
@@ -120,6 +138,25 @@ func NewCreateBlockUseCase(s store.Storer) usecase.Interactor {
 // ListBlocks handler
 func NewListBlocksUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input listBlocksInput, output *blockListOutput) error {
+		user := auth.UserFromContext(ctx)
+		if user == nil {
+			return status.Wrap(errors.New("unauthorized"), status.Unauthenticated)
+		}
+		var envID *uuid.UUID
+		if input.EnvironmentID != uuid.Nil {
+			envID = &input.EnvironmentID
+			env, err := s.GetEnvironment(input.EnvironmentID)
+			if err != nil {
+				return status.Wrap(errors.New("environment not found"), status.NotFound)
+			}
+			if !auth.IsGlobalAdmin(user) && env.OrganizationID != user.OrganizationID {
+				return status.Wrap(errors.New("environment not found"), status.NotFound)
+			}
+		}
+		var orgID *uuid.UUID
+		if !auth.IsGlobalAdmin(user) {
+			orgID = &user.OrganizationID
+		}
 		limit, offset := input.Limit, input.Offset
 		if limit <= 0 {
 			limit = defaultListLimit
@@ -130,11 +167,7 @@ func NewListBlocksUseCase(s store.Storer) usecase.Interactor {
 		if offset < 0 {
 			offset = 0
 		}
-		var envID *uuid.UUID
-		if input.EnvironmentID != uuid.Nil {
-			envID = &input.EnvironmentID
-		}
-		blocks, total, err := s.ListBlocksFiltered(input.Name, envID, input.OrphanedOnly, limit, offset)
+		blocks, total, err := s.ListBlocksFiltered(input.Name, envID, orgID, input.OrphanedOnly, limit, offset)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -172,6 +205,16 @@ func NewGetBlockUseCase(s store.Storer) usecase.Interactor {
 		if err != nil {
 			return status.Wrap(errors.New("block not found"), status.NotFound)
 		}
+		user := auth.UserFromContext(ctx)
+		if user != nil && block.EnvironmentID != uuid.Nil {
+			env, err := s.GetEnvironment(block.EnvironmentID)
+			if err != nil {
+				return status.Wrap(errors.New("block not found"), status.NotFound)
+			}
+			if !auth.IsGlobalAdmin(user) && env.OrganizationID != user.OrganizationID {
+				return status.Wrap(errors.New("block not found"), status.NotFound)
+			}
+		}
 
 		used := computeUsedIPsForBlock(s, block.Name)
 		avail := block.Usage.TotalIPs - used
@@ -202,6 +245,16 @@ func NewUpdateBlockUseCase(s store.Storer) usecase.Interactor {
 		if err != nil {
 			return status.Wrap(errors.New("block not found"), status.NotFound)
 		}
+		user := auth.UserFromContext(ctx)
+		if user != nil && block.EnvironmentID != uuid.Nil {
+			env, err := s.GetEnvironment(block.EnvironmentID)
+			if err != nil {
+				return status.Wrap(errors.New("block not found"), status.NotFound)
+			}
+			if !auth.IsGlobalAdmin(user) && env.OrganizationID != user.OrganizationID {
+				return status.Wrap(errors.New("block not found"), status.NotFound)
+			}
+		}
 
 		block.Name = input.Name
 		if input.EnvironmentID != nil {
@@ -230,7 +283,13 @@ func NewUpdateBlockUseCase(s store.Storer) usecase.Interactor {
 				)
 			}
 		}
-		if reserved, err := s.OverlapsReservedBlock(block.CIDR); err != nil {
+		var reservedOrgID *uuid.UUID
+		if block.EnvironmentID != uuid.Nil {
+			if env, err := s.GetEnvironment(block.EnvironmentID); err == nil {
+				reservedOrgID = &env.OrganizationID
+			}
+		}
+		if reserved, err := s.OverlapsReservedBlock(block.CIDR, reservedOrgID); err != nil {
 			return status.Wrap(err, status.Internal)
 		} else if reserved != nil {
 			return status.Wrap(
@@ -271,6 +330,16 @@ func NewDeleteBlockUseCase(s store.Storer) usecase.Interactor {
 		if err != nil {
 			return status.Wrap(errors.New("block not found"), status.NotFound)
 		}
+		user := auth.UserFromContext(ctx)
+		if user != nil && block.EnvironmentID != uuid.Nil {
+			env, err := s.GetEnvironment(block.EnvironmentID)
+			if err != nil {
+				return status.Wrap(errors.New("block not found"), status.NotFound)
+			}
+			if !auth.IsGlobalAdmin(user) && env.OrganizationID != user.OrganizationID {
+				return status.Wrap(errors.New("block not found"), status.NotFound)
+			}
+		}
 		allocs, err := s.ListAllocations()
 		if err != nil {
 			return status.Wrap(err, status.Internal)
@@ -298,6 +367,16 @@ func NewGetBlockUsageUseCase(s store.Storer) usecase.Interactor {
 		block, err := s.GetBlock(input.ID)
 		if err != nil {
 			return status.Wrap(errors.New("block not found"), status.NotFound)
+		}
+		user := auth.UserFromContext(ctx)
+		if user != nil && block.EnvironmentID != uuid.Nil {
+			env, err := s.GetEnvironment(block.EnvironmentID)
+			if err != nil {
+				return status.Wrap(errors.New("block not found"), status.NotFound)
+			}
+			if !auth.IsGlobalAdmin(user) && env.OrganizationID != user.OrganizationID {
+				return status.Wrap(errors.New("block not found"), status.NotFound)
+			}
 		}
 
 		used := computeUsedIPsForBlock(s, block.Name)
@@ -337,8 +416,22 @@ func NewSuggestBlockCIDRUseCase(s store.Storer) usecase.Interactor {
 		if err != nil {
 			return status.Wrap(errors.New("block not found"), status.NotFound)
 		}
+		user := auth.UserFromContext(ctx)
+		if user != nil && block.EnvironmentID != uuid.Nil {
+			env, err := s.GetEnvironment(block.EnvironmentID)
+			if err != nil {
+				return status.Wrap(errors.New("block not found"), status.NotFound)
+			}
+			if !auth.IsGlobalAdmin(user) && env.OrganizationID != user.OrganizationID {
+				return status.Wrap(errors.New("block not found"), status.NotFound)
+			}
+		}
 
-		allocs, err := s.ListAllocations()
+		var orgID *uuid.UUID
+		if user != nil && !auth.IsGlobalAdmin(user) {
+			orgID = &user.OrganizationID
+		}
+		allocs, _, err := s.ListAllocationsFiltered("", block.Name, uuid.Nil, orgID, 0, 0)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -348,7 +441,7 @@ func NewSuggestBlockCIDRUseCase(s store.Storer) usecase.Interactor {
 				allocatedCIDRs = append(allocatedCIDRs, a.Block.CIDR)
 			}
 		}
-		reserved, err := s.ListReservedBlocks()
+		reserved, err := s.ListReservedBlocks(orgID)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}

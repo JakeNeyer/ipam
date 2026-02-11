@@ -3,6 +3,10 @@
   import { createUser } from './api.js'
 
   export let open = false
+  /** When true, show organization dropdown (global admin). */
+  export let isGlobalAdmin = false
+  /** List of { id, name } for organization dropdown. Used when isGlobalAdmin. */
+  export let organizations = []
 
   const dispatch = createEventDispatcher()
 
@@ -10,6 +14,8 @@
   let email = ''
   let password = ''
   let role = 'user'
+  /** Organization ID when isGlobalAdmin; '' for no org (global admin). */
+  let organizationId = ''
   let submitting = false
 
   async function handleSubmit(e) {
@@ -21,10 +27,11 @@
     }
     submitting = true
     try {
-      await createUser(email.trim(), password, role)
+      await createUser(email.trim(), password, role, organizationId || null)
       email = ''
       password = ''
       role = 'user'
+      organizationId = ''
       dispatch('close')
       dispatch('created')
     } catch (e) {
@@ -38,6 +45,7 @@
     email = ''
     password = ''
     role = 'user'
+    organizationId = ''
     error = ''
     dispatch('close')
   }
@@ -79,6 +87,17 @@
             <option value="admin">Admin</option>
           </select>
         </label>
+        {#if isGlobalAdmin && organizations.length > 0}
+          <label class="modal-label">
+            <span>Organization</span>
+            <select bind:value={organizationId} disabled={submitting}>
+              <option value="">— None (global admin)</option>
+              {#each organizations as org (org.id)}
+                <option value={org.id}>{org.name}</option>
+              {/each}
+            </select>
+          </label>
+        {/if}
         <div class="modal-footer">
           <button type="button" class="btn" on:click={close}>Cancel</button>
           <button type="submit" class="btn btn-primary" disabled={submitting}>

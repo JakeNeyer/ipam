@@ -7,7 +7,7 @@ import (
 
 const (
 	MinPasswordLength = 8
-	MaxPasswordLength = 72 // bcrypt limit
+	MaxPasswordLength = 72
 	MaxEmailLength    = 254
 )
 

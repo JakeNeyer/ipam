@@ -2,7 +2,9 @@ package server
 
 import (
 	"github.com/JakeNeyer/ipam/server/auth"
+	"github.com/JakeNeyer/ipam/server/config"
 	"github.com/JakeNeyer/ipam/server/handlers"
+	"github.com/JakeNeyer/ipam/server/oauth"
 	"github.com/JakeNeyer/ipam/store"
 	"github.com/swaggest/openapi-go/openapi31"
 	"github.com/swaggest/rest/nethttp"
@@ -12,7 +14,7 @@ import (
 	swgui "github.com/swaggest/swgui/v5emb"
 )
 
-func NewServer(s store.Storer) *web.Service {
+func NewServer(s store.Storer, cfg *config.Config) *web.Service {
 	svc := web.NewService(openapi31.NewReflector())
 
 	svc.OpenAPISchema().SetTitle("IPAM Service")
@@ -33,11 +35,19 @@ func NewServer(s store.Storer) *web.Service {
 	svc.Handle("/api/signup/validate", handlers.ValidateSignupInviteHandler(s))
 	svc.Handle("/api/signup/register", handlers.RegisterWithInviteHandler(s))
 
+	svc.Handle("/api/auth/config", handlers.AuthConfigHandler(cfg))
 	loginLimiter := auth.NewLoginAttemptLimiter(auth.DefaultLoginMaxAttempts, auth.DefaultLoginWindow)
-	loginUC := handlers.NewLoginUseCase(s, loginLimiter)
+	loginUC := handlers.NewLoginUseCase(s, loginLimiter, cfg)
 	svc.Post("/api/auth/login", loginUC)
 	logoutUC := handlers.NewLogoutUseCase(s)
 	svc.Post("/api/auth/logout", logoutUC, nethttp.SuccessStatus(204))
+	if cfg != nil && len(cfg.EnabledOAuthProviders()) > 0 {
+		registry := oauth.NewProviderRegistry()
+		for _, provider := range cfg.EnabledOAuthProviders() {
+			svc.Handle("/api/auth/oauth/"+provider+"/start", handlers.OAuthStartHandler(cfg, registry))
+			svc.Handle("/api/auth/oauth/"+provider+"/callback", handlers.OAuthCallbackHandler(s, cfg, registry))
+		}
+	}
 
 	meUC := handlers.NewMeUseCase()
 	svc.Get("/api/auth/me", meUC)
@@ -54,18 +64,21 @@ func NewServer(s store.Storer) *web.Service {
 
 	svc.Handle("/api/admin/users", handlers.AdminUsersHandler(s))
 	svc.Handle("/api/admin/users/{id}/role", handlers.UpdateUserRoleHandler(s))
+	svc.Handle("/api/admin/users/{id}/organization", handlers.UpdateUserOrganizationHandler(s))
 	svc.Handle("/api/admin/users/{id}", handlers.DeleteUserHandler(s))
-	svc.Handle("/api/admin/signup-invites", handlers.AdminSignupInvitesHandler(s))
+	svc.Handle("/api/admin/organizations", handlers.AdminOrganizationsHandler(s))
+	svc.Handle("/api/admin/organizations/{id}", handlers.AdminOrganizationByIDHandler(s))
+	svc.Handle("/api/admin/signup-invites", handlers.AdminSignupInvitesHandler(s, cfg))
 	svc.Handle("/api/admin/signup-invites/{id}", handlers.RevokeSignupInviteHandler(s))
 
 	listReservedUC := handlers.NewListReservedBlocksUseCase(s)
-	svc.Get("/api/admin/reserved-blocks", listReservedUC)
+	svc.Get("/api/reserved-blocks", listReservedUC)
 	createReservedUC := handlers.NewCreateReservedBlockUseCase(s)
-	svc.Post("/api/admin/reserved-blocks", createReservedUC)
+	svc.Post("/api/reserved-blocks", createReservedUC)
 	updateReservedUC := handlers.NewUpdateReservedBlockUseCase(s)
-	svc.Put("/api/admin/reserved-blocks/{id}", updateReservedUC)
+	svc.Put("/api/reserved-blocks/{id}", updateReservedUC)
 	deleteReservedUC := handlers.NewDeleteReservedBlockUseCase(s)
-	svc.Delete("/api/admin/reserved-blocks/{id}", deleteReservedUC)
+	svc.Delete("/api/reserved-blocks/{id}", deleteReservedUC)
 
 	createEnvUC := handlers.NewCreateEnvironmentUseCase(s)
 	svc.Post("/api/environments", createEnvUC)

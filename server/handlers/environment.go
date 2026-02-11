@@ -5,7 +5,9 @@ import (
 	"errors"
 
 	"github.com/JakeNeyer/ipam/network"
+	"github.com/JakeNeyer/ipam/server/auth"
 	"github.com/JakeNeyer/ipam/store"
+	"github.com/google/uuid"
 	"github.com/swaggest/usecase"
 	"github.com/swaggest/usecase/status"
 )
@@ -16,11 +18,23 @@ func NewCreateEnvironmentUseCase(s store.Storer) usecase.Interactor {
 		if input.Name == "" {
 			return status.Wrap(errors.New("name is required"), status.InvalidArgument)
 		}
+		user := auth.UserFromContext(ctx)
+		if user == nil {
+			return status.Wrap(errors.New("unauthorized"), status.Unauthenticated)
+		}
+		orgID := user.OrganizationID
+		if auth.IsGlobalAdmin(user) && input.OrganizationID != uuid.Nil {
+			orgID = input.OrganizationID
+		}
+		if !auth.IsGlobalAdmin(user) && orgID == uuid.Nil {
+			return status.Wrap(errors.New("organization is required"), status.InvalidArgument)
+		}
 
 		env := &network.Environment{
-			Id:    s.GenerateID(),
-			Name:  input.Name,
-			Block: []network.Block{},
+			Id:             s.GenerateID(),
+			Name:           input.Name,
+			OrganizationID: orgID,
+			Block:          []network.Block{},
 		}
 
 		if err := s.CreateEnvironment(env); err != nil {
@@ -62,6 +76,14 @@ func NewCreateEnvironmentUseCase(s store.Storer) usecase.Interactor {
 // ListEnvironments handler
 func NewListEnvironmentsUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input listEnvironmentsInput, output *environmentListOutput) error {
+		user := auth.UserFromContext(ctx)
+		if user == nil {
+			return status.Wrap(errors.New("unauthorized"), status.Unauthenticated)
+		}
+		var orgID *uuid.UUID
+		if !auth.IsGlobalAdmin(user) {
+			orgID = &user.OrganizationID
+		}
 		limit, offset := input.Limit, input.Offset
 		if limit <= 0 {
 			limit = defaultListLimit
@@ -72,7 +94,7 @@ func NewListEnvironmentsUseCase(s store.Storer) usecase.Interactor {
 		if offset < 0 {
 			offset = 0
 		}
-		envs, total, err := s.ListEnvironmentsFiltered(input.Name, limit, offset)
+		envs, total, err := s.ListEnvironmentsFiltered(input.Name, orgID, limit, offset)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -98,6 +120,10 @@ func NewGetEnvironmentUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input getEnvironmentInput, output *environmentDetailOutput) error {
 		env, err := s.GetEnvironment(input.ID)
 		if err != nil {
+			return status.Wrap(errors.New("environment not found"), status.NotFound)
+		}
+		user := auth.UserFromContext(ctx)
+		if user != nil && !auth.IsGlobalAdmin(user) && env.OrganizationID != user.OrganizationID {
 			return status.Wrap(errors.New("environment not found"), status.NotFound)
 		}
 
@@ -141,6 +167,10 @@ func NewUpdateEnvironmentUseCase(s store.Storer) usecase.Interactor {
 		if err != nil {
 			return status.Wrap(errors.New("environment not found"), status.NotFound)
 		}
+		user := auth.UserFromContext(ctx)
+		if user != nil && !auth.IsGlobalAdmin(user) && env.OrganizationID != user.OrganizationID {
+			return status.Wrap(errors.New("environment not found"), status.NotFound)
+		}
 
 		env.Name = input.Name
 		if err := s.UpdateEnvironment(input.ID, env); err != nil {
@@ -161,6 +191,14 @@ func NewUpdateEnvironmentUseCase(s store.Storer) usecase.Interactor {
 // DeleteEnvironment handler
 func NewDeleteEnvironmentUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input getEnvironmentInput, output *struct{}) error {
+		env, err := s.GetEnvironment(input.ID)
+		if err != nil {
+			return status.Wrap(errors.New("environment not found"), status.NotFound)
+		}
+		user := auth.UserFromContext(ctx)
+		if user != nil && !auth.IsGlobalAdmin(user) && env.OrganizationID != user.OrganizationID {
+			return status.Wrap(errors.New("environment not found"), status.NotFound)
+		}
 		if err := s.DeleteEnvironment(input.ID); err != nil {
 			return status.Wrap(errors.New("environment not found"), status.NotFound)
 		}
@@ -183,7 +221,12 @@ func NewSuggestEnvironmentBlockCIDRUseCase(s store.Storer) usecase.Interactor {
 		if input.Prefix < 9 || input.Prefix > 32 {
 			return status.Wrap(errors.New("prefix must be between 9 and 32"), status.InvalidArgument)
 		}
-		if _, err := s.GetEnvironment(input.ID); err != nil {
+		env, err := s.GetEnvironment(input.ID)
+		if err != nil {
+			return status.Wrap(errors.New("environment not found"), status.NotFound)
+		}
+		user := auth.UserFromContext(ctx)
+		if user != nil && !auth.IsGlobalAdmin(user) && env.OrganizationID != user.OrganizationID {
 			return status.Wrap(errors.New("environment not found"), status.NotFound)
 		}
 		blocks, err := s.ListBlocksByEnvironment(input.ID)
@@ -196,7 +239,8 @@ func NewSuggestEnvironmentBlockCIDRUseCase(s store.Storer) usecase.Interactor {
 				existingCIDRs = append(existingCIDRs, b.CIDR)
 			}
 		}
-		reserved, err := s.ListReservedBlocks()
+		reservedOrgID := &env.OrganizationID
+		reserved, err := s.ListReservedBlocks(reservedOrgID)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}

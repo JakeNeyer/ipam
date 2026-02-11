@@ -2,11 +2,14 @@
   import { onMount } from 'svelte'
   import Icon from '@iconify/svelte'
   import '../lib/theme.js'
-  import { listUsers, listTokens, deleteToken, listSignupInvites, revokeSignupInvite, updateUserRole, deleteUser } from '../lib/api.js'
+  import { listUsers, listTokens, deleteToken, listSignupInvites, revokeSignupInvite, updateUserRole, updateUserOrganization, deleteUser, listOrganizations, createOrganization, updateOrganization, deleteOrganization } from '../lib/api.js'
   import { user } from '../lib/auth.js'
   import ApiTokensModal from '../lib/ApiTokensModal.svelte'
   import AddUserModal from '../lib/AddUserModal.svelte'
   import SignupInviteModal from '../lib/SignupInviteModal.svelte'
+
+  /** Global admin has no organization_id (only they can create/list organizations). */
+  $: isGlobalAdmin = $user && ($user.organization_id == null || $user.organization_id === '')
 
   let users = []
   let loading = true
@@ -23,7 +26,20 @@
   let tokensError = ''
   let deletingTokenId = null
   let updatingUserRoleId = null
+  let updatingUserOrgId = null
   let deletingUserId = null
+
+  let organizations = []
+  let organizationsLoading = true
+  let organizationsError = ''
+  let showCreateOrgForm = false
+  let newOrgName = ''
+  let creatingOrg = false
+  let createOrgError = ''
+  let editingOrgId = null
+  let editingOrgName = ''
+  let updatingOrgId = null
+  let deletingOrgId = null
 
   let userSortBy = 'email' // 'email' | 'role'
   let userSortDir = 'asc'
@@ -86,6 +102,24 @@
       await load()
     } finally {
       updatingUserRoleId = null
+    }
+  }
+
+  async function handleUpdateUserOrganization(userId, organizationId) {
+    if (!userId) return
+    updatingUserOrgId = userId
+    try {
+      const updated = await updateUserOrganization(userId, organizationId || '')
+      if (updated) {
+        users = users.map((u) => (u.id === userId ? { ...u, organization_id: updated.organization_id ?? '' } : u))
+      } else {
+        await load()
+      }
+    } catch (e) {
+      error = e?.message || 'Failed to update user organization'
+      await load()
+    } finally {
+      updatingUserOrgId = null
     }
   }
 
@@ -202,10 +236,107 @@
     }
   }
 
+  async function loadOrganizations() {
+    organizationsLoading = true
+    organizationsError = ''
+    try {
+      const res = await listOrganizations()
+      organizations = res.organizations || []
+    } catch (e) {
+      organizationsError = e?.message || 'Failed to load organizations'
+      organizations = []
+    } finally {
+      organizationsLoading = false
+    }
+  }
+
+  function openCreateOrgForm() {
+    showCreateOrgForm = true
+    newOrgName = ''
+    createOrgError = ''
+  }
+
+  function closeCreateOrgForm() {
+    showCreateOrgForm = false
+    newOrgName = ''
+    createOrgError = ''
+  }
+
+  async function handleCreateOrganization() {
+    const name = newOrgName?.trim()
+    if (!name) {
+      createOrgError = 'Name is required'
+      return
+    }
+    creatingOrg = true
+    createOrgError = ''
+    try {
+      await createOrganization(name)
+      await loadOrganizations()
+      closeCreateOrgForm()
+    } catch (e) {
+      createOrgError = e?.message || 'Failed to create organization'
+    } finally {
+      creatingOrg = false
+    }
+  }
+
+  function startEditOrg(org) {
+    editingOrgId = org.id
+    editingOrgName = org.name
+    organizationsError = ''
+  }
+
+  function cancelEditOrg() {
+    editingOrgId = null
+    editingOrgName = ''
+  }
+
+  async function handleUpdateOrganization(orgId, name) {
+    const trimmed = name?.trim()
+    if (!trimmed) return
+    updatingOrgId = orgId
+    organizationsError = ''
+    try {
+      const data = await updateOrganization(orgId, trimmed)
+      organizations = organizations.map((o) => (o.id === orgId ? { ...o, name: data.organization?.name ?? trimmed, created_at: o.created_at } : o))
+      cancelEditOrg()
+    } catch (e) {
+      organizationsError = e?.message || 'Failed to update organization'
+    } finally {
+      updatingOrgId = null
+    }
+  }
+
+  async function handleDeleteOrganization(orgId) {
+    if (!orgId) return
+    if (!confirm('Delete this organization? It must have no users and no environments.')) return
+    deletingOrgId = orgId
+    organizationsError = ''
+    try {
+      await deleteOrganization(orgId)
+      organizations = organizations.filter((o) => o.id !== orgId)
+    } catch (e) {
+      organizationsError = e?.message || 'Failed to delete organization'
+    } finally {
+      deletingOrgId = null
+    }
+  }
+
+  function formatOrgDate(iso) {
+    if (!iso) return ''
+    try {
+      return new Date(iso).toLocaleDateString(undefined, { dateStyle: 'short' })
+    } catch {
+      return iso
+    }
+  }
+
   onMount(() => {
     load()
     loadInvites()
     loadTokens()
+    loadOrganizations()
   })
 </script>
 
@@ -214,9 +345,122 @@
     <h1 class="page-title">Admin</h1>
   </header>
 
-  <AddUserModal open={showAddUserModal} on:close={() => (showAddUserModal = false)} on:created={load} />
+  <AddUserModal open={showAddUserModal} isGlobalAdmin={isGlobalAdmin} organizations={organizations} on:close={() => (showAddUserModal = false)} on:created={load} />
   <ApiTokensModal open={showApiTokensModal} on:close={() => { showApiTokensModal = false; loadTokens() }} />
-  <SignupInviteModal open={showSignupInviteModal} on:close={() => { showSignupInviteModal = false; loadInvites() }} />
+  <SignupInviteModal open={showSignupInviteModal} isGlobalAdmin={isGlobalAdmin} organizations={organizations} on:close={() => { showSignupInviteModal = false; loadInvites() }} />
+
+  {#if isGlobalAdmin}
+  <div class="admin-card">
+    <div class="admin-card-header">
+      <h2 class="admin-card-title">Organizations</h2>
+      {#if !showCreateOrgForm}
+        <button type="button" class="btn btn-primary btn-small" on:click={openCreateOrgForm}>
+          Create organization
+        </button>
+      {/if}
+    </div>
+    <p class="admin-muted">Organizations are tenants. Only the global admin can create organizations. Users and environments belong to an organization.</p>
+    {#if showCreateOrgForm}
+      <div class="create-org-form">
+        <input
+          type="text"
+          class="create-org-input"
+          placeholder="Organization name"
+          bind:value={newOrgName}
+          on:keydown={(e) => e.key === 'Enter' && handleCreateOrganization()}
+        />
+        <div class="create-org-actions">
+          <button type="button" class="btn btn-primary btn-small" disabled={creatingOrg || !newOrgName?.trim()} on:click={handleCreateOrganization}>
+            {creatingOrg ? 'Creating…' : 'Create'}
+          </button>
+          <button type="button" class="btn btn-secondary btn-small" disabled={creatingOrg} on:click={closeCreateOrgForm}>
+            Cancel
+          </button>
+        </div>
+        {#if createOrgError}
+          <p class="admin-error">{createOrgError}</p>
+        {/if}
+      </div>
+    {:else if organizationsLoading}
+      <p class="admin-muted">Loading…</p>
+    {:else if organizationsError}
+      <p class="admin-error">{organizationsError}</p>
+    {:else if organizations.length === 0}
+      <p class="admin-muted">No organizations yet. Create one to assign users and environments to it.</p>
+    {:else}
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Created</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each organizations as org (org.id)}
+              <tr>
+                <td class="name">
+                  {#if editingOrgId === org.id}
+                    <input
+                      type="text"
+                      class="org-name-input"
+                      bind:value={editingOrgName}
+                      on:keydown={(e) => {
+                        if (e.key === 'Enter') handleUpdateOrganization(org.id, editingOrgName)
+                        else if (e.key === 'Escape') cancelEditOrg()
+                      }}
+                    />
+                  {:else}
+                    {org.name}
+                  {/if}
+                </td>
+                <td>{formatOrgDate(org.created_at)}</td>
+                <td class="table-actions">
+                  {#if editingOrgId === org.id}
+                    <button
+                      type="button"
+                      class="btn btn-primary btn-small"
+                      disabled={updatingOrgId === org.id || !editingOrgName?.trim()}
+                      on:click={() => handleUpdateOrganization(org.id, editingOrgName)}
+                    >
+                      {updatingOrgId === org.id ? 'Saving…' : 'Save'}
+                    </button>
+                    <button type="button" class="btn btn-secondary btn-small" disabled={updatingOrgId === org.id} on:click={cancelEditOrg}>
+                      Cancel
+                    </button>
+                  {:else}
+                    <button
+                      type="button"
+                      class="btn btn-secondary btn-small"
+                      disabled={deletingOrgId === org.id}
+                      on:click={() => startEditOrg(org)}
+                      title="Edit name"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn-danger btn-small"
+                      disabled={deletingOrgId === org.id}
+                      on:click={() => handleDeleteOrganization(org.id)}
+                      title="Delete organization"
+                    >
+                      {deletingOrgId === org.id ? 'Deleting…' : 'Delete'}
+                    </button>
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+      {#if organizationsError}
+        <p class="admin-error">{organizationsError}</p>
+      {/if}
+    {/if}
+  </div>
+  {/if}
 
   <div class="admin-card">
     <div class="admin-card-header">
@@ -310,6 +554,9 @@
                   {/if}
                 </button>
               </th>
+              {#if isGlobalAdmin}
+                <th>Organization</th>
+              {/if}
               <th></th>
             </tr>
           </thead>
@@ -328,6 +575,21 @@
                     <option value="admin">admin</option>
                   </select>
                 </td>
+                {#if isGlobalAdmin}
+                  <td>
+                    <select
+                      class="org-select"
+                      value={u.organization_id ?? ''}
+                      disabled={updatingUserOrgId === u.id || deletingUserId === u.id}
+                      on:change={(e) => handleUpdateUserOrganization(u.id, e.currentTarget.value)}
+                    >
+                      <option value="">— None (global admin)</option>
+                      {#each organizations as org (org.id)}
+                        <option value={org.id}>{org.name}</option>
+                      {/each}
+                    </select>
+                  </td>
+                {/if}
                 <td class="table-actions">
                   <button
                     type="button"
@@ -458,7 +720,8 @@
     font-size: 0.9rem;
     color: var(--text-muted);
   }
-  .role-select {
+  .role-select,
+  .org-select {
     min-width: 6.5rem;
     padding: 0.35rem 0.55rem;
     border: 1px solid var(--border);
@@ -466,6 +729,9 @@
     background: var(--bg);
     color: var(--text);
     font-size: 0.85rem;
+  }
+  .org-select {
+    min-width: 10rem;
   }
   .invite-status-badge {
     display: inline-block;
@@ -487,6 +753,43 @@
   }
   tr.invite-expired td {
     color: var(--text-muted);
+  }
+  .create-org-form {
+    margin-top: 0.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+  .create-org-input,
+  .org-name-input {
+    min-width: 12rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 0.9rem;
+  }
+  .create-org-input::placeholder,
+  .org-name-input::placeholder {
+    color: var(--text-muted);
+  }
+  .org-name-input {
+    min-width: 10rem;
+    width: 100%;
+  }
+  .create-org-actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+  .btn-secondary {
+    background: var(--surface-elevated);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    background: var(--table-row-hover);
   }
   .table-wrap {
     overflow-x: auto;

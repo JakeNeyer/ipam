@@ -9,18 +9,23 @@ import (
 	"github.com/JakeNeyer/ipam/network"
 	"github.com/JakeNeyer/ipam/server/auth"
 	"github.com/JakeNeyer/ipam/store"
+	"github.com/google/uuid"
 	"github.com/swaggest/usecase"
 	"github.com/swaggest/usecase/status"
 )
 
-// NewListReservedBlocksUseCase returns a use case for GET /api/admin/reserved-blocks. Admin only.
+// NewListReservedBlocksUseCase returns a use case for GET /api/reserved-blocks. Admin only.
 func NewListReservedBlocksUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input struct{}, output *reservedBlockListOutput) error {
 		user := auth.UserFromContext(ctx)
 		if user == nil || user.Role != store.RoleAdmin {
 			return status.Wrap(errors.New("forbidden"), status.PermissionDenied)
 		}
-		list, err := s.ListReservedBlocks()
+		var orgID *uuid.UUID
+		if !auth.IsGlobalAdmin(user) {
+			orgID = &user.OrganizationID
+		}
+		list, err := s.ListReservedBlocks(orgID)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -43,7 +48,7 @@ func NewListReservedBlocksUseCase(s store.Storer) usecase.Interactor {
 	return u
 }
 
-// NewCreateReservedBlockUseCase returns a use case for POST /api/admin/reserved-blocks. Admin only.
+// NewCreateReservedBlockUseCase returns a use case for POST /api/reserved-blocks. Admin only.
 func NewCreateReservedBlockUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input createReservedBlockInput, output *reservedBlockOutput) error {
 		user := auth.UserFromContext(ctx)
@@ -57,7 +62,14 @@ func NewCreateReservedBlockUseCase(s store.Storer) usecase.Interactor {
 		if !network.ValidateCIDR(cidr) {
 			return status.Wrap(errors.New("invalid CIDR format"), status.InvalidArgument)
 		}
-		overlap, err := s.OverlapsReservedBlock(cidr)
+		orgID := user.OrganizationID
+		if auth.IsGlobalAdmin(user) && input.OrganizationID != uuid.Nil {
+			orgID = input.OrganizationID
+		}
+		if !auth.IsGlobalAdmin(user) && orgID == uuid.Nil {
+			return status.Wrap(errors.New("organization is required"), status.InvalidArgument)
+		}
+		overlap, err := s.OverlapsReservedBlock(cidr, &orgID)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -68,9 +80,10 @@ func NewCreateReservedBlockUseCase(s store.Storer) usecase.Interactor {
 			)
 		}
 		r := &store.ReservedBlock{
-			Name:   strings.TrimSpace(input.Name),
-			CIDR:   cidr,
-			Reason: strings.TrimSpace(input.Reason),
+			Name:           strings.TrimSpace(input.Name),
+			CIDR:           cidr,
+			Reason:         strings.TrimSpace(input.Reason),
+			OrganizationID: orgID,
 		}
 		if err := s.CreateReservedBlock(r); err != nil {
 			return status.Wrap(err, status.Internal)
@@ -88,7 +101,7 @@ func NewCreateReservedBlockUseCase(s store.Storer) usecase.Interactor {
 	return u
 }
 
-// NewDeleteReservedBlockUseCase returns a use case for DELETE /api/admin/reserved-blocks/:id. Admin only.
+// NewDeleteReservedBlockUseCase returns a use case for DELETE /api/reserved-blocks/:id. Admin only.
 func NewDeleteReservedBlockUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input getReservedBlockInput, output *struct{}) error {
 		user := auth.UserFromContext(ctx)
@@ -109,7 +122,7 @@ func NewDeleteReservedBlockUseCase(s store.Storer) usecase.Interactor {
 	return u
 }
 
-// NewUpdateReservedBlockUseCase returns a use case for PUT /api/admin/reserved-blocks/:id. Admin only.
+// NewUpdateReservedBlockUseCase returns a use case for PUT /api/reserved-blocks/:id. Admin only.
 func NewUpdateReservedBlockUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input updateReservedBlockInput, output *reservedBlockOutput) error {
 		user := auth.UserFromContext(ctx)

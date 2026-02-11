@@ -22,10 +22,11 @@ func Middleware(s store.Storer) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			path := r.URL.Path
-			if path == "/api/auth/login" || path == "/api/auth/logout" ||
+			if path == "/api/auth/login" || path == "/api/auth/logout" || path == "/api/auth/config" ||
 				path == "/api/setup/status" || path == "/api/setup" ||
 				path == "/api/signup/validate" || path == "/api/signup/register" ||
-				strings.HasPrefix(path, "/api/signup/") {
+				strings.HasPrefix(path, "/api/signup/") ||
+				strings.HasPrefix(path, "/api/auth/oauth/") {
 				ctx := WithRequest(r.Context(), r)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
