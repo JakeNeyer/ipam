@@ -7,17 +7,6 @@
 - **Web UI** — Svelte app with dashboard, environments, networks, CIDR wizard, subnet calculator, and user guide. Light/dark theme.
 - **Terraform provider** — Manage IPAM resources from Terraform: `ipam_environment`, `ipam_block`, `ipam_allocation`, `ipam_reserved_block`, and data sources.
 
-## Project layout
-
-| Path | Description |
-|------|-------------|
-| `main.go` | API server entrypoint |
-| `server/` | HTTP handlers, auth, middleware |
-| `network/` | IPAM logic (environments, blocks, allocations) |
-| `store/` | Postgres store and migrations |
-| `web/` | Svelte frontend (`npm run dev`, `npm run build`) |
-| `terraform-provider-ipam/` | Terraform provider (see its [README](terraform-provider-ipam/README.md)) |
-| `hack/` | Seed script and Terraform example |
 
 ## Quick start
 
