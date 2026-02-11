@@ -57,7 +57,6 @@ func NewCreateReservedBlockUseCase(s store.Storer) usecase.Interactor {
 		if !network.ValidateCIDR(cidr) {
 			return status.Wrap(errors.New("invalid CIDR format"), status.InvalidArgument)
 		}
-		// New reserved block must not overlap any existing reserved block
 		overlap, err := s.OverlapsReservedBlock(cidr)
 		if err != nil {
 			return status.Wrap(err, status.Internal)

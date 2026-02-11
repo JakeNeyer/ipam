@@ -342,11 +342,9 @@ func TestNextAvailableCIDR(t *testing.T) {
 				t.Errorf("NextAvailableCIDR(%s, %d) error = %v, expectErr %v", tt.supernet, tt.prefixLength, err, tt.expectErr)
 			}
 			if !tt.expectErr {
-				// Validate the result is a valid CIDR
 				if !ValidateCIDR(result) {
 					t.Errorf("NextAvailableCIDR(%s, %d) returned invalid CIDR: %s", tt.supernet, tt.prefixLength, result)
 				}
-				// Check if result is contained in supernet
 				contained, _ := Contains(tt.supernet, result)
 				if tt.expectedContains && !contained {
 					t.Errorf("NextAvailableCIDR(%s, %d) = %s, but not contained in supernet", tt.supernet, tt.prefixLength, result)

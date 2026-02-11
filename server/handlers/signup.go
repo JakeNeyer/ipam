@@ -260,7 +260,6 @@ func RegisterWithInviteHandler(s store.Storer) http.HandlerFunc {
 			return
 		}
 		if err := s.MarkSignupInviteUsed(inv.ID, newUser.ID); err != nil {
-			// user already created; log but don't fail
 			_ = err
 		}
 		sessionID := auth.NewSessionID()

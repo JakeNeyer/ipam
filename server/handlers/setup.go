@@ -24,7 +24,6 @@ func NewGetSetupStatusUseCase(s store.Storer) usecase.Interactor {
 		users, err := s.ListUsers()
 		if err != nil {
 			logger.Error(logger.MsgSetupStatusFailed, logger.KeyOperation, "get_setup_status", logger.ErrAttr(err))
-			// Return 4xx so frontend gets a message; 500 hid the real error (e.g. DB not ready)
 			return status.Wrap(errors.New("setup check failed"), status.InvalidArgument)
 		}
 		output.SetupRequired = len(users) == 0

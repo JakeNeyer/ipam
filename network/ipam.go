@@ -45,7 +45,6 @@ func nextAligned(ip net.IP, prefixLen int) net.IP {
 	for i := 0; i < 4; i++ {
 		v = v<<8 | uint32(ip[i])
 	}
-	// round up to next multiple of blockSize
 	rem := v % blockSize
 	if rem != 0 {
 		v += blockSize - rem
@@ -85,7 +84,6 @@ func NextAvailableCIDRWithAllocations(supernet string, prefixLength int, allocat
 		return "", fmt.Errorf("prefix length %d exceeds maximum", prefixLength)
 	}
 
-	// Collect allocated ranges that lie inside the supernet
 	var ranges []ipRange
 	for _, c := range allocatedCIDRs {
 		if c == "" {
@@ -101,10 +99,8 @@ func NextAvailableCIDRWithAllocations(supernet string, prefixLength int, allocat
 		}
 		ranges = append(ranges, r)
 	}
-	// Sort by first IP
 	sort.Slice(ranges, func(i, j int) bool { return ipLess(ranges[i].first, ranges[j].first) })
 
-	// Build gaps: [supernetFirst, r0.first-1], [r0.last+1, r1.first-1], ...
 	type gap struct{ first, last net.IP }
 	var gaps []gap
 	cur := make(net.IP, len(supernetRange.first))
@@ -113,7 +109,6 @@ func NextAvailableCIDRWithAllocations(supernet string, prefixLength int, allocat
 		if ipLess(cur, r.first) {
 			gaps = append(gaps, gap{first: dupIP(cur), last: prevIP(r.first)})
 		}
-		// move cur past this range
 		cur = nextIP(r.last)
 		if ipLess(supernetRange.last, cur) {
 			cur = nil
@@ -124,16 +119,13 @@ func NextAvailableCIDRWithAllocations(supernet string, prefixLength int, allocat
 		gaps = append(gaps, gap{first: dupIP(cur), last: dupIP(supernetRange.last)})
 	}
 
-	// Subnet size in addresses
 	subnetSize := uint32(1 << (bits - prefixLength))
 
-	// Try each gap: first prefix-aligned address in gap, check if full subnet fits
 	for _, g := range gaps {
 		start := nextAligned(g.first, prefixLength)
 		if ipLess(g.last, start) {
 			continue
 		}
-		// end of subnet starting at start
 		endU32 := ipToU32(start) + subnetSize - 1
 		endIP := u32ToIP(endU32)
 		if ipLess(g.last, endIP) {
@@ -145,7 +137,6 @@ func NextAvailableCIDRWithAllocations(supernet string, prefixLength int, allocat
 		return fmt.Sprintf("%s/%d", start.String(), prefixLength), nil
 	}
 
-	// No gap fits: use next available after last allocation (original behavior from block start or after last alloc)
 	var start net.IP
 	if len(ranges) == 0 {
 		start = supernetRange.first
@@ -221,31 +212,26 @@ func NextAvailableCIDR(supernet string, prefixLength int) (string, error) {
 		return "", fmt.Errorf("prefix length %d exceeds maximum for IP version", prefixLength)
 	}
 
-	// Start from the supernet address and increment until we find an available CIDR
 	current := make(net.IP, len(supernet_net.IP))
 	copy(current, supernet_net.IP)
 
 	for {
 		candidate := &net.IPNet{IP: current, Mask: net.CIDRMask(prefixLength, supernet_bits)}
 
-		// Check if candidate start is within supernet
 		if !supernet_net.Contains(candidate.IP) {
 			break
 		}
 
-		// Calculate the last address in the candidate CIDR block
 		candidate_last := make(net.IP, len(candidate.IP))
 		copy(candidate_last, candidate.IP)
 		for i := 0; i < len(candidate_last); i++ {
 			candidate_last[i] = candidate_last[i] | (candidate.Mask[i] ^ 0xff)
 		}
 
-		// If candidate's last address is within supernet, we found a valid one
 		if supernet_net.Contains(candidate_last) {
 			return candidate.String(), nil
 		}
 
-		// Increment to the next candidate CIDR
 		increment := uint(supernet_bits - prefixLength)
 		for i := len(current) - 1; i >= 0; i-- {
 			current[i] += 1 << increment
@@ -290,7 +276,6 @@ func Overlaps(cidr1 string, cidr2 string) (bool, error) {
 		return false, fmt.Errorf("invalid CIDR2: %w", err)
 	}
 
-	// Two networks overlap if either contains part of the other
 	return net1.Contains(net2.IP) || net2.Contains(net1.IP), nil
 }
 
@@ -306,21 +291,16 @@ func Contains(supernet string, cidr string) (bool, error) {
 		return false, fmt.Errorf("invalid CIDR: %w", err)
 	}
 
-	// Check if supernet contains the start of the CIDR block
 	if !supernet_net.Contains(cidr_net.IP) {
 		return false, nil
 	}
 
-	// Calculate the last address in the CIDR block
-	// For CIDR X.X.X.X/N, the last address is the broadcast address
 	cidr_last := make(net.IP, len(cidr_net.IP))
 	copy(cidr_last, cidr_net.IP)
 
-	// OR the inverted mask to get the last address
 	for i := 0; i < len(cidr_last); i++ {
 		cidr_last[i] = cidr_last[i] | (cidr_net.Mask[i] ^ 0xff)
 	}
 
-	// Check if supernet contains the last address of the CIDR block
 	return supernet_net.Contains(cidr_last), nil
 }

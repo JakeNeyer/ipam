@@ -35,7 +35,6 @@ func OtelRequestResponseLog(next http.Handler) http.Handler {
 		start := time.Now()
 		ctx := r.Context()
 
-		// Request attributes and log
 		path := r.URL.Path
 		method := r.Method
 		reqContentLength := r.ContentLength
@@ -61,7 +60,6 @@ func OtelRequestResponseLog(next http.Handler) http.Handler {
 
 		durationMs := time.Since(start).Milliseconds()
 
-		// Response attributes and log
 		if span := trace.SpanFromContext(ctx); span.IsRecording() {
 			span.SetAttributes(
 				attribute.Int("http.response.status_code", wrap.status),

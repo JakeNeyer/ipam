@@ -440,11 +440,6 @@ func (s *Store) DeleteUser(userID uuid.UUID) error {
 		return fmt.Errorf("user not found")
 	}
 
-	// Mirror DB behavior:
-	// - users row delete
-	// - sessions/api_tokens cascade delete
-	// - signup_invites created_by cascade delete
-	// - signup_invites.used_by_user_id set null
 	delete(s.users, userID)
 	delete(s.usersByEmail, strings.ToLower(strings.TrimSpace(u.Email)))
 

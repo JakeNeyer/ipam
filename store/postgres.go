@@ -84,12 +84,10 @@ func (s *PostgresStore) Close() error {
 // runMigrations runs SQL migrations from the embedded migrations FS using golang-migrate.
 // The migrate postgres driver expects a postgres:// URL (lib/pq format).
 func runMigrations(dsn string) error {
-	// Normalize scheme for migrate's postgres driver (accepts postgres:// or postgresql://)
 	migrateURL := dsn
 	if strings.HasPrefix(dsn, "postgresql://") {
 		migrateURL = "postgres://" + strings.TrimPrefix(dsn, "postgresql://")
 	}
-	// lib/pq defaults to SSL; if the server has no SSL, add sslmode=disable when not set
 	if !strings.Contains(migrateURL, "sslmode=") {
 		if strings.Contains(migrateURL, "?") {
 			migrateURL += "&sslmode=disable"
@@ -196,7 +194,6 @@ func (s *PostgresStore) UpdateEnvironment(id uuid.UUID, env *network.Environment
 }
 
 func (s *PostgresStore) DeleteEnvironment(id uuid.UUID) error {
-	// Delete allocations in blocks that belong to this env, then blocks, then env
 	_, err := s.db.Exec(
 		`DELETE FROM allocations WHERE block_name IN (SELECT name FROM blocks WHERE environment_id = $1)`,
 		id,
@@ -269,7 +266,6 @@ func (s *PostgresStore) ListBlocks() ([]*network.Block, error) {
 }
 
 func (s *PostgresStore) ListBlocksFiltered(name string, environmentID *uuid.UUID, orphanedOnly bool, limit, offset int) ([]*network.Block, int, error) {
-	// Count
 	var countArgs []interface{}
 	countQ := `SELECT COUNT(*) FROM blocks WHERE 1=1`
 	idx := 1
@@ -290,7 +286,6 @@ func (s *PostgresStore) ListBlocksFiltered(name string, environmentID *uuid.UUID
 	if err := s.db.QueryRow(countQ, countArgs...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	// Select
 	selQ := `SELECT id, name, cidr, environment_id, total_ips FROM blocks WHERE 1=1`
 	selArgs := []interface{}{}
 	i := 1
@@ -376,8 +371,6 @@ func (s *PostgresStore) DeleteBlock(id uuid.UUID) error {
 	if n == 0 {
 		return fmt.Errorf("block not found")
 	}
-	// Allocations are keyed by block_name; we don't cascade by block id. Leave orphaned allocations?
-	// In-memory store deletes block only. So we only delete the block row.
 	return nil
 }
 
@@ -589,7 +582,6 @@ func (s *PostgresStore) CreateUser(u *User) error {
 		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
 			return fmt.Errorf("user with email already exists")
 		}
-		// Return a plain error so handlers map to 4xx, not raw driver error (which can become 500)
 		return fmt.Errorf("failed to create user")
 	}
 	return nil

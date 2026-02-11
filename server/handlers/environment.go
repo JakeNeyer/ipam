@@ -196,7 +196,6 @@ func NewSuggestEnvironmentBlockCIDRUseCase(s store.Storer) usecase.Interactor {
 				existingCIDRs = append(existingCIDRs, b.CIDR)
 			}
 		}
-		// Exclude reserved ranges that overlap the supernet (contained in supernet, or reserve contains/overlaps supernet)
 		reserved, err := s.ListReservedBlocks()
 		if err != nil {
 			return status.Wrap(err, status.Internal)
@@ -210,7 +209,6 @@ func NewSuggestEnvironmentBlockCIDRUseCase(s store.Storer) usecase.Interactor {
 			if contained {
 				existingCIDRs = append(existingCIDRs, r.CIDR)
 			} else {
-				// Reserved contains or partially overlaps supernet; no suggestion possible in that range
 				existingCIDRs = append(existingCIDRs, defaultBlockSupernet)
 			}
 		}

@@ -222,7 +222,6 @@ func TestAccReservedBlockResource(t *testing.T) {
 	testAccPreCheck(t)
 	endpoint := os.Getenv("IPAM_ENDPOINT")
 	token := os.Getenv("IPAM_TOKEN")
-	// Reserved blocks require admin role; test may be skipped if token is not admin.
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{

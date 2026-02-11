@@ -23,19 +23,16 @@ func NewServer(s store.Storer) *web.Service {
 		gzip.Middleware,
 	)
 
-	// Setup routes (no auth; only when no users exist).
 	getSetupStatusUC := handlers.NewGetSetupStatusUseCase(s)
 	svc.Get("/api/setup/status", getSetupStatusUC)
 
 	postSetupUC := handlers.NewPostSetupUseCase(s)
 	svc.Post("/api/setup", postSetupUC)
-	svc.Post("/api/setup/status", postSetupUC) // alias so POST to status (e.g. form action) also creates admin
+	svc.Post("/api/setup/status", postSetupUC)
 
-	// Signup invite routes (no auth; validate and register with invite token).
 	svc.Handle("/api/signup/validate", handlers.ValidateSignupInviteHandler(s))
 	svc.Handle("/api/signup/register", handlers.RegisterWithInviteHandler(s))
 
-	// Auth routes (no auth required for login/logout).
 	loginLimiter := auth.NewLoginAttemptLimiter(auth.DefaultLoginMaxAttempts, auth.DefaultLoginWindow)
 	loginUC := handlers.NewLoginUseCase(s, loginLimiter)
 	svc.Post("/api/auth/login", loginUC)
@@ -55,7 +52,6 @@ func NewServer(s store.Storer) *web.Service {
 	deleteTokenUC := handlers.NewDeleteTokenUseCase(s)
 	svc.Delete("/api/auth/me/tokens/{id}", deleteTokenUC)
 
-	// Admin routes (auth + admin role required).
 	svc.Handle("/api/admin/users", handlers.AdminUsersHandler(s))
 	svc.Handle("/api/admin/users/{id}/role", handlers.UpdateUserRoleHandler(s))
 	svc.Handle("/api/admin/users/{id}", handlers.DeleteUserHandler(s))
@@ -71,7 +67,6 @@ func NewServer(s store.Storer) *web.Service {
 	deleteReservedUC := handlers.NewDeleteReservedBlockUseCase(s)
 	svc.Delete("/api/admin/reserved-blocks/{id}", deleteReservedUC)
 
-	// Environment use case handlers.
 	createEnvUC := handlers.NewCreateEnvironmentUseCase(s)
 	svc.Post("/api/environments", createEnvUC)
 
@@ -90,7 +85,6 @@ func NewServer(s store.Storer) *web.Service {
 	deleteEnvUC := handlers.NewDeleteEnvironmentUseCase(s)
 	svc.Delete("/api/environments/{id}", deleteEnvUC)
 
-	// Block use case handlers.
 	createBlockUC := handlers.NewCreateBlockUseCase(s)
 	svc.Post("/api/blocks", createBlockUC)
 
@@ -112,7 +106,6 @@ func NewServer(s store.Storer) *web.Service {
 	suggestBlockCIDRUC := handlers.NewSuggestBlockCIDRUseCase(s)
 	svc.Get("/api/blocks/{id}/suggest-cidr", suggestBlockCIDRUC)
 
-	// Allocation use case handlers.
 	createAllocUC := handlers.NewCreateAllocationUseCase(s)
 	svc.Post("/api/allocations", createAllocUC)
 
@@ -133,7 +126,6 @@ func NewServer(s store.Storer) *web.Service {
 
 	svc.Method("GET", "/api/export/csv", handlers.ExportCSVHandler(s))
 
-	// Swagger UI endpoint at /docs with Wintry-style dark theme.
 	svc.Docs("/docs", swgui.NewWithConfig(swguicfg.Config{
 		AppendHead: swaggerThemeCSS(),
 	}))

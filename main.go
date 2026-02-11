@@ -59,7 +59,6 @@ func ensureInitialAdmin(st store.Storer) {
 func main() {
 	ctx := context.Background()
 
-	// OpenTelemetry: only when ENABLE_OTEL=true
 	if otelEnabled() {
 		shutdown, err := telemetry.Init(ctx)
 		if err != nil {
@@ -89,7 +88,6 @@ func main() {
 	ensureInitialAdmin(st)
 	s := server.NewServer(st)
 
-	// Security: headers first, then body limit, then request logging, then panic recovery
 	handler := middleware.SecurityHeaders(s)
 	handler = middleware.MaxBytes(handler)
 	if otelEnabled() {
@@ -135,7 +133,6 @@ func resolveStaticDir() string {
 			return dir
 		}
 	}
-	// Relative to current binary (e.g. when run from project root)
 	for _, rel := range []string{"web/dist", "dist"} {
 		if staticDirHasIndex(rel) {
 			if abs, err := filepath.Abs(rel); err == nil {

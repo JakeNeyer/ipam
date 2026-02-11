@@ -37,7 +37,6 @@ func Middleware(s store.Storer) func(http.Handler) http.Handler {
 
 			var user *store.User
 
-			// Try session cookie first
 			if cookie, err := r.Cookie(SessionCookieName); err == nil && cookie != nil && cookie.Value != "" {
 				if sess, err := s.GetSession(cookie.Value); err == nil {
 					if u, err := s.GetUser(sess.UserID); err == nil {
@@ -46,7 +45,6 @@ func Middleware(s store.Storer) func(http.Handler) http.Handler {
 				}
 			}
 
-			// If no session, try Bearer token (API key)
 			if user == nil {
 				if bearer := r.Header.Get("Authorization"); strings.HasPrefix(bearer, "Bearer ") {
 					rawToken := strings.TrimSpace(strings.TrimPrefix(bearer, "Bearer "))

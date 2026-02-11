@@ -54,7 +54,6 @@ func NewCreateAllocationUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(errors.New("allocation CIDR must fall within the parent block's CIDR range"), status.InvalidArgument)
 		}
 
-		// Ensure the new allocation's CIDR does not overlap any existing allocation in the same block.
 		allAllocs, err := s.ListAllocations()
 		if err != nil {
 			return status.Wrap(err, status.Internal)
@@ -138,7 +137,6 @@ func NewAutoAllocateUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(errors.New("block not found"), status.NotFound)
 		}
 
-		// Collect existing allocation CIDRs in this block
 		allAllocs, err := s.ListAllocations()
 		if err != nil {
 			return status.Wrap(err, status.Internal)
@@ -150,7 +148,6 @@ func NewAutoAllocateUseCase(s store.Storer) usecase.Interactor {
 			}
 		}
 
-		// Exclude reserved ranges that overlap this block
 		reserved, err := s.ListReservedBlocks()
 		if err != nil {
 			return status.Wrap(err, status.Internal)
@@ -168,13 +165,11 @@ func NewAutoAllocateUseCase(s store.Storer) usecase.Interactor {
 			}
 		}
 
-		// Bin-pack: find next available CIDR
 		cidr, err := network.NextAvailableCIDRWithAllocations(parentBlock.CIDR, input.PrefixLength, allocatedCIDRs)
 		if err != nil {
 			return status.Wrap(fmt.Errorf("no available CIDR with prefix /%d in block %q: %w", input.PrefixLength, input.BlockName, err), status.FailedPrecondition)
 		}
 
-		// Create the allocation with the suggested CIDR
 		id := s.GenerateID()
 		allocation := &network.Allocation{
 			Id:   id,
@@ -269,7 +264,6 @@ func NewUpdateAllocationUseCase(s store.Storer) usecase.Interactor {
 
 		alloc.Name = input.Name
 
-		// Ensure this allocation's CIDR does not overlap any other allocation in the same block (create and update).
 		allAllocs, err := s.ListAllocations()
 		if err != nil {
 			return status.Wrap(err, status.Internal)

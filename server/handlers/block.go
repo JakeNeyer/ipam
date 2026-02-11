@@ -68,7 +68,6 @@ func NewCreateBlockUseCase(s store.Storer) usecase.Interactor {
 			Children: []network.Block{},
 		}
 
-		// Ensure the new block's CIDR does not overlap any existing block in the same environment.
 		existing, err := s.ListBlocksByEnvironment(block.EnvironmentID)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
@@ -89,7 +88,6 @@ func NewCreateBlockUseCase(s store.Storer) usecase.Interactor {
 				)
 			}
 		}
-		// Block must not overlap any reserved (blacklisted) CIDR.
 		if reserved, err := s.OverlapsReservedBlock(block.CIDR); err != nil {
 			return status.Wrap(err, status.Internal)
 		} else if reserved != nil {
@@ -209,7 +207,6 @@ func NewUpdateBlockUseCase(s store.Storer) usecase.Interactor {
 		if input.EnvironmentID != nil {
 			block.EnvironmentID = *input.EnvironmentID
 		}
-		// Ensure this block's CIDR does not overlap any other block in the same environment (create and update).
 		existing, err := s.ListBlocksByEnvironment(block.EnvironmentID)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
@@ -351,7 +348,6 @@ func NewSuggestBlockCIDRUseCase(s store.Storer) usecase.Interactor {
 				allocatedCIDRs = append(allocatedCIDRs, a.Block.CIDR)
 			}
 		}
-		// Exclude reserved ranges that overlap this block (contained in block, or reserve contains/overlaps block)
 		reserved, err := s.ListReservedBlocks()
 		if err != nil {
 			return status.Wrap(err, status.Internal)
@@ -365,7 +361,6 @@ func NewSuggestBlockCIDRUseCase(s store.Storer) usecase.Interactor {
 			if contained {
 				allocatedCIDRs = append(allocatedCIDRs, r.CIDR)
 			} else {
-				// Reserved contains or partially overlaps block; exclude whole block from suggestion
 				allocatedCIDRs = append(allocatedCIDRs, block.CIDR)
 			}
 		}

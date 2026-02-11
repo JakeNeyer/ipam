@@ -198,7 +198,6 @@ func DeleteUserHandler(s store.Storer) http.HandlerFunc {
 			return
 		}
 
-		// Prevent lockout by keeping at least one admin user.
 		if target.Role == store.RoleAdmin {
 			users, err := s.ListUsers()
 			if err != nil {
