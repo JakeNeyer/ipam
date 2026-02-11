@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -26,10 +27,11 @@ type AllocationResource struct {
 }
 
 type AllocationResourceModel struct {
-	Id        types.String `tfsdk:"id"`
-	Name      types.String `tfsdk:"name"`
-	BlockName types.String `tfsdk:"block_name"`
-	Cidr      types.String `tfsdk:"cidr"`
+	Id           types.String `tfsdk:"id"`
+	Name         types.String `tfsdk:"name"`
+	BlockName    types.String `tfsdk:"block_name"`
+	Cidr         types.String `tfsdk:"cidr"`
+	PrefixLength types.Int64  `tfsdk:"prefix_length"`
 }
 
 func (r *AllocationResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -38,7 +40,9 @@ func (r *AllocationResource) Metadata(ctx context.Context, req resource.Metadata
 
 func (r *AllocationResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "IPAM allocation. An allocation is a subnet within a network block (e.g. a VPC or region).",
+		MarkdownDescription: `IPAM allocation. An allocation is a subnet within a network block (e.g. a VPC or region).
+
+Provide either **cidr** (explicit) or **prefix_length** (auto-allocate the next available CIDR in the block using bin-packing).`,
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:            true,
@@ -55,9 +59,15 @@ func (r *AllocationResource) Schema(ctx context.Context, req resource.SchemaRequ
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"cidr": schema.StringAttribute{
-				Required:            true,
-				MarkdownDescription: "CIDR for this allocation (must be within the block).",
-				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				Optional:            true,
+				Computed:            true,
+				MarkdownDescription: "CIDR for this allocation. If omitted, set `prefix_length` to auto-allocate the next available CIDR.",
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace(), stringplanmodifier.UseStateForUnknown()},
+			},
+			"prefix_length": schema.Int64Attribute{
+				Optional:            true,
+				MarkdownDescription: "Desired prefix length (e.g. 24 for /24). When set without `cidr`, the API finds the next available CIDR in the block using bin-packing.",
+				PlanModifiers:       []planmodifier.Int64{int64planmodifier.RequiresReplace()},
 			},
 		},
 	}
@@ -81,7 +91,31 @@ func (r *AllocationResource) Create(ctx context.Context, req resource.CreateRequ
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	out, err := r.api.CreateAllocation(plan.Name.ValueString(), plan.BlockName.ValueString(), plan.Cidr.ValueString())
+
+	name := plan.Name.ValueString()
+	blockName := plan.BlockName.ValueString()
+	hasCidr := !plan.Cidr.IsNull() && !plan.Cidr.IsUnknown()
+	hasPrefix := !plan.PrefixLength.IsNull() && !plan.PrefixLength.IsUnknown()
+
+	if !hasCidr && !hasPrefix {
+		resp.Diagnostics.AddError("Missing required attribute", "Either cidr or prefix_length must be specified.")
+		return
+	}
+	if hasCidr && hasPrefix {
+		resp.Diagnostics.AddError("Conflicting attributes", "Specify either cidr or prefix_length, not both.")
+		return
+	}
+
+	var out *client.AllocationResponse
+	var err error
+
+	if hasPrefix {
+		prefixLength := int(plan.PrefixLength.ValueInt64())
+		out, err = r.api.AutoAllocate(name, blockName, prefixLength)
+	} else {
+		out, err = r.api.CreateAllocation(name, blockName, plan.Cidr.ValueString())
+	}
+
 	if err != nil {
 		resp.Diagnostics.AddError("API error", err.Error())
 		return
@@ -90,7 +124,7 @@ func (r *AllocationResource) Create(ctx context.Context, req resource.CreateRequ
 	plan.Name = types.StringValue(out.Name)
 	plan.BlockName = types.StringValue(out.BlockName)
 	plan.Cidr = types.StringValue(out.CIDR)
-	tflog.Trace(ctx, "created ipam_allocation", map[string]interface{}{"id": out.Id})
+	tflog.Trace(ctx, "created ipam_allocation", map[string]interface{}{"id": out.Id, "cidr": out.CIDR})
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 

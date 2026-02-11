@@ -10,15 +10,6 @@ import (
 	"github.com/swaggest/usecase/status"
 )
 
-// func calculateTotalIPs(cidr string) int {
-// 	_, ipnet, err := net.ParseCIDR(cidr)
-// 	if err != nil {
-// 		return 0
-// 	}
-// 	ones, bits := ipnet.Mask.Size()
-// 	return 1 << uint(bits-ones)
-// }
-
 // CreateEnvironment handler
 func NewCreateEnvironmentUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input createEnvironmentInput, output *environmentOutput) error {

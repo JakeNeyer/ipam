@@ -13,6 +13,7 @@
     { type: 'nav', id: 'dashboard', label: 'Go to Dashboard', keywords: 'dashboard home' },
     { type: 'nav', id: 'environments', label: 'Go to Environments', keywords: 'environments envs' },
     { type: 'nav', id: 'networks', label: 'Go to Networks', keywords: 'networks blocks allocations' },
+    { type: 'nav', id: 'network-advisor', label: 'Go to Network Advisor', keywords: 'network advisor planning architecture cidr' },
     { type: 'nav', id: 'subnet-calculator', label: 'Go to Subnet calculator', keywords: 'subnet calculator cidr divide' },
     { type: 'nav', id: 'docs', label: 'Go to Docs', keywords: 'docs documentation guide' },
     { type: 'create', id: 'create-env', label: 'Create environment', keywords: 'new environment' },

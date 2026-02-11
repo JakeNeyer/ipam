@@ -74,3 +74,7 @@ Use these steps whenever you want to roll out the newest version.
 5. If the deployment fails, roll back to the previous stable release:
    - `fly releases`
    - `fly deploy --image <previous-image-ref>`
+
+## License
+
+Licensed under the MIT License. See [LICENSE](LICENSE) for details.

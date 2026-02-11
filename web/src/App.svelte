@@ -17,6 +17,7 @@
   import Admin from './routes/Admin.svelte'
   import ReservedBlocks from './routes/ReservedBlocks.svelte'
   import SubnetCalculator from './routes/SubnetCalculator.svelte'
+import NetworkAdvisor from './routes/NetworkAdvisor.svelte'
   import Landing from './routes/Landing.svelte'
 
   let route = 'landing'
@@ -69,6 +70,8 @@
       window.location.hash = 'reserved-blocks'
     } else if (path === 'subnet-calculator') {
       window.location.hash = 'subnet-calculator'
+    } else if (path === 'network-advisor') {
+      window.location.hash = 'network-advisor'
     } else {
       window.location.hash = path
     }
@@ -131,6 +134,8 @@
       route = 'reserved-blocks'
     } else if (path === 'subnet-calculator') {
       route = 'subnet-calculator'
+    } else if (path === 'network-advisor') {
+      route = 'network-advisor'
     } else {
       route = 'dashboard'
       routeEnvironmentId = null
@@ -153,6 +158,7 @@
     else if (path === 'admin') go('admin')
     else if (path === 'reserved-blocks') go('reserved-blocks')
     else if (path === 'subnet-calculator') go('subnet-calculator')
+    else if (path === 'network-advisor') go('network-advisor')
   }
 
   function handlePaletteCreate(e) {
@@ -230,7 +236,7 @@
   <div class="app loading" role="presentation">
     <div class="loading-message">Loading…</div>
   </div>
-{:else if route === 'landing' && !$user}
+{:else if route === 'landing' && !$user && $setupRequired === false}
   <Landing />
 {:else if route === 'docs'}
   <Docs currentPage={routeDocsPage} />
@@ -279,6 +285,8 @@
         <ReservedBlocks />
       {:else if route === 'subnet-calculator'}
         <SubnetCalculator />
+      {:else if route === 'network-advisor'}
+        <NetworkAdvisor />
       {:else}
         <Dashboard />
       {/if}
@@ -439,6 +447,16 @@
     background: rgba(220, 38, 38, 0.08);
     border-color: var(--danger, #dc2626);
     color: var(--danger, #dc2626);
+  }
+  :global(.btn-outline-danger) {
+    color: var(--danger, #dc2626);
+    border-color: var(--danger, #dc2626);
+    border-style: dashed;
+    background: transparent;
+  }
+  :global(.btn-outline-danger:hover:not(:disabled)) {
+    background: rgba(220, 38, 38, 0.08);
+    border-style: solid;
   }
   :global(.table-empty-cell) {
     color: var(--text-muted);

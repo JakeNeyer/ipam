@@ -39,13 +39,29 @@
       {#if error}
         <div class="login-error" role="alert">{error}</div>
       {/if}
-      <label class="login-label">
+      <label class="login-label" for="login-email">
         <span>Email</span>
-        <input type="email" bind:value={email} placeholder="admin@localhost" autocomplete="email" disabled={submitting} />
+        <input
+          id="login-email"
+          name="email"
+          type="email"
+          bind:value={email}
+          placeholder="admin@localhost"
+          autocomplete="email"
+          disabled={submitting}
+        />
       </label>
-      <label class="login-label">
+      <label class="login-label" for="login-password">
         <span>Password</span>
-        <input type="password" bind:value={password} placeholder="Password" autocomplete="current-password" disabled={submitting} />
+        <input
+          id="login-password"
+          name="password"
+          type="password"
+          bind:value={password}
+          placeholder="Password"
+          autocomplete="current-password"
+          disabled={submitting}
+        />
       </label>
       <button type="submit" class="btn btn-primary login-submit" disabled={submitting}>
         {submitting ? 'Signing in…' : 'Sign in'}

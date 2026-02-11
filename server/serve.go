@@ -66,6 +66,8 @@ func NewServer(s store.Storer) *web.Service {
 	svc.Get("/api/admin/reserved-blocks", listReservedUC)
 	createReservedUC := handlers.NewCreateReservedBlockUseCase(s)
 	svc.Post("/api/admin/reserved-blocks", createReservedUC)
+	updateReservedUC := handlers.NewUpdateReservedBlockUseCase(s)
+	svc.Put("/api/admin/reserved-blocks/{id}", updateReservedUC)
 	deleteReservedUC := handlers.NewDeleteReservedBlockUseCase(s)
 	svc.Delete("/api/admin/reserved-blocks/{id}", deleteReservedUC)
 
@@ -113,6 +115,9 @@ func NewServer(s store.Storer) *web.Service {
 	// Allocation use case handlers.
 	createAllocUC := handlers.NewCreateAllocationUseCase(s)
 	svc.Post("/api/allocations", createAllocUC)
+
+	autoAllocUC := handlers.NewAutoAllocateUseCase(s)
+	svc.Post("/api/allocations/auto", autoAllocUC)
 
 	listAllocUC := handlers.NewListAllocationsUseCase(s)
 	svc.Get("/api/allocations", listAllocUC)

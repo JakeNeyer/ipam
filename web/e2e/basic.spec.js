@@ -42,4 +42,17 @@ test.describe('basic functionality', () => {
     await page.getByRole('button', { name: 'Admin' }).click()
     await expect(page.locator('text=Admin').or(page.locator('text=Users')).first()).toBeVisible({ timeout: 5000 })
   })
+
+  test('navigate to Network Advisor', async ({ page }) => {
+    await page.goto('/#/')
+    await page.getByRole('button', { name: 'Network Advisor' }).click()
+    await expect(page.locator('text=Network Advisor').first()).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('text=Step-by-step wizard').first()).toBeVisible({ timeout: 5000 })
+  })
+
+  test('user guide has Network Advisor page', async ({ page }) => {
+    await page.goto('/#docs/network-advisor')
+    await expect(page.locator('text=Network Advisor').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.locator('text=step-by-step wizard').first()).toBeVisible({ timeout: 5000 })
+  })
 })

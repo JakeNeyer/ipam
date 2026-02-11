@@ -7,8 +7,8 @@
   import CidrWizard from '../lib/CidrWizard.svelte'
   import DataTable from '../lib/DataTable.svelte'
   import SearchableSelect from '../lib/SearchableSelect.svelte'
-  import { cidrRange } from '../lib/cidr.js'
-  import { listEnvironments, listBlocks, listAllocations, createBlock, createAllocation, updateBlock, deleteBlock, deleteAllocation } from '../lib/api.js'
+  import { cidrRange, parseCidrToInt } from '../lib/cidr.js'
+  import { listEnvironments, listBlocks, listAllocations, createBlock, createAllocation, updateBlock, updateAllocation, deleteBlock, deleteAllocation } from '../lib/api.js'
 
   export let environmentId = null
   export let orphanedOnly = false
@@ -62,6 +62,11 @@
   let allocCidr = ''
   let allocSubmitting = false
   let allocError = ''
+
+  let editingAllocId = null
+  let editAllocName = ''
+  let editAllocSubmitting = false
+  let editAllocError = ''
 
   let deleteBlockId = null
   let deleteBlockName = ''
@@ -240,7 +245,14 @@
         return mult * na.localeCompare(nb, undefined, { sensitivity: 'base' })
       })
     } else if (blockSortBy === 'cidr') {
-      list.sort((a, b) => mult * (a.cidr || '').localeCompare(b.cidr || '', undefined, { sensitivity: 'base' }))
+      list.sort((a, b) => {
+        const pa = parseCidrToInt(a.cidr)
+        const pb = parseCidrToInt(b.cidr)
+        if (!pa && !pb) return mult * (a.cidr || '').localeCompare(b.cidr || '', undefined, { sensitivity: 'base' })
+        if (!pa) return 1
+        if (!pb) return -1
+        return mult * (pa.baseInt - pb.baseInt)
+      })
     } else if (blockSortBy === 'total_ips') {
       list.sort((a, b) => mult * ((a.total_ips ?? 0) - (b.total_ips ?? 0)))
     } else if (blockSortBy === 'used_ips') {
@@ -288,7 +300,14 @@
     } else if (allocSortBy === 'block') {
       list.sort((a, b) => mult * (a.block_name || '').localeCompare(b.block_name || '', undefined, { sensitivity: 'base' }))
     } else if (allocSortBy === 'cidr') {
-      list.sort((a, b) => mult * (a.cidr || '').localeCompare(b.cidr || '', undefined, { sensitivity: 'base' }))
+      list.sort((a, b) => {
+        const pa = parseCidrToInt(a.cidr)
+        const pb = parseCidrToInt(b.cidr)
+        if (!pa && !pb) return mult * (a.cidr || '').localeCompare(b.cidr || '', undefined, { sensitivity: 'base' })
+        if (!pa) return 1
+        if (!pb) return -1
+        return mult * (pa.baseInt - pb.baseInt)
+      })
     }
     return list
   })()
@@ -462,6 +481,44 @@
     }
   }
 
+  function startEditAllocation(alloc) {
+    editingAllocId = alloc.id
+    editAllocName = alloc.name
+    editAllocError = ''
+  }
+
+  function cancelEditAllocation() {
+    editingAllocId = null
+    editAllocName = ''
+    editAllocError = ''
+  }
+
+  async function handleUpdateAllocation() {
+    const name = editAllocName.trim()
+    if (!name) {
+      editAllocError = 'Name is required'
+      errorModalMessage = editAllocError
+      return
+    }
+    const alloc = allocations.find((a) => String(a.id) === String(editingAllocId))
+    if (alloc && (alloc.name || '').trim() === name) {
+      cancelEditAllocation()
+      return
+    }
+    editAllocSubmitting = true
+    editAllocError = ''
+    try {
+      await updateAllocation(editingAllocId, name)
+      cancelEditAllocation()
+      await load()
+    } catch (e) {
+      editAllocError = e.message || 'Failed to update allocation'
+      errorModalMessage = editAllocError
+    } finally {
+      editAllocSubmitting = false
+    }
+  }
+
   function openDeleteBlockConfirm(block) {
     deleteBlockId = block.id
     deleteBlockName = block.name
@@ -527,7 +584,7 @@
   <header class="page-header">
     <div class="page-header-text">
       <h1 class="page-title">Networks</h1>
-      <p class="page-desc">Network blocks define your IP ranges; allocations are subnets within those blocks. Filter by environment, block, or allocation name; filtering by block shows only that block and its allocations, and filtering by allocation shows only matching allocations and their blocks.</p>
+      <p class="page-desc">Network blocks define your IP ranges; allocations are subnets within those blocks.</p>
     </div>
   </header>
 
@@ -892,34 +949,50 @@
               {#each sortedAllocations as alloc}
                 {@const allocRange = cidrRange(alloc.cidr)}
                 <tr>
-                  <td class="name">{alloc.name}</td>
-                  <td>{alloc.block_name}</td>
-                  <td class="cidr">
-                    <code>{alloc.cidr}</code>
-                    {#if allocRange}
-                      <span class="cidr-range">{allocRange.start} – {allocRange.end}</span>
-                    {/if}
-                  </td>
-                  <td class="actions">
-                    <div class="actions-menu-wrap" role="group">
-                      <button type="button" class="menu-trigger" aria-haspopup="true" aria-expanded={openAllocMenuId === alloc.id} on:click|stopPropagation={(e) => {
-                        if (openAllocMenuId === alloc.id) {
-                          openAllocMenuId = null;
-                          allocMenuTriggerEl = null;
-                        } else {
-                          allocMenuTriggerEl = e.currentTarget;
-                          const r = e.currentTarget.getBoundingClientRect();
-                          allocDropdownStyle = { left: r.right, top: r.bottom + 2 };
-                          openAllocMenuId = alloc.id;
-                        }
-                      }} title="Actions"><Icon icon="lucide:ellipsis-vertical" width="1.25em" height="1.25em" /></button>
-                      {#if openAllocMenuId === alloc.id}
-                        <div class="menu-dropdown menu-dropdown-fixed" role="menu" style="position:fixed;left:{allocDropdownStyle.left}px;top:{allocDropdownStyle.top}px;transform:translateX(-100%);z-index:1000">
-                          <button type="button" role="menuitem" class="menu-item-danger" on:click|stopPropagation={() => { openDeleteAllocConfirm(alloc); openAllocMenuId = null }}>Delete</button>
+                  {#if editingAllocId === alloc.id}
+                    <td colspan="3" class="edit-cell">
+                      <form class="inline-edit" on:submit|preventDefault={handleUpdateAllocation}>
+                        <input type="text" bind:value={editAllocName} placeholder="Allocation name" disabled={editAllocSubmitting} />
+                        <div class="inline-actions">
+                          <button type="button" class="btn btn-small" on:click={cancelEditAllocation} disabled={editAllocSubmitting}>Cancel</button>
+                          <button type="submit" class="btn btn-primary btn-small" disabled={editAllocSubmitting}>
+                            {editAllocSubmitting ? 'Saving…' : 'Save'}
+                          </button>
                         </div>
+                      </form>
+                    </td>
+                    <td class="actions"></td>
+                  {:else}
+                    <td class="name">{alloc.name}</td>
+                    <td>{alloc.block_name}</td>
+                    <td class="cidr">
+                      <code>{alloc.cidr}</code>
+                      {#if allocRange}
+                        <span class="cidr-range">{allocRange.start} – {allocRange.end}</span>
                       {/if}
-                    </div>
-                  </td>
+                    </td>
+                    <td class="actions">
+                      <div class="actions-menu-wrap" role="group">
+                        <button type="button" class="menu-trigger" aria-haspopup="true" aria-expanded={openAllocMenuId === alloc.id} on:click|stopPropagation={(e) => {
+                          if (openAllocMenuId === alloc.id) {
+                            openAllocMenuId = null;
+                            allocMenuTriggerEl = null;
+                          } else {
+                            allocMenuTriggerEl = e.currentTarget;
+                            const r = e.currentTarget.getBoundingClientRect();
+                            allocDropdownStyle = { left: r.right, top: r.bottom + 2 };
+                            openAllocMenuId = alloc.id;
+                          }
+                        }} title="Actions"><Icon icon="lucide:ellipsis-vertical" width="1.25em" height="1.25em" /></button>
+                        {#if openAllocMenuId === alloc.id}
+                          <div class="menu-dropdown menu-dropdown-fixed" role="menu" style="position:fixed;left:{allocDropdownStyle.left}px;top:{allocDropdownStyle.top}px;transform:translateX(-100%);z-index:1000">
+                            <button type="button" role="menuitem" on:click|stopPropagation={() => { startEditAllocation(alloc); openAllocMenuId = null }}>Edit</button>
+                            <button type="button" role="menuitem" class="menu-item-danger" on:click|stopPropagation={() => { openDeleteAllocConfirm(alloc); openAllocMenuId = null }}>Delete</button>
+                          </div>
+                        {/if}
+                      </div>
+                    </td>
+                  {/if}
                 </tr>
               {/each}
             {/if}

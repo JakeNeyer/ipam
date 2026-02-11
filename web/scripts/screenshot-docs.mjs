@@ -28,19 +28,8 @@ const captures = [
   { url: `${baseUrl}/#`, name: 'Dashboard', base: 'dashboard' },
   { url: `${baseUrl}/#networks`, name: 'Networks', base: 'networks' },
   { url: `${baseUrl}/#environments`, name: 'Environments', base: 'environments' },
-  { url: `${baseUrl}/#admin`, name: 'Admin', base: 'admin' },
   { url: `${baseUrl}/#reserved-blocks`, name: 'Reserved blocks', base: 'reserved-blocks' },
   { url: `${baseUrl}/#subnet-calculator`, name: 'Subnet calculator', base: 'subnet-calculator' },
-  {
-    url: `${baseUrl}/#`,
-    name: 'Command palette',
-    base: 'command-palette',
-    async beforeScreenshot(page) {
-      await page.keyboard.press(process.platform === 'darwin' ? 'Meta+k' : 'Control+k')
-      await page.waitForSelector('.palette', { state: 'visible', timeout: 5000 })
-      await page.waitForTimeout(500)
-    },
-  },
   {
     url: `${baseUrl}/#networks`,
     name: 'CIDR wizard',
@@ -48,6 +37,22 @@ const captures = [
     async beforeScreenshot(page) {
       await page.click('button:has-text("Create block")')
       await page.waitForSelector('.cidr-wizard', { state: 'visible', timeout: 5000 })
+      await page.waitForTimeout(500)
+    },
+  },
+  {
+    url: `${baseUrl}/#network-advisor`,
+    name: 'Network Advisor',
+    base: 'network-advisor',
+  },
+  // Command palette last — it opens an overlay that persists across SPA hash navigations
+  {
+    url: `${baseUrl}/#`,
+    name: 'Command palette',
+    base: 'command-palette',
+    async beforeScreenshot(page) {
+      await page.keyboard.press(process.platform === 'darwin' ? 'Meta+k' : 'Control+k')
+      await page.waitForSelector('.palette', { state: 'visible', timeout: 5000 })
       await page.waitForTimeout(500)
     },
   },
@@ -157,6 +162,10 @@ async function main() {
     const { url, name, base, beforeScreenshot } = capture
     for (const theme of ['light', 'dark']) {
       try {
+        // Dismiss any open dialogs/overlays from previous captures
+        await page.keyboard.press('Escape')
+        await page.waitForTimeout(200)
+
         await setThemeInStorage(page, theme)
         await page.goto(url, { waitUntil: 'networkidle', timeout: 20000 })
         await waitForApp(page)

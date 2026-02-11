@@ -16,7 +16,7 @@ const MINI_PNG = Buffer.from(
   'base64'
 )
 
-const bases = ['dashboard', 'networks', 'environments', 'admin', 'reserved-blocks', 'subnet-calculator', 'command-palette', 'cidr-wizard']
+const bases = ['dashboard', 'networks', 'environments', 'reserved-blocks', 'subnet-calculator', 'command-palette', 'cidr-wizard', 'network-advisor']
 const themes = ['light', 'dark']
 
 mkdirSync(outDir, { recursive: true })

@@ -1,5 +1,4 @@
 <script>
-  import { createEventDispatcher } from 'svelte'
   import { onMount } from 'svelte'
   import { get } from 'svelte/store'
   import Icon from '@iconify/svelte'
@@ -11,13 +10,14 @@
   const GRAPH_ICON_SIZE = 12
   const GRAPH_ICON_LEFT = 6
 
-  const dispatch = createEventDispatcher()
   const NIL_UUID = '00000000-0000-0000-0000-000000000000'
 
   let loading = true
   let error = ''
   let errorModalMessage = ''
   let exporting = false
+  let exportingDrawio = false
+  const drawioIconDataURIByKey = new Map()
   let environments = []
   let blocks = []
   let allocations = []
@@ -56,6 +56,41 @@
   function isOrphanedBlock(block) {
     const id = block.environment_id
     return id == null || id === '' || String(id).toLowerCase() === NIL_UUID
+  }
+
+  function navigateToHash(hash) {
+    window.location.hash = hash
+    // Ensure route parsing also runs when setting the same hash value.
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+  }
+
+  function goToEnvironmentBlocks(environmentId) {
+    if (!environmentId) return
+    const params = new URLSearchParams()
+    params.set('environment', String(environmentId))
+    navigateToHash('networks?' + params.toString())
+  }
+
+  function goToOrphanedBlocks() {
+    navigateToHash('networks?orphaned=1')
+  }
+
+  function goToBlock(blockName) {
+    if (!blockName) return
+    const params = new URLSearchParams()
+    params.set('block', String(blockName))
+    navigateToHash('networks?' + params.toString())
+  }
+
+  function goToAllocation(allocationName) {
+    if (!allocationName) return
+    const params = new URLSearchParams()
+    params.set('allocation', String(allocationName))
+    navigateToHash('networks?' + params.toString())
+  }
+
+  function goToReservedBlocks() {
+    navigateToHash('reserved-blocks')
   }
 
   const GRAPH = {
@@ -241,6 +276,228 @@
     }
   }
 
+  function xmlEscape(text) {
+    return String(text ?? '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&apos;')
+      .replaceAll('\n', '&#xa;')
+  }
+
+  function drawioIconSVG(iconKey, strokeColor = '#ffffff') {
+    if (iconKey === 'layers') {
+      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="${strokeColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12.83 2.18 8 3.56a1 1 0 0 1 0 1.83l-8 3.56a2 2 0 0 1-1.66 0l-8-3.56a1 1 0 0 1 0-1.83l8-3.56a2 2 0 0 1 1.66 0Z"/><path d="m2 12 9.17 4.08a2 2 0 0 0 1.66 0L22 12"/><path d="m2 17 9.17 4.08a2 2 0 0 0 1.66 0L22 17"/></svg>`
+    }
+    if (iconKey === 'network') {
+      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="${strokeColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-2a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2"/><path d="M12 12V8"/></svg>`
+    }
+    if (iconKey === 'dashboard') {
+      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="${strokeColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>`
+    }
+    if (iconKey === 'ban') {
+      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="${strokeColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></svg>`
+    }
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="${strokeColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>`
+  }
+
+  function getDrawioIconDataURI(iconKey) {
+    const key = `${iconKey}:#ffffff`
+    if (!drawioIconDataURIByKey.has(key)) {
+      const svg = drawioIconSVG(iconKey, '#ffffff')
+      drawioIconDataURIByKey.set(key, `data:image/svg+xml,${encodeURIComponent(svg)}`)
+    }
+    return drawioIconDataURIByKey.get(key)
+  }
+
+  function drawioVertexStyle(kind, id) {
+    const iconKey =
+      kind === 'env'
+        ? (id === 'reserved' ? 'ban' : 'layers')
+        : kind === 'block'
+          ? (id === 'reserved' ? 'ban' : 'network')
+          : 'dashboard'
+    const withLogo = `shape=label;image=${getDrawioIconDataURI(iconKey)};imageWidth=22;imageHeight=22;imageAlign=left;imageVerticalAlign=middle;spacingLeft=34;labelPosition=center;verticalLabelPosition=middle;`
+    if (kind === 'env') {
+      if (id === 'orphaned') {
+        return `${withLogo}rounded=0;whiteSpace=wrap;html=1;fillColor=#cfcfcf;strokeColor=#b7b7b7;fontColor=#ffffff;fontStyle=1;align=left;verticalAlign=middle;shadow=0;spacing=8;spacingTop=8;spacingBottom=8;fontSize=16;`
+      }
+      return `${withLogo}rounded=0;whiteSpace=wrap;html=1;fillColor=#de8f3a;strokeColor=#de8f3a;fontColor=#ffffff;fontStyle=1;align=left;verticalAlign=middle;shadow=0;spacing=8;spacingTop=8;spacingBottom=8;fontSize=16;`
+    }
+    if (kind === 'block') {
+      if (id === 'reserved') {
+        return `${withLogo}rounded=0;whiteSpace=wrap;html=1;fillColor=#de8f3a;strokeColor=#de8f3a;fontColor=#ffffff;fontStyle=1;align=left;verticalAlign=middle;shadow=0;spacing=8;spacingTop=8;spacingBottom=8;fontSize=15;`
+      }
+      return `${withLogo}rounded=0;whiteSpace=wrap;html=1;fillColor=#5f97d3;strokeColor=#5f97d3;fontColor=#ffffff;fontStyle=1;align=left;verticalAlign=middle;shadow=0;spacing=8;spacingTop=8;spacingBottom=8;fontSize=15;`
+    }
+    return `${withLogo}rounded=0;whiteSpace=wrap;html=1;fillColor=#6ca2dc;strokeColor=#6ca2dc;fontColor=#ffffff;fontStyle=1;align=left;verticalAlign=middle;shadow=0;spacing=8;spacingTop=8;spacingBottom=8;fontSize=14;`
+  }
+
+  function drawioEdgeStyle(edgeType, exitX = 0.5, entryX = 0.5) {
+    const base = edgeType === 'orphaned'
+      ? '#8f8f8f'
+      : edgeType === 'reserved'
+        ? '#de8f3a'
+        : '#5f97d3'
+    return `edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=16;html=1;strokeColor=${base};strokeWidth=2;endArrow=none;exitX=${exitX};exitY=1;entryX=${entryX};entryY=0;`
+  }
+
+  function drawioLabel(name, cidr = '') {
+    const n = String(name || '').trim() || '—'
+    const c = String(cidr || '').trim()
+    if (!c) return `<b>${n}</b>`
+    return `<b>${n}</b><br/><span style="font-size:12px;opacity:0.92;">${c}</span>`
+  }
+
+  function buildDrawioXml() {
+    const xPad = 180
+    const yPad = 120
+    const vertexWidth = 320
+    const vertexHeight = 96
+    const envGap = 240
+    const blockGap = 140
+    const allocGap = 120
+    const levelGap = 220
+    const envY = yPad
+    const blockY = envY + vertexHeight + levelGap
+    const allocY = blockY + vertexHeight + levelGap
+    const cells = [
+      '<mxCell id="0"/>',
+      '<mxCell id="1" parent="0"/>',
+    ]
+
+    const envs = [...environments].sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+    const orphanedBlocks = blocks.filter(isOrphanedBlock).sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+    const envRows = envs.map((e) => ({ id: String(e.id), name: e.name || String(e.id), kind: 'env' }))
+    if (orphanedBlocks.length > 0) envRows.push({ id: 'orphaned', name: 'Orphaned', kind: 'env' })
+    if (reservedBlocks.length > 0) envRows.push({ id: 'reserved', name: 'Reserved', kind: 'env' })
+
+    const allocsByBlockName = new Map()
+    for (const a of allocations) {
+      const key = (a.block_name || '').trim().toLowerCase()
+      if (!allocsByBlockName.has(key)) allocsByBlockName.set(key, [])
+      allocsByBlockName.get(key).push(a)
+    }
+    for (const list of allocsByBlockName.values()) {
+      list.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+    }
+
+    const envTrees = envRows.map((env) => {
+      let envBlocks = []
+      if (env.id === 'orphaned') {
+        envBlocks = orphanedBlocks.map((b) => ({ id: String(b.id), name: b.name, cidr: b.cidr, envID: 'orphaned' }))
+      } else if (env.id === 'reserved') {
+        envBlocks = (reservedBlocks || [])
+          .map((r) => ({ id: String(r.id), name: (r.name && String(r.name).trim()) || 'Reserved', cidr: r.cidr || '', envID: 'reserved' }))
+          .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+      } else {
+        envBlocks = blocks
+          .filter((b) => envIdsMatch(b.environment_id, env.id))
+          .map((b) => ({ id: String(b.id), name: b.name, cidr: b.cidr, envID: env.id }))
+          .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+      }
+      const blockTrees = envBlocks.map((b) => {
+        const allocs = env.id === 'reserved'
+          ? []
+          : (allocsByBlockName.get((b.name || '').trim().toLowerCase()) || [])
+              .map((a) => ({ id: String(a.id), name: a.name, cidr: a.cidr, blockID: b.id }))
+        const allocCount = allocs.length
+        const allocSpan = allocCount > 0 ? allocCount * vertexWidth + (allocCount - 1) * allocGap : 0
+        const blockWidth = Math.max(vertexWidth, allocSpan)
+        return { ...b, allocs, blockWidth }
+      })
+      const totalBlockWidth = blockTrees.reduce((sum, b) => sum + b.blockWidth, 0)
+      const spanWidth =
+        blockTrees.length > 0
+          ? Math.max(vertexWidth, totalBlockWidth + (blockTrees.length - 1) * blockGap)
+          : vertexWidth
+      return { ...env, blocks: blockTrees, spanWidth }
+    })
+
+    const totalSpan = envTrees.reduce((sum, e) => sum + e.spanWidth, 0)
+    const contentWidth = totalSpan + Math.max(0, envTrees.length - 1) * envGap
+    const width = Math.max(1900, contentWidth + xPad * 2)
+    const height = Math.max(1200, allocY + vertexHeight + yPad)
+    cells.push(
+      `<mxCell id="bg" value="" style="shape=rectangle;whiteSpace=wrap;html=0;fillColor=#e6e6e6;strokeColor=none;" vertex="1" parent="1" connectable="0"><mxGeometry x="0" y="0" width="${width}" height="${height}" as="geometry"/></mxCell>`,
+    )
+
+    let cursorX = xPad
+    for (const env of envTrees) {
+      const envCenterX = cursorX + env.spanWidth / 2
+      const envNodeID = `env-${env.id}`
+      cells.push(
+        `<mxCell id="${xmlEscape(envNodeID)}" value="${xmlEscape(drawioLabel(env.name))}" style="${drawioVertexStyle('env', env.id)}" vertex="1" parent="1"><mxGeometry x="${Math.round(envCenterX - vertexWidth / 2)}" y="${envY}" width="${vertexWidth}" height="${vertexHeight}" as="geometry"/></mxCell>`,
+      )
+
+      let blockCursorX = cursorX
+      for (let bi = 0; bi < env.blocks.length; bi += 1) {
+        const block = env.blocks[bi]
+        const blockCenterX = blockCursorX + block.blockWidth / 2
+        const blockNodeID = `block-${block.id}`
+        cells.push(
+          `<mxCell id="${xmlEscape(blockNodeID)}" value="${xmlEscape(drawioLabel(block.name, block.cidr))}" style="${drawioVertexStyle('block', block.envID)}" vertex="1" parent="1"><mxGeometry x="${Math.round(blockCenterX - vertexWidth / 2)}" y="${blockY}" width="${vertexWidth}" height="${vertexHeight}" as="geometry"/></mxCell>`,
+        )
+
+        const envExitX = env.blocks.length <= 1 ? 0.5 : (bi + 1) / (env.blocks.length + 1)
+        cells.push(
+          `<mxCell id="${xmlEscape(`edge-env-${env.id}-${block.id}`)}" style="${drawioEdgeStyle(env.id === 'orphaned' ? 'orphaned' : env.id === 'reserved' ? 'reserved' : null, envExitX, 0.5)}" edge="1" parent="1" source="${xmlEscape(envNodeID)}" target="${xmlEscape(blockNodeID)}"><mxGeometry relative="1" as="geometry"/></mxCell>`,
+        )
+
+        if (block.allocs.length > 0) {
+          let allocCursorX = blockCursorX
+          for (let ai = 0; ai < block.allocs.length; ai += 1) {
+            const alloc = block.allocs[ai]
+            const allocCenterX = allocCursorX + vertexWidth / 2
+            const allocNodeID = `alloc-${alloc.id}`
+            cells.push(
+              `<mxCell id="${xmlEscape(allocNodeID)}" value="${xmlEscape(drawioLabel(alloc.name, alloc.cidr))}" style="${drawioVertexStyle('alloc', block.envID)}" vertex="1" parent="1"><mxGeometry x="${Math.round(allocCenterX - vertexWidth / 2)}" y="${allocY}" width="${vertexWidth}" height="${vertexHeight}" as="geometry"/></mxCell>`,
+            )
+            const blockExitX = block.allocs.length <= 1 ? 0.5 : (ai + 1) / (block.allocs.length + 1)
+            cells.push(
+              `<mxCell id="${xmlEscape(`edge-block-${block.id}-${alloc.id}`)}" style="${drawioEdgeStyle(block.envID === 'orphaned' ? 'orphaned' : block.envID === 'reserved' ? 'reserved' : null, blockExitX, 0.5)}" edge="1" parent="1" source="${xmlEscape(blockNodeID)}" target="${xmlEscape(allocNodeID)}"><mxGeometry relative="1" as="geometry"/></mxCell>`,
+            )
+            allocCursorX += vertexWidth + allocGap
+          }
+        }
+
+        blockCursorX += block.blockWidth + blockGap
+      }
+      cursorX += env.spanWidth + envGap
+    }
+
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="${new Date().toISOString()}" agent="ipam-dashboard" version="26.0.0" type="device">
+  <diagram id="ipam-resource-graph" name="IPAM Resource Graph">
+    <mxGraphModel dx="${width}" dy="${height}" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="${width}" pageHeight="${height}" background="#e6e6e6" math="0" shadow="0">
+      <root>
+        ${cells.join('\n        ')}
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>`
+  }
+
+  async function doExportDrawio() {
+    exportingDrawio = true
+    errorModalMessage = ''
+    try {
+      const xml = buildDrawioXml()
+      const blob = new Blob([xml], { type: 'application/xml' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'ipam-resource-graph.drawio'
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      errorModalMessage = e.message || 'Draw.io export failed'
+    } finally {
+      exportingDrawio = false
+    }
+  }
+
   onMount(async () => {
     loading = true
     error = ''
@@ -273,7 +530,7 @@
   <header class="page-header">
     <h1 class="page-title">Dashboard</h1>
     <button class="btn btn-primary" type="button" disabled={exporting} on:click={doExportCSV}>
-      {exporting ? 'Exporting…' : 'Export CSV'}
+        {exporting ? 'Exporting…' : 'Export CSV'}
     </button>
   </header>
 
@@ -368,7 +625,7 @@
                   <td class="name">{env.name}</td>
                   <td class="id"><code>{env.id}</code></td>
                   <td class="action">
-                    <button type="button" class="btn-link" on:click={() => dispatch('envBlocks', env.id)}>
+                    <button type="button" class="btn-link" on:click={() => goToEnvironmentBlocks(env.id)}>
                       View blocks →
                     </button>
                   </td>
@@ -380,13 +637,30 @@
       </section>
     {:else}
       <section class="empty-hint">
-        <p>No environments yet. Create one from the <a href="#environments">Environments</a> page to get started.</p>
+        <p>No environments yet. Start with the <a href="#network-advisor">Network Advisor</a> to generate a plan and create resources, or create one from the <a href="#environments">Environments</a> page.</p>
       </section>
     {/if}
 
     {#if environments.length > 0 || blocks.length > 0 || allocations.length > 0 || reservedBlocks.length > 0}
       <section class="graph-section">
-        <h2 class="section-title">Resource graph</h2>
+        <div class="section-header">
+          <h2 class="section-title">Resource graph</h2>
+          <button
+            class="drawio-export-btn"
+            type="button"
+            disabled={exportingDrawio}
+            on:click={doExportDrawio}
+            aria-label="Export resource graph to draw.io"
+            title="Export to draw.io"
+          >
+            <span class="drawio-logo-mark" aria-hidden="true">
+              <span class="drawio-node drawio-node-center"></span>
+              <span class="drawio-node drawio-node-left"></span>
+              <span class="drawio-node drawio-node-right"></span>
+            </span>
+            <span class="drawio-wordmark" aria-hidden="true">{exportingDrawio ? 'exporting…' : 'draw.io'}</span>
+          </button>
+        </div>
         <div class="graph-wrap">
           <svg
             class="resource-graph"
@@ -415,8 +689,8 @@
                 tabindex="0"
                 on:mouseenter={() => (graphHovered = { type: 'env', id: node.id })}
                 on:mouseleave={() => (graphHovered = null)}
-                on:click={() => { if (node.id === 'orphaned') dispatch('viewOrphaned'); else if (node.id === 'reserved') window.location.hash = 'reserved-blocks'; else dispatch('envBlocks', node.id) }}
-                on:keydown={(e) => e.key === 'Enter' && (node.id === 'orphaned' ? dispatch('viewOrphaned') : node.id === 'reserved' ? (window.location.hash = 'reserved-blocks') : dispatch('envBlocks', node.id))}
+                on:click={() => { if (node.id === 'orphaned') goToOrphanedBlocks(); else if (node.id === 'reserved') goToReservedBlocks(); else goToEnvironmentBlocks(node.id) }}
+                on:keydown={(e) => e.key === 'Enter' && (node.id === 'orphaned' ? goToOrphanedBlocks() : node.id === 'reserved' ? goToReservedBlocks() : goToEnvironmentBlocks(node.id))}
               >
                 <rect
                   class="graph-node graph-node-env"
@@ -446,8 +720,8 @@
                 tabindex="0"
                 on:mouseenter={() => (graphHovered = { type: 'block', id: node.id })}
                 on:mouseleave={() => (graphHovered = null)}
-                on:click={() => node.environmentId === 'reserved' ? (window.location.hash = 'reserved-blocks') : dispatch('viewBlock', node.name)}
-                on:keydown={(e) => e.key === 'Enter' && (node.environmentId === 'reserved' ? (window.location.hash = 'reserved-blocks') : dispatch('viewBlock', node.name))}
+                on:click={() => node.environmentId === 'reserved' ? goToReservedBlocks() : goToBlock(node.name)}
+                on:keydown={(e) => e.key === 'Enter' && (node.environmentId === 'reserved' ? goToReservedBlocks() : goToBlock(node.name))}
               >
                 <rect
                   class="graph-node graph-node-block"
@@ -481,8 +755,8 @@
                 tabindex="0"
                 on:mouseenter={() => (graphHovered = { type: 'alloc', id: node.id })}
                 on:mouseleave={() => (graphHovered = null)}
-                on:click={() => dispatch('viewAllocation', node.name)}
-                on:keydown={(e) => e.key === 'Enter' && dispatch('viewAllocation', node.name)}
+                on:click={() => goToAllocation(node.name)}
+                on:keydown={(e) => e.key === 'Enter' && goToAllocation(node.name)}
               >
                 <rect
                   class="graph-node graph-node-alloc"
@@ -525,6 +799,88 @@
     color: var(--text-muted);
     font-size: 0.9rem;
     padding: 2.5rem 0;
+  }
+  .section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.6rem;
+  }
+  .drawio-export-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    border: 1px solid rgba(222, 143, 58, 0.25);
+    background: rgba(222, 143, 58, 0.08);
+    color: rgba(222, 143, 58, 0.82);
+    border-radius: 6px;
+    padding: 0.3rem 0.55rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+  }
+  .drawio-export-btn:hover:not(:disabled) {
+    background: rgba(222, 143, 58, 0.14);
+    border-color: rgba(222, 143, 58, 0.4);
+    color: rgba(222, 143, 58, 0.95);
+  }
+  .drawio-export-btn:disabled {
+    opacity: 0.7;
+    cursor: default;
+  }
+  .drawio-logo-mark {
+    position: relative;
+    width: 0.95rem;
+    height: 0.8rem;
+    display: inline-block;
+  }
+  .drawio-logo-mark::before,
+  .drawio-logo-mark::after {
+    content: '';
+    position: absolute;
+    height: 1px;
+    background: currentColor;
+    opacity: 0.8;
+  }
+  .drawio-logo-mark::before {
+    left: 0.2rem;
+    right: 0.2rem;
+    top: 0.23rem;
+  }
+  .drawio-logo-mark::after {
+    left: 0.47rem;
+    width: 1px;
+    top: 0.24rem;
+    bottom: 0.12rem;
+    height: auto;
+    background: currentColor;
+  }
+  .drawio-node {
+    position: absolute;
+    width: 0.26rem;
+    height: 0.26rem;
+    border-radius: 3px;
+    background: currentColor;
+  }
+  .drawio-node-center {
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+  .drawio-node-left {
+    bottom: 0;
+    left: 0.12rem;
+  }
+  .drawio-node-right {
+    bottom: 0;
+    right: 0.12rem;
+  }
+  .drawio-wordmark {
+    letter-spacing: 0.01em;
+    text-transform: lowercase;
   }
   .stats-section {
     margin-bottom: 2rem;

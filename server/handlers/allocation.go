@@ -110,6 +110,98 @@ func NewCreateAllocationUseCase(s store.Storer) usecase.Interactor {
 	return u
 }
 
+// AutoAllocate handler: find the next available CIDR in a block via bin-packing and create the allocation.
+func NewAutoAllocateUseCase(s store.Storer) usecase.Interactor {
+	u := usecase.NewInteractor(func(ctx context.Context, input autoAllocateInput, output *allocationOutput) error {
+		if input.Name == "" || input.BlockName == "" {
+			return status.Wrap(errors.New("name and block_name are required"), status.InvalidArgument)
+		}
+		if input.PrefixLength < 1 || input.PrefixLength > 32 {
+			return status.Wrap(errors.New("prefix_length must be between 1 and 32"), status.InvalidArgument)
+		}
+
+		blocks, err := s.ListBlocks()
+		if err != nil {
+			return status.Wrap(err, status.Internal)
+		}
+		if len(blocks) == 0 {
+			return status.Wrap(errors.New("no network blocks exist; create a block first"), status.FailedPrecondition)
+		}
+		var parentBlock *network.Block
+		for _, b := range blocks {
+			if b.Name == input.BlockName {
+				parentBlock = b
+				break
+			}
+		}
+		if parentBlock == nil {
+			return status.Wrap(errors.New("block not found"), status.NotFound)
+		}
+
+		// Collect existing allocation CIDRs in this block
+		allAllocs, err := s.ListAllocations()
+		if err != nil {
+			return status.Wrap(err, status.Internal)
+		}
+		var allocatedCIDRs []string
+		for _, a := range allAllocs {
+			if allocationBlockNamesMatch(a.Block.Name, input.BlockName) {
+				allocatedCIDRs = append(allocatedCIDRs, a.Block.CIDR)
+			}
+		}
+
+		// Exclude reserved ranges that overlap this block
+		reserved, err := s.ListReservedBlocks()
+		if err != nil {
+			return status.Wrap(err, status.Internal)
+		}
+		for _, r := range reserved {
+			overlap, _ := network.Overlaps(parentBlock.CIDR, r.CIDR)
+			if !overlap {
+				continue
+			}
+			contained, _ := network.Contains(parentBlock.CIDR, r.CIDR)
+			if contained {
+				allocatedCIDRs = append(allocatedCIDRs, r.CIDR)
+			} else {
+				allocatedCIDRs = append(allocatedCIDRs, parentBlock.CIDR)
+			}
+		}
+
+		// Bin-pack: find next available CIDR
+		cidr, err := network.NextAvailableCIDRWithAllocations(parentBlock.CIDR, input.PrefixLength, allocatedCIDRs)
+		if err != nil {
+			return status.Wrap(fmt.Errorf("no available CIDR with prefix /%d in block %q: %w", input.PrefixLength, input.BlockName, err), status.FailedPrecondition)
+		}
+
+		// Create the allocation with the suggested CIDR
+		id := s.GenerateID()
+		allocation := &network.Allocation{
+			Id:   id,
+			Name: input.Name,
+			Block: network.Block{
+				Name: input.BlockName,
+				CIDR: cidr,
+			},
+		}
+
+		if err := s.CreateAllocation(id, allocation); err != nil {
+			return status.Wrap(err, status.Internal)
+		}
+
+		output.Id = id
+		output.Name = allocation.Name
+		output.BlockName = allocation.Block.Name
+		output.CIDR = allocation.Block.CIDR
+		return nil
+	})
+
+	u.SetTitle("Auto-allocate")
+	u.SetDescription("Finds the next available CIDR in a block using bin-packing and creates an allocation")
+	u.SetExpectedErrors(status.InvalidArgument, status.FailedPrecondition, status.NotFound, status.Internal)
+	return u
+}
+
 // ListAllocations handler
 func NewListAllocationsUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input listAllocationsInput, output *allocationListOutput) error {

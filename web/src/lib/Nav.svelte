@@ -32,6 +32,7 @@
     { id: 'dashboard', label: 'Dashboard', icon: 'lucide:layout-dashboard' },
     { id: 'environments', label: 'Environments', icon: 'lucide:layers' },
     { id: 'networks', label: 'Networks', icon: 'lucide:network' },
+    { id: 'network-advisor', label: 'Network Advisor', icon: 'lucide:sparkles' },
     { id: 'subnet-calculator', label: 'Subnet calculator', icon: 'lucide:calculator' },
   ]
 

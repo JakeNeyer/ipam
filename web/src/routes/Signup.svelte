@@ -75,30 +75,70 @@
     <h1 class="signup-title">Create your account</h1>
     <p class="signup-subtitle">You’ve been invited to join. Enter your details below.</p>
 
-    {#if validating}
-      <p class="signup-muted">Checking invite link…</p>
-    {:else if !valid}
+    {#if !token?.trim()}
+      <div class="signup-error" role="alert">Invalid signup link. No token provided.</div>
+      <a href="#login" class="signup-link">Sign in</a>
+    {:else if !valid && !validating}
       <div class="signup-error" role="alert">{error}</div>
       <a href="#login" class="signup-link">Sign in</a>
     {:else}
-      <form class="signup-form" on:submit={handleSubmit}>
+      <!-- Form structure per Chromium: username + new-password; action/method help detection -->
+      <form
+        class="signup-form"
+        action="#"
+        method="post"
+        on:submit={handleSubmit}
+        class:signup-form-loading={validating}
+      >
+        {#if validating}
+          <p class="signup-muted">Checking invite link…</p>
+        {/if}
         {#if error}
           <div class="signup-error" role="alert">{error}</div>
         {/if}
-        <label class="signup-label">
+        <label class="signup-label" for="signup-email">
           <span>Email</span>
-          <input type="email" bind:value={email} placeholder="you@example.com" autocomplete="email" disabled={submitting} />
+          <input
+            id="signup-email"
+            name="username"
+            type="email"
+            bind:value={email}
+            placeholder="you@example.com"
+            autocomplete="username"
+            required
+            disabled={submitting || validating}
+          />
         </label>
-        <label class="signup-label">
+        <label class="signup-label" for="signup-password">
           <span>Password</span>
-          <input type="password" bind:value={password} placeholder="At least 8 characters" autocomplete="new-password" disabled={submitting} />
+          <input
+            id="signup-password"
+            name="password"
+            type="password"
+            bind:value={password}
+            placeholder="At least 8 characters"
+            autocomplete="new-password"
+            required
+            minlength="8"
+            disabled={submitting || validating}
+          />
         </label>
-        <label class="signup-label">
+        <label class="signup-label" for="signup-confirm-password">
           <span>Confirm password</span>
-          <input type="password" bind:value={confirmPassword} placeholder="Confirm password" autocomplete="new-password" disabled={submitting} />
+          <input
+            id="signup-confirm-password"
+            name="confirm-password"
+            type="password"
+            bind:value={confirmPassword}
+            placeholder="Confirm password"
+            autocomplete="new-password"
+            required
+            minlength="8"
+            disabled={submitting || validating}
+          />
         </label>
-        <button type="submit" class="btn btn-primary signup-submit" disabled={submitting}>
-          {submitting ? 'Creating account…' : 'Create account'}
+        <button type="submit" class="btn btn-primary signup-submit" disabled={submitting || validating}>
+          {submitting ? 'Creating account…' : validating ? 'Please wait…' : 'Create account'}
         </button>
       </form>
     {/if}
@@ -145,6 +185,9 @@
     display: flex;
     flex-direction: column;
     gap: 1rem;
+  }
+  .signup-form.signup-form-loading .signup-label input {
+    opacity: 0.7;
   }
   .signup-error {
     padding: 0.5rem 0.75rem;

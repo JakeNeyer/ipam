@@ -18,6 +18,11 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+func otelEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("ENABLE_OTEL")))
+	return v == "true" || v == "1"
+}
+
 // ensureInitialAdmin creates the first admin user when INITIAL_ADMIN_EMAIL and
 // INITIAL_ADMIN_PASSWORD are set and no users exist (e.g. for Fly.io deploy without setup UI).
 func ensureInitialAdmin(st store.Storer) {
@@ -54,13 +59,16 @@ func ensureInitialAdmin(st store.Storer) {
 func main() {
 	ctx := context.Background()
 
-	// OpenTelemetry: stdout traces for request spans
-	shutdown, err := telemetry.Init(ctx)
-	if err != nil {
-		logger.Error("telemetry init failed", logger.ErrAttr(err))
-		os.Exit(1)
+	// OpenTelemetry: only when ENABLE_OTEL=true
+	if otelEnabled() {
+		shutdown, err := telemetry.Init(ctx)
+		if err != nil {
+			logger.Error("telemetry init failed", logger.ErrAttr(err))
+			os.Exit(1)
+		}
+		defer telemetry.Shutdown(ctx, shutdown)
+		logger.Info("opentelemetry enabled (stdout traces)")
 	}
-	defer telemetry.Shutdown(ctx, shutdown)
 
 	var st store.Storer
 	if dsn := os.Getenv("DATABASE_URL"); dsn != "" {
@@ -81,11 +89,15 @@ func main() {
 	ensureInitialAdmin(st)
 	s := server.NewServer(st)
 
-	// Security: headers first, then body limit, then panic recovery, OpenTelemetry
+	// Security: headers first, then body limit, then request logging, then panic recovery
 	handler := middleware.SecurityHeaders(s)
 	handler = middleware.MaxBytes(handler)
-	handler = middleware.OtelRequestResponseLog(handler)
-	handler = otelhttp.NewHandler(handler, "ipam")
+	if otelEnabled() {
+		handler = middleware.OtelRequestResponseLog(handler)
+		handler = otelhttp.NewHandler(handler, "ipam")
+	} else {
+		handler = middleware.RequestLog(handler)
+	}
 	handler = middleware.Recover(handler)
 
 	staticDir := resolveStaticDir()

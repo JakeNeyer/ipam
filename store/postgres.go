@@ -532,6 +532,21 @@ func (s *PostgresStore) GetReservedBlock(id uuid.UUID) (*ReservedBlock, error) {
 	return &r, nil
 }
 
+func (s *PostgresStore) UpdateReservedBlock(id uuid.UUID, r *ReservedBlock) error {
+	res, err := s.db.Exec(
+		`UPDATE reserved_blocks SET name = $1, cidr = $2, reason = $3 WHERE id = $4`,
+		strings.TrimSpace(r.Name), r.CIDR, r.Reason, id,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("reserved block not found")
+	}
+	return nil
+}
+
 func (s *PostgresStore) DeleteReservedBlock(id uuid.UUID) error {
 	res, err := s.db.Exec(`DELETE FROM reserved_blocks WHERE id = $1`, id)
 	if err != nil {

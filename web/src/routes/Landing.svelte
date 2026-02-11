@@ -95,7 +95,7 @@
 
   <section id="features" class="section features">
     <h2 class="section-title">Core features</h2>
-    <p class="section-desc">Environments, blocks, allocations, reserved blocks, a CIDR wizard, and a subnet calculator.</p>
+    <p class="section-desc">Environments, blocks, allocations, reserved blocks, a CIDR wizard, subnet calculator, network advisor, and diagram export.</p>
     <div class="features-grid">
       <div class="feature-card">
         <div class="feature-icon-wrap">
@@ -161,6 +161,30 @@
         <h3 class="feature-title">Reserved blocks</h3>
         <p class="feature-desc">Wall off address ranges from being used.</p>
       </div>
+      <div class="feature-card">
+        <div class="feature-icon-wrap">
+          <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 12h3l2-4 4 8 2-4h7" />
+            <circle cx="5" cy="12" r="2" />
+            <circle cx="12" cy="16" r="2" />
+            <circle cx="19" cy="12" r="2" />
+          </svg>
+        </div>
+        <h3 class="feature-title">Network Advisor</h3>
+        <p class="feature-desc">Plan and optimize IP allocation with a step-by-step wizard.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon-wrap">
+          <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="7" height="7" rx="1" />
+            <rect x="14" y="3" width="7" height="7" rx="1" />
+            <rect x="8.5" y="14" width="7" height="7" rx="1" />
+            <path d="M10 7h4M17.5 10v4M6.5 10v4M10 17h4" />
+          </svg>
+        </div>
+        <h3 class="feature-title">Network Diagram Export</h3>
+        <p class="feature-desc">Generate draw.io-compatible diagrams of your network topology.</p>
+      </div>
     </div>
     <div class="coming-soon-wrap">
       <p class="coming-soon-label">Coming soon</p>
@@ -174,30 +198,6 @@
           </div>
           <h3 class="feature-title">Cloud Provider Inventory</h3>
           <p class="feature-desc">Track networks by plugging in directly to your cloud provider.</p>
-        </div>
-        <div class="feature-card feature-card-coming-soon">
-          <div class="feature-icon-wrap">
-            <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="3" y="3" width="7" height="7" rx="1" />
-              <rect x="14" y="3" width="7" height="7" rx="1" />
-              <rect x="8.5" y="14" width="7" height="7" rx="1" />
-              <path d="M10 7h4M17.5 10v4M6.5 10v4M10 17h4" />
-            </svg>
-          </div>
-          <h3 class="feature-title">Network Diagram Export</h3>
-          <p class="feature-desc">Generate diagrams for your networks compatible with your favorite tools like draw.io.</p>
-        </div>
-        <div class="feature-card feature-card-coming-soon">
-          <div class="feature-icon-wrap">
-            <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M3 12h3l2-4 4 8 2-4h7" />
-              <circle cx="5" cy="12" r="2" />
-              <circle cx="12" cy="16" r="2" />
-              <circle cx="19" cy="12" r="2" />
-            </svg>
-          </div>
-          <h3 class="feature-title">Network Advisor</h3>
-          <p class="feature-desc">The network advisor helps you plan and optimize IP allocation.</p>
         </div>
       </div>
     </div>
@@ -474,14 +474,13 @@ resource "google_compute_subnetwork" "app" {'{'}
     <div class="docs-section-links">
       <a href="#docs" class="docs-section-link">Overview</a>
       <a href="#docs/getting-started" class="docs-section-link">Getting started</a>
-      <a href="#docs/dashboard" class="docs-section-link">Dashboard</a>
       <a href="#docs/environments" class="docs-section-link">Environments</a>
       <a href="#docs/networks" class="docs-section-link">Networks</a>
       <a href="#docs/command-palette" class="docs-section-link">Command palette</a>
       <a href="#docs/cidr-wizard" class="docs-section-link">CIDR wizard</a>
+      <a href="#docs/network-advisor" class="docs-section-link">Network Advisor</a>
       <a href="#docs/subnet-calculator" class="docs-section-link">Subnet calculator</a>
       <a href="#docs/reserved-blocks" class="docs-section-link">Reserved blocks</a>
-      <a href="#docs/admin" class="docs-section-link">Admin</a>
     </div>
     <p class="docs-section-cta-wrap">
       <a href="#docs" class="docs-section-cta">Read the full user guide →</a>

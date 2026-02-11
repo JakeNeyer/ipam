@@ -14,6 +14,27 @@ test.describe('auth', () => {
     expect(hasGetStarted || hasSignIn || hasSetup).toBeTruthy()
   })
 
+  test('landing page shows Network Advisor and Network Diagram Export as core features', async ({ page }) => {
+    await page.goto('/')
+    // Wait for landing to appear (skip if redirect to login/setup)
+    const landing = page.locator('.landing')
+    const isLanding = await landing.isVisible({ timeout: 5000 }).catch(() => false)
+    test.skip(!isLanding, 'Landing page not shown (redirected to login/setup)')
+
+    // Core features section should contain Network Advisor and Network Diagram Export
+    const coreFeatures = page.locator('.features-grid')
+    await expect(coreFeatures.locator('text=Network Advisor')).toBeVisible({ timeout: 5000 })
+    await expect(coreFeatures.locator('text=Network Diagram Export')).toBeVisible({ timeout: 5000 })
+
+    // They should NOT be in the coming-soon section
+    const comingSoon = page.locator('.coming-soon-grid')
+    await expect(comingSoon.locator('text=Network Advisor')).not.toBeVisible()
+    await expect(comingSoon.locator('text=Network Diagram Export')).not.toBeVisible()
+
+    // Cloud Provider Inventory should still be coming soon
+    await expect(comingSoon.locator('text=Cloud Provider Inventory')).toBeVisible()
+  })
+
   test('unauthenticated visit to #/dashboard shows login or setup', async ({ page }) => {
     await page.goto('/#/dashboard')
     await page.waitForLoadState('networkidle')

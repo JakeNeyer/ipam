@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build output
+web/dist/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Go binary
+/ipam
+*.exe
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# Terraform (covered per-directory too)
+*.tfstate
+*.tfstate.*
+.terraform/
+terraform.tfvars

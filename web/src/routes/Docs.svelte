@@ -3,40 +3,37 @@
   import { theme } from '../lib/theme.js'
   import overviewMd from '../docs/overview.md?raw'
   import gettingStartedMd from '../docs/getting-started.md?raw'
-  import dashboardMd from '../docs/dashboard.md?raw'
   import environmentsMd from '../docs/environments.md?raw'
   import networksMd from '../docs/networks.md?raw'
   import commandPaletteMd from '../docs/command-palette.md?raw'
   import cidrWizardMd from '../docs/cidr-wizard.md?raw'
-  import adminMd from '../docs/admin.md?raw'
   import reservedBlocksMd from '../docs/reserved-blocks.md?raw'
   import subnetCalculatorMd from '../docs/subnet-calculator.md?raw'
+  import networkAdvisorMd from '../docs/network-advisor.md?raw'
 
   export let currentPage = ''
 
   const PAGES = [
     { id: '', label: 'Overview' },
     { id: 'getting-started', label: 'Getting started' },
-    { id: 'dashboard', label: 'Dashboard' },
     { id: 'environments', label: 'Environments' },
     { id: 'networks', label: 'Networks' },
     { id: 'command-palette', label: 'Command palette' },
     { id: 'cidr-wizard', label: 'CIDR wizard' },
+    { id: 'network-advisor', label: 'Network Advisor' },
     { id: 'subnet-calculator', label: 'Subnet calculator' },
-    { id: 'admin', label: 'Admin' },
     { id: 'reserved-blocks', label: 'Reserved blocks' },
   ]
 
   const CONTENT = {
     '': overviewMd,
     'getting-started': gettingStartedMd,
-    'dashboard': dashboardMd,
     'environments': environmentsMd,
     'networks': networksMd,
     'command-palette': commandPaletteMd,
     'cidr-wizard': cidrWizardMd,
+    'network-advisor': networkAdvisorMd,
     'subnet-calculator': subnetCalculatorMd,
-    'admin': adminMd,
     'reserved-blocks': reservedBlocksMd,
   }
 

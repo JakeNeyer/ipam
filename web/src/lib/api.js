@@ -173,6 +173,10 @@ export async function createAllocation(name, block_name, cidr) {
   return post('/allocations', { name, block_name, cidr })
 }
 
+export async function updateAllocation(id, name) {
+  return put('/allocations/' + id, { name })
+}
+
 export async function deleteAllocation(id) {
   return del('/allocations/' + id)
 }
@@ -284,6 +288,15 @@ export async function deleteReservedBlock(id) {
   const text = await res.text()
   if (!text) return
   return JSON.parse(text)
+}
+
+/**
+ * Update a reserved block name by id. Admin only.
+ * @param {string} id
+ * @param {string} name
+ */
+export async function updateReservedBlock(id, name) {
+  return put('/admin/reserved-blocks/' + encodeURIComponent(String(id)), { name: String(name ?? '') })
 }
 
 /**

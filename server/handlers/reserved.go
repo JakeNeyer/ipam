@@ -64,7 +64,7 @@ func NewCreateReservedBlockUseCase(s store.Storer) usecase.Interactor {
 		}
 		if overlap != nil {
 			return status.Wrap(
-				errors.New("CIDR overlaps with existing reserved block " + overlap.CIDR),
+				errors.New("CIDR overlaps with existing reserved block "+overlap.CIDR),
 				status.InvalidArgument,
 			)
 		}
@@ -106,6 +106,37 @@ func NewDeleteReservedBlockUseCase(s store.Storer) usecase.Interactor {
 	})
 	u.SetTitle("Delete reserved block")
 	u.SetDescription("Remove a reserved CIDR range. Admin only.")
+	u.SetExpectedErrors(status.PermissionDenied, status.NotFound, status.Internal)
+	return u
+}
+
+// NewUpdateReservedBlockUseCase returns a use case for PUT /api/admin/reserved-blocks/:id. Admin only.
+func NewUpdateReservedBlockUseCase(s store.Storer) usecase.Interactor {
+	u := usecase.NewInteractor(func(ctx context.Context, input updateReservedBlockInput, output *reservedBlockOutput) error {
+		user := auth.UserFromContext(ctx)
+		if user == nil || user.Role != store.RoleAdmin {
+			return status.Wrap(errors.New("forbidden"), status.PermissionDenied)
+		}
+		r, err := s.GetReservedBlock(input.ID)
+		if err != nil {
+			return status.Wrap(errors.New("reserved block not found"), status.NotFound)
+		}
+		r.Name = strings.TrimSpace(input.Name)
+		if err := s.UpdateReservedBlock(input.ID, r); err != nil {
+			if err.Error() == "reserved block not found" {
+				return status.Wrap(err, status.NotFound)
+			}
+			return status.Wrap(err, status.Internal)
+		}
+		output.ID = r.ID.String()
+		output.Name = r.Name
+		output.CIDR = r.CIDR
+		output.Reason = r.Reason
+		output.CreatedAt = r.CreatedAt.Format(time.RFC3339)
+		return nil
+	})
+	u.SetTitle("Update reserved block")
+	u.SetDescription("Update reserved block metadata (name). Admin only.")
 	u.SetExpectedErrors(status.PermissionDenied, status.NotFound, status.Internal)
 	return u
 }

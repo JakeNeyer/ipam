@@ -268,6 +268,16 @@ func (c *Client) CreateAllocation(name, blockName, cidr string) (*AllocationResp
 	return &out, nil
 }
 
+// AutoAllocate finds the next available CIDR in a block using bin-packing and creates an allocation.
+func (c *Client) AutoAllocate(name, blockName string, prefixLength int) (*AllocationResponse, error) {
+	body := map[string]interface{}{"name": name, "block_name": blockName, "prefix_length": prefixLength}
+	var out AllocationResponse
+	if err := c.post("/api/allocations/auto", body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // UpdateAllocation updates an allocation (name only).
 func (c *Client) UpdateAllocation(id, name string) (*AllocationResponse, error) {
 	body := map[string]string{"name": name}

@@ -1,3 +1,9 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
 # Playwright browser cache (run: PLAYWRIGHT_BROWSERS_PATH=./playwright-browsers npx playwright install chromium)
 playwright-browsers/
 # Playwright e2e outputs
