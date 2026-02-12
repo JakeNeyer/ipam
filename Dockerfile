@@ -16,7 +16,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /ipam .
 
 # Run
-FROM alpine:3.20
+FROM alpine:3.23.3
 RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /app
 COPY --from=go /ipam .
