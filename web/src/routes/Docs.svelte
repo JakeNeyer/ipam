@@ -10,6 +10,7 @@
   import reservedBlocksMd from '../docs/reserved-blocks.md?raw'
   import subnetCalculatorMd from '../docs/subnet-calculator.md?raw'
   import networkAdvisorMd from '../docs/network-advisor.md?raw'
+  import adminMd from '../docs/admin.md?raw'
 
   export let currentPage = ''
 
@@ -23,6 +24,7 @@
     { id: 'network-advisor', label: 'Network Advisor' },
     { id: 'subnet-calculator', label: 'Subnet calculator' },
     { id: 'reserved-blocks', label: 'Reserved blocks' },
+    { id: 'admin', label: 'Admin' },
   ]
 
   const CONTENT = {
@@ -35,6 +37,7 @@
     'network-advisor': networkAdvisorMd,
     'subnet-calculator': subnetCalculatorMd,
     'reserved-blocks': reservedBlocksMd,
+    'admin': adminMd,
   }
 
   $: normalizedPage = PAGES.some((p) => p.id === currentPage) ? currentPage : ''

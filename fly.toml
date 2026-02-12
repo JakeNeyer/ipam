@@ -20,6 +20,14 @@ primary_region = 'iad'
   min_machines_running = 0
   processes = ['app']
 
+  # Use a path that returns 2xx (required by Fly). When APP_ORIGIN is set, GET / returns 401.
+  [[http_service.checks]]
+  grace_period = "15s"
+  interval = "30s"
+  method = "GET"
+  path = "/docs"
+  timeout = "5s"
+
 [[vm]]
   size = 'shared-cpu-1x'
   memory = '256mb'

@@ -2,6 +2,7 @@
   import { createEventDispatcher } from 'svelte'
   import Icon from '@iconify/svelte'
   import { listEnvironments, listBlocks, listAllocations } from './api.js'
+  import { selectedOrgForGlobalAdmin, isGlobalAdmin } from './auth.js'
 
   export let open = false
   export let currentRoute = 'dashboard'
@@ -53,10 +54,12 @@
     searchLoading = true
     searchResults = []
     try {
+      const opts = { name: q, limit: 5, offset: 0 }
+      if (isGlobalAdmin(currentUser) && $selectedOrgForGlobalAdmin) opts.organization_id = $selectedOrgForGlobalAdmin
       const [envsRes, blocksRes, allocsRes] = await Promise.all([
-        listEnvironments({ name: q, limit: 5, offset: 0 }),
-        listBlocks({ name: q, limit: 5, offset: 0 }),
-        listAllocations({ name: q, limit: 5, offset: 0 }),
+        listEnvironments(opts),
+        listBlocks(opts),
+        listAllocations(opts),
       ])
       const results = []
       ;(envsRes.environments || []).forEach((e) => {
@@ -175,6 +178,7 @@
           placeholder="Search environments, blocks, allocations or run a command…"
           bind:value={query}
           on:input={onQueryInput}
+          on:keydown={handleKeydown}
         />
       </div>
       <div class="palette-list" role="listbox" bind:this={listEl}>

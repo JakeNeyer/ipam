@@ -1,14 +1,65 @@
-<script>
+<script lang="ts">
   import { createEventDispatcher } from 'svelte'
+  import { get } from 'svelte/store'
   import Icon from '@iconify/svelte'
   import { theme } from './theme.js'
+  import { selectedOrgForGlobalAdmin, selectedOrgNameForGlobalAdmin, isGlobalAdmin } from './auth.js'
+  import { listOrganizations } from './api.js'
   export let current = 'dashboard'
-  export let currentUser = null
+  export let currentUser: { id?: string; email?: string; role?: string; organization_id?: string | null } | null = null
+  /** When set (global admin with org selected), show "Dashboard" instead of "Global Admin Dashboard". Passed from parent so Nav doesn't shadow the store. */
+  export let selectedOrgIdFromParent: string | null = null
   const dispatch = createEventDispatcher()
 
   const COLLAPSED_KEY = 'ipam-nav-collapsed'
   let collapsed = false
   let settingsOpen = false
+  let organizations: Array<{ id: string; name: string }> = []
+  let orgsLoading = false
+  let orgsLoadedOnce = false
+
+  $: globalAdmin = isGlobalAdmin(currentUser)
+
+  // Load orgs when user becomes global admin (e.g. after login).
+  $: if (globalAdmin && !orgsLoadedOnce && !orgsLoading) {
+    orgsLoadedOnce = true
+    loadOrgs()
+  }
+  // Reset so we load again if user logs out and back in as global admin.
+  $: if (!globalAdmin) orgsLoadedOnce = false
+
+  async function loadOrgs() {
+    if (!globalAdmin) return
+    orgsLoading = true
+    try {
+      const res = await listOrganizations()
+      organizations = res.organizations ?? []
+      const id = get(selectedOrgForGlobalAdmin)
+      if (id) {
+        const org = organizations.find((o) => o.id === id)
+        selectedOrgNameForGlobalAdmin.set(org?.name ?? null)
+      }
+    } catch (_) {
+      organizations = []
+    } finally {
+      orgsLoading = false
+    }
+  }
+
+  function onOrgSelectChange(e: Event) {
+    const select = e.currentTarget as HTMLSelectElement
+    const value = select?.value ?? ''
+    if (!value) {
+      selectedOrgForGlobalAdmin.set(null)
+      selectedOrgNameForGlobalAdmin.set(null)
+      return
+    }
+    const org = organizations.find((o) => o.id === value)
+    if (org) {
+      selectedOrgForGlobalAdmin.set(org.id)
+      selectedOrgNameForGlobalAdmin.set(org.name)
+    }
+  }
 
   if (typeof window !== 'undefined') {
     try {
@@ -36,6 +87,11 @@
     { id: 'subnet-calculator', label: 'Subnet calculator', icon: 'lucide:calculator' },
   ]
 
+  /** When false (global admin with no org selected), only Admin and Global Admin Dashboard are shown. */
+  $: showMainNav = !globalAdmin || selectedOrgIdFromParent
+  /** When true, first nav item is "Global Admin Dashboard" (clear org + dashboard); otherwise "Dashboard". */
+  $: showGlobalAdminDashboardLink = globalAdmin && !selectedOrgIdFromParent
+
   let hoveredLabel = null
 </script>
 
@@ -46,54 +102,96 @@
     <div class="brand">
       <img src={$theme === 'light' ? '/images/logo-light.svg' : '/images/logo.svg'} alt="IPAM" class="logo" />
     </div>
+    {#if globalAdmin && !collapsed}
+      <div class="org-switcher">
+        <label for="org-select" class="org-switcher-label">Organization</label>
+        <select
+          id="org-select"
+          class="org-select"
+          aria-label="Select organization"
+          disabled={orgsLoading}
+          value={$selectedOrgForGlobalAdmin ?? ''}
+          on:change={onOrgSelectChange}
+        >
+          <option value="">Select organization</option>
+          {#each organizations as org (org.id)}
+            <option value={org.id}>{org.name}</option>
+          {/each}
+        </select>
+      </div>
+    {/if}
   {/if}
   <ul class="links">
-    {#each links as link}
+    {#if showGlobalAdminDashboardLink}
       <li>
-        <button
+        <a
+          href="#global-admin"
           class="link"
-          class:active={current === link.id}
-          data-tour="tour-nav-{link.id}"
-          on:click={() => dispatch('nav', link.id)}
-          on:mouseenter={() => (hoveredLabel = collapsed ? link.label : null)}
+          class:active={current === 'global-admin'}
+          data-tour="tour-nav-global-admin-dashboard"
+          on:mouseenter={() => (hoveredLabel = collapsed ? 'Global Admin Dashboard' : null)}
           on:mouseleave={() => (hoveredLabel = null)}
-          title={collapsed ? link.label : ''}
-          aria-label={link.label}
+          title={collapsed ? 'Global Admin Dashboard' : ''}
+          aria-label="Global Admin Dashboard"
         >
-          <span class="icon"><Icon icon={link.icon} width="1.25em" height="1.25em" /></span>
+          <span class="icon"><Icon icon="lucide:layout-dashboard" width="1.25em" height="1.25em" /></span>
           {#if !collapsed}
-            <span class="label">{link.label}</span>
-          {:else if hoveredLabel === link.label}
-            <span class="nav-tooltip" role="tooltip">{link.label}</span>
+            <span class="label">Global Admin Dashboard</span>
+          {:else if hoveredLabel === 'Global Admin Dashboard'}
+            <span class="nav-tooltip" role="tooltip">Global Admin Dashboard</span>
           {/if}
-        </button>
+        </a>
       </li>
-    {/each}
+    {:else if showMainNav}
+      {#each links as link}
+        <li>
+          <button
+            class="link"
+            class:active={current === link.id}
+            data-tour="tour-nav-{link.id}"
+            on:click={() => dispatch('nav', link.id)}
+            on:mouseenter={() => (hoveredLabel = collapsed ? link.label : null)}
+            on:mouseleave={() => (hoveredLabel = null)}
+            title={collapsed ? link.label : ''}
+            aria-label={link.label}
+          >
+            <span class="icon"><Icon icon={link.icon} width="1.25em" height="1.25em" /></span>
+            {#if !collapsed}
+              <span class="label">{link.label}</span>
+            {:else if hoveredLabel === link.label}
+              <span class="nav-tooltip" role="tooltip">{link.label}</span>
+            {/if}
+          </button>
+        </li>
+      {/each}
+      {#if currentUser?.role === 'admin'}
+        <li>
+          <button
+            class="link"
+            class:active={current === 'reserved-blocks'}
+            on:click={() => dispatch('nav', 'reserved-blocks')}
+            on:mouseenter={() => (hoveredLabel = collapsed ? 'Reserved blocks' : null)}
+            on:mouseleave={() => (hoveredLabel = null)}
+            title={collapsed ? 'Reserved blocks' : ''}
+            aria-label="Reserved blocks"
+          >
+            <span class="icon"><Icon icon="lucide:ban" width="1.25em" height="1.25em" /></span>
+            {#if !collapsed}
+              <span class="label">Reserved blocks</span>
+            {:else if hoveredLabel === 'Reserved blocks'}
+              <span class="nav-tooltip" role="tooltip">Reserved blocks</span>
+            {/if}
+          </button>
+        </li>
+      {/if}
+    {/if}
     {#if currentUser?.role === 'admin'}
       <li>
-        <button
-          class="link"
-          class:active={current === 'reserved-blocks'}
-          on:click={() => dispatch('nav', 'reserved-blocks')}
-          on:mouseenter={() => (hoveredLabel = collapsed ? 'Reserved blocks' : null)}
-          on:mouseleave={() => (hoveredLabel = null)}
-          title={collapsed ? 'Reserved blocks' : ''}
-          aria-label="Reserved blocks"
-        >
-          <span class="icon"><Icon icon="lucide:ban" width="1.25em" height="1.25em" /></span>
-          {#if !collapsed}
-            <span class="label">Reserved blocks</span>
-          {:else if hoveredLabel === 'Reserved blocks'}
-            <span class="nav-tooltip" role="tooltip">Reserved blocks</span>
-          {/if}
-        </button>
-      </li>
-      <li>
-        <button
+        <a
+          href="#admin"
           class="link"
           class:active={current === 'admin'}
           data-tour="tour-nav-admin"
-          on:click={() => dispatch('nav', 'admin')}
           on:mouseenter={() => (hoveredLabel = collapsed ? 'Admin' : null)}
           on:mouseleave={() => (hoveredLabel = null)}
           title={collapsed ? 'Admin' : ''}
@@ -105,7 +203,7 @@
           {:else if hoveredLabel === 'Admin'}
             <span class="nav-tooltip" role="tooltip">Admin</span>
           {/if}
-        </button>
+        </a>
       </li>
     {/if}
   </ul>
@@ -203,6 +301,35 @@
     width: auto;
     object-fit: contain;
   }
+  .org-switcher {
+    padding: 0.5rem 0.5rem 0.75rem;
+    margin-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .org-switcher-label {
+    display: block;
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    margin-bottom: 0.25rem;
+  }
+  .org-select {
+    width: 100%;
+    padding: 0.35rem 0.5rem;
+    font-size: 0.75rem;
+    font-family: var(--font-sans);
+    color: var(--text);
+    background: var(--surface-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-sizing: border-box;
+    cursor: pointer;
+    appearance: auto;
+  }
+  .org-select:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+  }
   .links {
     display: flex;
     flex-direction: column;
@@ -230,6 +357,11 @@
     text-align: left;
     cursor: pointer;
     transition: color 0.15s, background 0.15s;
+    text-decoration: none;
+    box-sizing: border-box;
+  }
+  a.link {
+    border: none;
   }
   .nav.collapsed .link {
     padding: 0.5rem;

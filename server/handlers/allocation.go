@@ -33,10 +33,7 @@ func NewCreateAllocationUseCase(s store.Storer) usecase.Interactor {
 		if user == nil {
 			return status.Wrap(errors.New("unauthorized"), status.Unauthenticated)
 		}
-		var orgID *uuid.UUID
-		if !auth.IsGlobalAdmin(user) {
-			orgID = &user.OrganizationID
-		}
+		orgID := auth.ResolveOrgID(ctx, user, uuid.Nil)
 		blocks, _, err := s.ListBlocksFiltered(input.BlockName, nil, orgID, false, 0, 0)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
@@ -135,10 +132,7 @@ func NewAutoAllocateUseCase(s store.Storer) usecase.Interactor {
 		if user == nil {
 			return status.Wrap(errors.New("unauthorized"), status.Unauthenticated)
 		}
-		var orgID *uuid.UUID
-		if !auth.IsGlobalAdmin(user) {
-			orgID = &user.OrganizationID
-		}
+		orgID := auth.ResolveOrgID(ctx, user, uuid.Nil)
 		blocks, _, err := s.ListBlocksFiltered(input.BlockName, nil, orgID, false, 0, 0)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
@@ -226,14 +220,11 @@ func NewListAllocationsUseCase(s store.Storer) usecase.Interactor {
 			if err != nil {
 				return status.Wrap(errors.New("environment not found"), status.NotFound)
 			}
-			if !auth.IsGlobalAdmin(user) && env.OrganizationID != user.OrganizationID {
+			if userOrg := auth.UserOrgForAccess(ctx, user); userOrg != uuid.Nil && env.OrganizationID != userOrg {
 				return status.Wrap(errors.New("environment not found"), status.NotFound)
 			}
 		}
-		var orgID *uuid.UUID
-		if !auth.IsGlobalAdmin(user) {
-			orgID = &user.OrganizationID
-		}
+		orgID := auth.ResolveOrgID(ctx, user, input.OrganizationID)
 		limit, offset := input.Limit, input.Offset
 		if limit <= 0 {
 			limit = defaultListLimit
@@ -267,12 +258,12 @@ func NewListAllocationsUseCase(s store.Storer) usecase.Interactor {
 	return u
 }
 
-// allocationInUserOrg returns true if the allocation's block belongs to an environment in the user's org.
-func allocationInUserOrg(s store.Storer, user *store.User, alloc *network.Allocation) bool {
-	if auth.IsGlobalAdmin(user) {
+// allocationInOrg returns true if the allocation's block belongs to an environment in the given org.
+func allocationInOrg(s store.Storer, orgID uuid.UUID, alloc *network.Allocation) bool {
+	if orgID == uuid.Nil {
 		return true
 	}
-	blocks, _, err := s.ListBlocksFiltered(strings.TrimSpace(alloc.Block.Name), nil, &user.OrganizationID, false, 1, 0)
+	blocks, _, err := s.ListBlocksFiltered(strings.TrimSpace(alloc.Block.Name), nil, &orgID, false, 1, 0)
 	if err != nil || len(blocks) == 0 {
 		return false
 	}
@@ -284,6 +275,15 @@ func allocationInUserOrg(s store.Storer, user *store.User, alloc *network.Alloca
 	return false
 }
 
+// allocationInEffectiveOrg returns true if the allocation is accessible: effective org from context (e.g. token) or user's org, or full access when global admin unscoped.
+func allocationInEffectiveOrg(ctx context.Context, s store.Storer, user *store.User, alloc *network.Allocation) bool {
+	if user == nil {
+		return false
+	}
+	userOrg := auth.UserOrgForAccess(ctx, user)
+	return allocationInOrg(s, userOrg, alloc)
+}
+
 // GetAllocation handler
 func NewGetAllocationUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input getAllocationInput, output *allocationOutput) error {
@@ -292,7 +292,7 @@ func NewGetAllocationUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(errors.New("allocation not found"), status.NotFound)
 		}
 		user := auth.UserFromContext(ctx)
-		if user != nil && !allocationInUserOrg(s, user, alloc) {
+		if user != nil && !allocationInEffectiveOrg(ctx, s, user, alloc) {
 			return status.Wrap(errors.New("allocation not found"), status.NotFound)
 		}
 
@@ -317,7 +317,7 @@ func NewUpdateAllocationUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(errors.New("allocation not found"), status.NotFound)
 		}
 		user := auth.UserFromContext(ctx)
-		if user != nil && !allocationInUserOrg(s, user, alloc) {
+		if user != nil && !allocationInEffectiveOrg(ctx, s, user, alloc) {
 			return status.Wrap(errors.New("allocation not found"), status.NotFound)
 		}
 
@@ -373,7 +373,7 @@ func NewDeleteAllocationUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(errors.New("allocation not found"), status.NotFound)
 		}
 		user := auth.UserFromContext(ctx)
-		if user != nil && !allocationInUserOrg(s, user, alloc) {
+		if user != nil && !allocationInEffectiveOrg(ctx, s, user, alloc) {
 			return status.Wrap(errors.New("allocation not found"), status.NotFound)
 		}
 		if err := s.DeleteAllocation(input.Id); err != nil {

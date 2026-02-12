@@ -4,6 +4,7 @@
   import '../lib/theme.js'
   import DataTable from '../lib/DataTable.svelte'
   import { cidrRange } from '../lib/cidr.js'
+  import { user, selectedOrgForGlobalAdmin, isGlobalAdmin } from '../lib/auth.js'
   import { listReservedBlocks, updateReservedBlock, deleteReservedBlock } from '../lib/api.js'
   import ReservedBlocksModal from '../lib/ReservedBlocksModal.svelte'
 
@@ -43,11 +44,17 @@
     return list
   })()
 
+  function listOpts() {
+    const opts = {}
+    if (isGlobalAdmin($user) && $selectedOrgForGlobalAdmin) opts.organization_id = $selectedOrgForGlobalAdmin
+    return opts
+  }
+
   async function load() {
     loading = true
     error = ''
     try {
-      const res = await listReservedBlocks()
+      const res = await listReservedBlocks(listOpts())
       reservedBlocks = res.reserved_blocks || []
     } catch (e) {
       error = e?.message || 'Failed to load reserved blocks'
@@ -56,6 +63,8 @@
       loading = false
     }
   }
+
+  $: $selectedOrgForGlobalAdmin, load()
 
   async function handleDelete(id) {
     if (!id) return

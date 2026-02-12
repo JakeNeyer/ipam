@@ -10,7 +10,10 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/JakeNeyer/ipam/network"
+	"github.com/JakeNeyer/ipam/server/auth"
 	"github.com/JakeNeyer/ipam/store"
+	"github.com/google/uuid"
 	"github.com/swaggest/rest"
 	"github.com/swaggest/rest/nethttp"
 	"github.com/swaggest/usecase"
@@ -41,11 +44,25 @@ type exportCSVOutput struct {
 // NewExportCSVUseCase returns a use case for GET /api/export/csv.
 func NewExportCSVUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input struct{}, output *exportCSVOutput) error {
-		envs, err := s.ListEnvironments()
-		if err != nil {
-			return status.Wrap(err, status.Internal)
+		user := auth.UserFromContext(ctx)
+		orgID := auth.ResolveOrgID(ctx, user, uuid.Nil)
+
+		var envs []*network.Environment
+		var blocks []*network.Block
+		var err error
+		if orgID != nil {
+			envs, _, err = s.ListEnvironmentsFiltered("", orgID, 0, 0)
+			if err != nil {
+				return status.Wrap(err, status.Internal)
+			}
+			blocks, _, err = s.ListBlocksFiltered("", nil, orgID, false, 0, 0)
+		} else {
+			envs, err = s.ListEnvironments()
+			if err != nil {
+				return status.Wrap(err, status.Internal)
+			}
+			blocks, err = s.ListBlocks()
 		}
-		blocks, err := s.ListBlocks()
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -62,7 +79,7 @@ func NewExportCSVUseCase(s store.Storer) usecase.Interactor {
 		}
 
 		for _, b := range blocks {
-			used := computeUsedIPsForBlock(s, b.Name)
+			used := computeUsedIPsForBlock(s, b.Name, orgID)
 			avail := b.Usage.TotalIPs - used
 			if avail < 0 {
 				avail = 0
@@ -134,12 +151,28 @@ func ExportCSVHandler(s store.Storer) http.Handler {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		envs, err := s.ListEnvironments()
-		if err != nil {
-			http.Error(w, "Failed to list environments", http.StatusInternalServerError)
-			return
+		ctx := r.Context()
+		user := auth.UserFromContext(ctx)
+		orgID := auth.ResolveOrgID(ctx, user, uuid.Nil)
+
+		var envs []*network.Environment
+		var blocks []*network.Block
+		var err error
+		if orgID != nil {
+			envs, _, err = s.ListEnvironmentsFiltered("", orgID, 0, 0)
+			if err != nil {
+				http.Error(w, "Failed to list environments", http.StatusInternalServerError)
+				return
+			}
+			blocks, _, err = s.ListBlocksFiltered("", nil, orgID, false, 0, 0)
+		} else {
+			envs, err = s.ListEnvironments()
+			if err != nil {
+				http.Error(w, "Failed to list environments", http.StatusInternalServerError)
+				return
+			}
+			blocks, err = s.ListBlocks()
 		}
-		blocks, err := s.ListBlocks()
 		if err != nil {
 			http.Error(w, "Failed to list blocks", http.StatusInternalServerError)
 			return
@@ -152,7 +185,7 @@ func ExportCSVHandler(s store.Storer) http.Handler {
 		wr := csv.NewWriter(&buf)
 		_ = wr.Write([]string{"name", "cidr", "cidr_start", "cidr_end", "environment_name", "total_ips", "used_ips", "available_ips"})
 		for _, b := range blocks {
-			used := computeUsedIPsForBlock(s, b.Name)
+			used := computeUsedIPsForBlock(s, b.Name, orgID)
 			avail := b.Usage.TotalIPs - used
 			if avail < 0 {
 				avail = 0

@@ -76,8 +76,9 @@ type SessionStore interface {
 }
 
 type APITokenStore interface {
-	CreateAPIToken(userID uuid.UUID, name string, expiresAt *time.Time) (token *APIToken, rawToken string, err error)
+	CreateAPIToken(userID uuid.UUID, name string, expiresAt *time.Time, organizationID *uuid.UUID) (token *APIToken, rawToken string, err error)
 	GetUserByTokenHash(keyHash string) (*User, error)
+	GetAPITokenByKeyHash(keyHash string) (*APIToken, error)
 	ListAPITokens(userID uuid.UUID) ([]*APIToken, error)
 	DeleteAPIToken(tokenID, userID uuid.UUID) error
 	GetAPIToken(tokenID uuid.UUID) (*APIToken, error)

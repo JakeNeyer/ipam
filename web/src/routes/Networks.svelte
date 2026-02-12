@@ -8,6 +8,7 @@
   import DataTable from '../lib/DataTable.svelte'
   import SearchableSelect from '../lib/SearchableSelect.svelte'
   import { cidrRange, parseCidrToInt } from '../lib/cidr.js'
+  import { user, selectedOrgForGlobalAdmin, isGlobalAdmin } from '../lib/auth.js'
   import { listEnvironments, listBlocks, listAllocations, createBlock, createAllocation, updateBlock, updateAllocation, deleteBlock, deleteAllocation } from '../lib/api.js'
 
   export let environmentId = null
@@ -105,33 +106,39 @@
     return allocations.filter((a) => (a.block_name || '').trim().toLowerCase() === name).length
   }
 
+  function listOpts(extra = {}) {
+    const o = { ...extra }
+    if (isGlobalAdmin($user) && $selectedOrgForGlobalAdmin) o.organization_id = $selectedOrgForGlobalAdmin
+    return o
+  }
+
   async function load() {
     loading = true
     error = ''
     try {
-      const blockOpts = { limit: blockPageSize, offset: blockPage * blockPageSize }
+      const blockOpts = listOpts({ limit: blockPageSize, offset: blockPage * blockPageSize })
       if (blockNameFilter && String(blockNameFilter).trim() !== '') blockOpts.name = String(blockNameFilter).trim()
       if (effectiveFilter === 'orphaned') blockOpts.orphaned_only = true
       else if (effectiveFilter !== 'all') blockOpts.environment_id = effectiveFilter
-      const blockFilterOpts = { limit: 500, offset: 0 }
+      const blockFilterOpts = listOpts({ limit: 500, offset: 0 })
       if (effectiveFilter === 'orphaned') blockFilterOpts.orphaned_only = true
       else if (effectiveFilter !== 'all') blockFilterOpts.environment_id = effectiveFilter
-      const allocOpts = { limit: allocPageSize, offset: allocPage * allocPageSize }
+      const allocOpts = listOpts({ limit: allocPageSize, offset: allocPage * allocPageSize })
       if (blockNameFilter && String(blockNameFilter).trim() !== '') allocOpts.block_name = String(blockNameFilter).trim()
       if (allocationFilter && String(allocationFilter).trim() !== '') allocOpts.name = String(allocationFilter).trim()
       if (effectiveFilter !== 'all' && effectiveFilter !== 'orphaned') allocOpts.environment_id = effectiveFilter
-      const allocOptionsOpts = { limit: 500, offset: 0 }
+      const allocOptionsOpts = listOpts({ limit: 500, offset: 0 })
       if (blockNameFilter && String(blockNameFilter).trim() !== '') allocOptionsOpts.block_name = String(blockNameFilter).trim()
       if (effectiveFilter !== 'all' && effectiveFilter !== 'orphaned') allocOptionsOpts.environment_id = effectiveFilter
       const promises = [
-        listEnvironments(),
+        listEnvironments(listOpts()),
         listBlocks(blockOpts),
         listAllocations(allocOpts),
         listBlocks(blockFilterOpts),
         listAllocations(allocOptionsOpts),
       ]
       if (allocationFilter && String(allocationFilter).trim() !== '') {
-        const allocByNameOpts = { limit: 500, name: String(allocationFilter).trim() }
+        const allocByNameOpts = listOpts({ limit: 500, name: String(allocationFilter).trim() })
         if (effectiveFilter !== 'all' && effectiveFilter !== 'orphaned') allocByNameOpts.environment_id = effectiveFilter
         promises.push(listAllocations(allocByNameOpts))
       }
@@ -179,7 +186,7 @@
   $: allocEnd = Math.min(allocPage * allocPageSize + allocPageSize, allocTotal)
   $: allocTotalPages = allocPageSize > 0 ? Math.ceil(allocTotal / allocPageSize) : 0
 
-  $: effectiveFilter, blockNameFilter, allocationFilter, (blockPage = 0, allocPage = 0, load())
+  $: effectiveFilter, blockNameFilter, allocationFilter, $selectedOrgForGlobalAdmin, (blockPage = 0, allocPage = 0, load())
 
   onMount(() => {
     function handleClickOutside(e) {

@@ -11,7 +11,7 @@
     getMaxHostsPerNetwork as sizingGetMaxHostsPerNetwork,
   } from '../lib/networkSizing.js'
   import { createBlock, createEnvironment, createReservedBlock, listBlocks, listReservedBlocks } from '../lib/api.js'
-  import { user } from '../lib/auth.js'
+  import { user, selectedOrgForGlobalAdmin, isGlobalAdmin } from '../lib/auth.js'
 
   const RFC1918_OPTIONS = [
     { label: '10.0.0.0/8 (largest private range)', cidr: '10.0.0.0/8' },
@@ -220,9 +220,11 @@
     loadingOccupied = true
     existingOccupiedIPs = 0
     try {
+      const opts = {}
+      if (isGlobalAdmin($user) && $selectedOrgForGlobalAdmin) opts.organization_id = $selectedOrgForGlobalAdmin
       const [blocksRes, reservedRes] = await Promise.all([
-        listBlocks({ limit: 500, offset: 0 }),
-        $user?.role === 'admin' ? listReservedBlocks() : Promise.resolve({ reserved_blocks: [] }),
+        listBlocks({ limit: 500, offset: 0, ...opts }),
+        $user?.role === 'admin' ? listReservedBlocks(opts) : Promise.resolve({ reserved_blocks: [] }),
       ])
       const ranges = []
       for (const b of blocksRes.blocks || []) {
@@ -370,9 +372,11 @@
 
     generating = true
     try {
+      const opts = {}
+      if (isGlobalAdmin($user) && $selectedOrgForGlobalAdmin) opts.organization_id = $selectedOrgForGlobalAdmin
       const [blocksResponse, reservedResponse] = await Promise.all([
-        listBlocks({ limit: 500, offset: 0 }),
-        $user?.role === 'admin' ? listReservedBlocks() : Promise.resolve({ reserved_blocks: [] }),
+        listBlocks({ limit: 500, offset: 0, ...opts }),
+        $user?.role === 'admin' ? listReservedBlocks(opts) : Promise.resolve({ reserved_blocks: [] }),
       ])
 
       const occupiedRanges = []
@@ -426,7 +430,7 @@
       const generated = []
       let totalBlocksCreated = 0
       for (const plan of envPlans) {
-        const envResponse = await createEnvironment(plan.envName)
+        const envResponse = await createEnvironment(plan.envName, null, isGlobalAdmin($user) ? $selectedOrgForGlobalAdmin : null)
         const networksCount = Math.max(1, Number(plan.env.networks) || 0)
         const blockPrefix = plan.suggestion.networkPrefix
 

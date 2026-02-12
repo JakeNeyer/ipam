@@ -22,13 +22,11 @@ func NewCreateEnvironmentUseCase(s store.Storer) usecase.Interactor {
 		if user == nil {
 			return status.Wrap(errors.New("unauthorized"), status.Unauthenticated)
 		}
-		orgID := user.OrganizationID
-		if auth.IsGlobalAdmin(user) && input.OrganizationID != uuid.Nil {
-			orgID = input.OrganizationID
-		}
-		if !auth.IsGlobalAdmin(user) && orgID == uuid.Nil {
+		orgIDPtr := auth.ResolveOrgID(ctx, user, input.OrganizationID)
+		if orgIDPtr == nil {
 			return status.Wrap(errors.New("organization is required"), status.InvalidArgument)
 		}
+		orgID := *orgIDPtr
 
 		env := &network.Environment{
 			Id:             s.GenerateID(),
@@ -80,10 +78,7 @@ func NewListEnvironmentsUseCase(s store.Storer) usecase.Interactor {
 		if user == nil {
 			return status.Wrap(errors.New("unauthorized"), status.Unauthenticated)
 		}
-		var orgID *uuid.UUID
-		if !auth.IsGlobalAdmin(user) {
-			orgID = &user.OrganizationID
-		}
+		orgID := auth.ResolveOrgID(ctx, user, input.OrganizationID)
 		limit, offset := input.Limit, input.Offset
 		if limit <= 0 {
 			limit = defaultListLimit
@@ -123,7 +118,7 @@ func NewGetEnvironmentUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(errors.New("environment not found"), status.NotFound)
 		}
 		user := auth.UserFromContext(ctx)
-		if user != nil && !auth.IsGlobalAdmin(user) && env.OrganizationID != user.OrganizationID {
+		if userOrg := auth.UserOrgForAccess(ctx, user); userOrg != uuid.Nil && env.OrganizationID != userOrg {
 			return status.Wrap(errors.New("environment not found"), status.NotFound)
 		}
 
@@ -134,9 +129,10 @@ func NewGetEnvironmentUseCase(s store.Storer) usecase.Interactor {
 
 		output.Id = env.Id
 		output.Name = env.Name
+		envOrgID := &env.OrganizationID
 		output.Blocks = make([]*blockOutput, len(blocks))
 		for i, b := range blocks {
-			used := computeUsedIPsForBlock(s, b.Name)
+			used := computeUsedIPsForBlock(s, b.Name, envOrgID)
 			avail := b.Usage.TotalIPs - used
 			if avail < 0 {
 				avail = 0
@@ -168,7 +164,7 @@ func NewUpdateEnvironmentUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(errors.New("environment not found"), status.NotFound)
 		}
 		user := auth.UserFromContext(ctx)
-		if user != nil && !auth.IsGlobalAdmin(user) && env.OrganizationID != user.OrganizationID {
+		if userOrg := auth.UserOrgForAccess(ctx, user); userOrg != uuid.Nil && env.OrganizationID != userOrg {
 			return status.Wrap(errors.New("environment not found"), status.NotFound)
 		}
 
@@ -196,7 +192,7 @@ func NewDeleteEnvironmentUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(errors.New("environment not found"), status.NotFound)
 		}
 		user := auth.UserFromContext(ctx)
-		if user != nil && !auth.IsGlobalAdmin(user) && env.OrganizationID != user.OrganizationID {
+		if userOrg := auth.UserOrgForAccess(ctx, user); userOrg != uuid.Nil && env.OrganizationID != userOrg {
 			return status.Wrap(errors.New("environment not found"), status.NotFound)
 		}
 		if err := s.DeleteEnvironment(input.ID); err != nil {
@@ -226,7 +222,7 @@ func NewSuggestEnvironmentBlockCIDRUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(errors.New("environment not found"), status.NotFound)
 		}
 		user := auth.UserFromContext(ctx)
-		if user != nil && !auth.IsGlobalAdmin(user) && env.OrganizationID != user.OrganizationID {
+		if userOrg := auth.UserOrgForAccess(ctx, user); userOrg != uuid.Nil && env.OrganizationID != userOrg {
 			return status.Wrap(errors.New("environment not found"), status.NotFound)
 		}
 		blocks, err := s.ListBlocksByEnvironment(input.ID)

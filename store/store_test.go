@@ -552,7 +552,7 @@ func TestGetUserByTokenHash(t *testing.T) {
 			setup: func(s *Store) string {
 				u := &User{Email: "u@x.com", PasswordHash: "h", Role: RoleUser}
 				_ = s.CreateUser(u)
-				tok, raw, _ := s.CreateAPIToken(u.ID, "t", nil)
+				tok, raw, _ := s.CreateAPIToken(u.ID, "t", nil, nil)
 				_ = tok
 				h := hashToken(raw)
 				return h
@@ -565,7 +565,7 @@ func TestGetUserByTokenHash(t *testing.T) {
 			setup: func(s *Store) string {
 				u := &User{Email: "u@x.com", PasswordHash: "h", Role: RoleUser}
 				_ = s.CreateUser(u)
-				tok, raw, _ := s.CreateAPIToken(u.ID, "t", &past)
+				tok, raw, _ := s.CreateAPIToken(u.ID, "t", &past, nil)
 				_ = tok
 				return hashToken(raw)
 			},

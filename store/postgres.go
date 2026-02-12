@@ -184,19 +184,39 @@ func (s *PostgresStore) UpdateOrganization(org *Organization) error {
 }
 
 func (s *PostgresStore) DeleteOrganization(id uuid.UUID) error {
-	users, err := s.ListUsers(&id)
+	if _, err := s.GetOrganization(id); err != nil {
+		return err
+	}
+	// Cascade: allocations in blocks in envs in org → blocks → environments → reserved_blocks → signup_invites → api_tokens → users → organization
+	_, err := s.db.Exec(
+		`DELETE FROM allocations WHERE LOWER(block_name) IN (
+			SELECT LOWER(name) FROM blocks WHERE environment_id IN (SELECT id FROM environments WHERE organization_id = $1)
+		)`,
+		id,
+	)
 	if err != nil {
 		return err
 	}
-	if len(users) > 0 {
-		return fmt.Errorf("organization has users; remove or reassign them first")
-	}
-	envs, _, err := s.ListEnvironmentsFiltered("", &id, 1, 0)
+	_, err = s.db.Exec(`DELETE FROM blocks WHERE environment_id IN (SELECT id FROM environments WHERE organization_id = $1)`, id)
 	if err != nil {
 		return err
 	}
-	if len(envs) > 0 {
-		return fmt.Errorf("organization has environments; remove them first")
+	_, err = s.db.Exec(`DELETE FROM environments WHERE organization_id = $1`, id)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`DELETE FROM reserved_blocks WHERE organization_id = $1`, id)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`DELETE FROM signup_invites WHERE organization_id = $1`, id)
+	if err != nil {
+		return err
+	}
+	// Sessions and api_tokens are CASCADE when users are deleted
+	_, err = s.db.Exec(`DELETE FROM users WHERE organization_id = $1`, id)
+	if err != nil {
+		return err
 	}
 	res, err := s.db.Exec(`DELETE FROM organizations WHERE id = $1`, id)
 	if err != nil {
@@ -931,7 +951,7 @@ func (s *PostgresStore) DeleteSession(sessionID string) {
 	_, _ = s.db.Exec(`DELETE FROM sessions WHERE session_id = $1`, sessionID)
 }
 
-func (s *PostgresStore) CreateAPIToken(userID uuid.UUID, name string, expiresAt *time.Time) (token *APIToken, rawToken string, err error) {
+func (s *PostgresStore) CreateAPIToken(userID uuid.UUID, name string, expiresAt *time.Time, organizationID *uuid.UUID) (token *APIToken, rawToken string, err error) {
 	var n int
 	if err = s.db.QueryRow(`SELECT 1 FROM users WHERE id = $1`, userID).Scan(&n); err == sql.ErrNoRows {
 		return nil, "", fmt.Errorf("user not found")
@@ -946,17 +966,22 @@ func (s *PostgresStore) CreateAPIToken(userID uuid.UUID, name string, expiresAt 
 	rawToken = apiTokenPrefix + hex.EncodeToString(secret)
 	keyHash := hashToken(rawToken)
 	id := uuid.New()
+	orgID := uuid.Nil
+	if organizationID != nil {
+		orgID = *organizationID
+	}
 	token = &APIToken{
-		ID:        id,
-		UserID:    userID,
-		Name:      strings.TrimSpace(name),
-		KeyHash:   keyHash,
-		CreatedAt: time.Now(),
-		ExpiresAt: expiresAt,
+		ID:             id,
+		UserID:         userID,
+		Name:           strings.TrimSpace(name),
+		KeyHash:        keyHash,
+		CreatedAt:      time.Now(),
+		ExpiresAt:      expiresAt,
+		OrganizationID: orgID,
 	}
 	_, err = s.db.Exec(
-		`INSERT INTO api_tokens (id, user_id, name, key_hash, created_at, expires_at) VALUES ($1, $2, $3, $4, $5, $6)`,
-		token.ID, token.UserID, token.Name, token.KeyHash, token.CreatedAt, token.ExpiresAt,
+		`INSERT INTO api_tokens (id, user_id, name, key_hash, created_at, expires_at, organization_id) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		token.ID, token.UserID, token.Name, token.KeyHash, token.CreatedAt, token.ExpiresAt, uuidPtr(token.OrganizationID),
 	)
 	if err != nil {
 		return nil, "", err
@@ -965,12 +990,21 @@ func (s *PostgresStore) CreateAPIToken(userID uuid.UUID, name string, expiresAt 
 }
 
 func (s *PostgresStore) GetUserByTokenHash(keyHash string) (*User, error) {
-	var tokenID, userID uuid.UUID
+	tok, err := s.GetAPITokenByKeyHash(keyHash)
+	if err != nil {
+		return nil, err
+	}
+	return s.GetUser(tok.UserID)
+}
+
+func (s *PostgresStore) GetAPITokenByKeyHash(keyHash string) (*APIToken, error) {
+	var t APIToken
 	var expiresAt sql.NullTime
+	var orgID nullUUID
 	err := s.db.QueryRow(
-		`SELECT id, user_id, expires_at FROM api_tokens WHERE key_hash = $1`,
+		`SELECT id, user_id, name, key_hash, created_at, expires_at, organization_id FROM api_tokens WHERE key_hash = $1`,
 		keyHash,
-	).Scan(&tokenID, &userID, &expiresAt)
+	).Scan(&t.ID, &t.UserID, &t.Name, &t.KeyHash, &t.CreatedAt, &expiresAt, &orgID)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("token not found")
 	}
@@ -980,12 +1014,15 @@ func (s *PostgresStore) GetUserByTokenHash(keyHash string) (*User, error) {
 	if expiresAt.Valid && time.Now().After(expiresAt.Time) {
 		return nil, fmt.Errorf("token expired")
 	}
-	return s.GetUser(userID)
+	if orgID.Valid {
+		t.OrganizationID = orgID.UUID
+	}
+	return &t, nil
 }
 
 func (s *PostgresStore) ListAPITokens(userID uuid.UUID) ([]*APIToken, error) {
 	rows, err := s.db.Query(
-		`SELECT id, user_id, name, key_hash, created_at, expires_at FROM api_tokens WHERE user_id = $1 ORDER BY created_at`,
+		`SELECT id, user_id, name, key_hash, created_at, expires_at, organization_id FROM api_tokens WHERE user_id = $1 ORDER BY created_at`,
 		userID,
 	)
 	if err != nil {
@@ -996,11 +1033,15 @@ func (s *PostgresStore) ListAPITokens(userID uuid.UUID) ([]*APIToken, error) {
 	for rows.Next() {
 		var t APIToken
 		var expiresAt sql.NullTime
-		if err := rows.Scan(&t.ID, &t.UserID, &t.Name, &t.KeyHash, &t.CreatedAt, &expiresAt); err != nil {
+		var orgID nullUUID
+		if err := rows.Scan(&t.ID, &t.UserID, &t.Name, &t.KeyHash, &t.CreatedAt, &expiresAt, &orgID); err != nil {
 			return nil, err
 		}
 		if expiresAt.Valid {
 			t.ExpiresAt = &expiresAt.Time
+		}
+		if orgID.Valid {
+			t.OrganizationID = orgID.UUID
 		}
 		out = append(out, &t)
 	}
@@ -1022,10 +1063,11 @@ func (s *PostgresStore) DeleteAPIToken(tokenID, userID uuid.UUID) error {
 func (s *PostgresStore) GetAPIToken(tokenID uuid.UUID) (*APIToken, error) {
 	var t APIToken
 	var expiresAt sql.NullTime
+	var orgID nullUUID
 	err := s.db.QueryRow(
-		`SELECT id, user_id, name, key_hash, created_at, expires_at FROM api_tokens WHERE id = $1`,
+		`SELECT id, user_id, name, key_hash, created_at, expires_at, organization_id FROM api_tokens WHERE id = $1`,
 		tokenID,
-	).Scan(&t.ID, &t.UserID, &t.Name, &t.KeyHash, &t.CreatedAt, &expiresAt)
+	).Scan(&t.ID, &t.UserID, &t.Name, &t.KeyHash, &t.CreatedAt, &expiresAt, &orgID)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("token not found")
 	}
@@ -1034,6 +1076,9 @@ func (s *PostgresStore) GetAPIToken(tokenID uuid.UUID) (*APIToken, error) {
 	}
 	if expiresAt.Valid {
 		t.ExpiresAt = &expiresAt.Time
+	}
+	if orgID.Valid {
+		t.OrganizationID = orgID.UUID
 	}
 	return &t, nil
 }

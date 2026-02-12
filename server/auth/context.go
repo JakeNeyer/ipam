@@ -12,6 +12,7 @@ type contextKey string
 
 const userContextKey contextKey = "user"
 const requestContextKey contextKey = "request"
+const effectiveOrgContextKey contextKey = "effective_organization"
 
 // WithUser returns a context with the user attached.
 func WithUser(ctx context.Context, user *store.User) context.Context {
@@ -33,9 +34,53 @@ func UserIDFromContext(ctx context.Context) uuid.UUID {
 	return u.ID
 }
 
+// WithEffectiveOrganization sets the effective organization for this request (e.g. from an org-scoped API token).
+// When set, the request is limited to that org even if the user is global admin.
+func WithEffectiveOrganization(ctx context.Context, orgID uuid.UUID) context.Context {
+	return context.WithValue(ctx, effectiveOrgContextKey, orgID)
+}
+
+// EffectiveOrganizationID returns the effective organization for this request, or uuid.Nil if not set.
+// When set (e.g. org-scoped API token), handlers should filter by this org and not treat the user as global admin for scope.
+func EffectiveOrganizationID(ctx context.Context) uuid.UUID {
+	v, _ := ctx.Value(effectiveOrgContextKey).(uuid.UUID)
+	return v
+}
+
+// ResolveOrgID returns the organization ID to use for list/create: effective org from token if set,
+// else user's org (or optional input org for global admin). Used by env/block/alloc/reserved handlers.
+func ResolveOrgID(ctx context.Context, user *store.User, inputOrgID uuid.UUID) *uuid.UUID {
+	if effective := EffectiveOrganizationID(ctx); effective != uuid.Nil {
+		return &effective
+	}
+	if user == nil {
+		return nil
+	}
+	if !IsGlobalAdmin(user) {
+		return &user.OrganizationID
+	}
+	if inputOrgID != uuid.Nil {
+		return &inputOrgID
+	}
+	return nil
+}
+
+// UserOrgForAccess returns the organization ID to use for access checks (get/update/delete).
+// When effective org is set (org-scoped token), returns that; else returns user.OrganizationID (Nil for global admin).
+func UserOrgForAccess(ctx context.Context, user *store.User) uuid.UUID {
+	if effective := EffectiveOrganizationID(ctx); effective != uuid.Nil {
+		return effective
+	}
+	if user == nil {
+		return uuid.Nil
+	}
+	return user.OrganizationID
+}
+
 // IsGlobalAdmin returns true if the user is the global admin (no organization).
 // Global admin can create organizations and access all org-scoped resources.
 // OrganizationID == uuid.Nil is the global-admin sentinel; it must never be assignable by non-global-admin.
+// When EffectiveOrganizationID(ctx) is set (org-scoped token), the request is not treated as global admin for scope.
 func IsGlobalAdmin(u *store.User) bool {
 	return u != nil && u.OrganizationID == uuid.Nil
 }

@@ -481,6 +481,7 @@ resource "google_compute_subnetwork" "app" {'{'}
       <a href="#docs/network-advisor" class="docs-section-link">Network Advisor</a>
       <a href="#docs/subnet-calculator" class="docs-section-link">Subnet calculator</a>
       <a href="#docs/reserved-blocks" class="docs-section-link">Reserved blocks</a>
+      <a href="#docs/admin" class="docs-section-link">Admin</a>
     </div>
     <p class="docs-section-cta-wrap">
       <a href="#docs" class="docs-section-cta">Read the full user guide →</a>

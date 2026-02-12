@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 
 	"github.com/JakeNeyer/ipam/internal/logger"
@@ -21,19 +22,30 @@ type getSetupStatusOutput struct {
 }
 
 // NewGetSetupStatusUseCase returns a use case for GET /api/setup/status.
-func NewGetSetupStatusUseCase(s store.Storer) usecase.Interactor {
+// When INITIAL_ADMIN_EMAIL is set, setup is skipped (admin is or will be created at startup).
+func NewGetSetupStatusUseCase(s store.Storer, cfg *config.Config) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input struct{}, output *getSetupStatusOutput) error {
 		users, err := s.ListUsers(nil)
 		if err != nil {
 			logger.Error(logger.MsgSetupStatusFailed, logger.KeyOperation, "get_setup_status", logger.ErrAttr(err))
 			return status.Wrap(errors.New("setup check failed"), status.InvalidArgument)
 		}
-		output.SetupRequired = len(users) == 0
+		setupRequired := len(users) == 0
+		if setupRequired {
+			email := strings.TrimSpace(os.Getenv("INITIAL_ADMIN_EMAIL"))
+			if email == "" {
+				email = strings.TrimSpace(os.Getenv("INTIAL_ADMIN_EMAIL")) // common typo
+			}
+			if email != "" {
+				setupRequired = false
+			}
+		}
+		output.SetupRequired = setupRequired
 		logger.Info("setup status", logger.KeyOperation, "get_setup_status", logger.KeySetupRequired, output.SetupRequired)
 		return nil
 	})
 	u.SetTitle("Get setup status")
-	u.SetDescription("Returns whether initial setup is required (no users exist)")
+	u.SetDescription("Returns whether initial setup is required (no users exist). When INITIAL_ADMIN_EMAIL is set, setup is skipped.")
 	u.SetExpectedErrors(status.InvalidArgument)
 	return u
 }

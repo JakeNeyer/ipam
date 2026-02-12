@@ -3,6 +3,10 @@
   import { createToken } from './api.js'
 
   export let open = false
+  /** When true (global admin), show required organization dropdown — global admin tokens must be org-scoped. */
+  export let isGlobalAdmin = false
+  /** List of { id, name } for org dropdown. Used when isGlobalAdmin. */
+  export let organizations = []
 
   const dispatch = createEventDispatcher()
 
@@ -17,6 +21,7 @@
   let error = ''
   let createName = ''
   let createExpiresIn = ''
+  let createOrganizationId = ''
   let creating = false
   let newToken = null
   let copied = false
@@ -38,10 +43,20 @@
     newToken = null
     try {
       const expiresAt = getExpiresAt()
-      const res = await createToken(name, expiresAt ? { expires_at: expiresAt } : {})
+      const opts = expiresAt ? { expires_at: expiresAt } : {}
+      if (isGlobalAdmin && createOrganizationId && createOrganizationId.trim()) {
+        opts.organization_id = createOrganizationId.trim()
+      }
+      if (isGlobalAdmin && !(opts.organization_id && opts.organization_id.length > 0)) {
+        error = 'Organization is required for global admin tokens'
+        creating = false
+        return
+      }
+      const res = await createToken(name, opts)
       newToken = res?.token ?? null
       createName = ''
       createExpiresIn = ''
+      createOrganizationId = ''
     } catch (e) {
       error = e?.message ?? 'Failed to create token'
     } finally {
@@ -61,6 +76,7 @@
     newToken = null
     createName = ''
     createExpiresIn = ''
+    createOrganizationId = ''
     error = ''
     dispatch('close')
   }
@@ -105,7 +121,7 @@
           <label for="token-name">Name</label>
           <div class="create-row">
             <input id="token-name" type="text" bind:value={createName} placeholder="e.g. CI / CLI" disabled={creating} />
-            <button type="button" class="btn btn-primary" on:click={handleCreate} disabled={creating || !(createName || '').trim()}>
+            <button type="button" class="btn btn-primary" on:click={handleCreate} disabled={creating || !(createName || '').trim() || (isGlobalAdmin && (!createOrganizationId || !createOrganizationId.trim()))}>
               {creating ? 'Creating…' : 'Create token'}
             </button>
           </div>
@@ -117,6 +133,21 @@
               {/each}
             </select>
           </div>
+          {#if isGlobalAdmin}
+            {#if organizations.length > 0}
+              <label for="token-org">Organization (required)</label>
+              <div class="create-row">
+                <select id="token-org" bind:value={createOrganizationId} disabled={creating} required>
+                  <option value="">Select organization</option>
+                  {#each organizations as org}
+                    <option value={org.id}>{org.name}</option>
+                  {/each}
+                </select>
+              </div>
+            {:else}
+              <p class="modal-muted">Create an organization first to add a token. Global admin tokens must be scoped to an organization.</p>
+            {/if}
+          {/if}
         </div>
       {/if}
 
@@ -183,6 +214,11 @@
     background: var(--table-header-bg);
     padding: 0.1em 0.3em;
     border-radius: 3px;
+    color: var(--text-muted);
+  }
+  .modal-muted {
+    margin: 0 1rem 0.75rem;
+    font-size: 0.8125rem;
     color: var(--text-muted);
   }
   .modal-error {

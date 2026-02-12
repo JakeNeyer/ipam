@@ -24,28 +24,31 @@ type getEnvironmentInput struct {
 }
 
 type listEnvironmentsInput struct {
-	Limit  int      `query:"limit" minimum:"1" maximum:"500"`
-	Offset int      `query:"offset" minimum:"0"`
-	Name   string   `query:"name" maxLength:"255"`
-	_      struct{} `additionalProperties:"false"`
+	Limit          int       `query:"limit" minimum:"1" maximum:"500"`
+	Offset         int       `query:"offset" minimum:"0"`
+	Name           string   `query:"name" maxLength:"255"`
+	OrganizationID uuid.UUID `query:"organization_id" format:"uuid"` // optional; global admin uses this to scope to one org
+	_              struct{} `additionalProperties:"false"`
 }
 
 type listBlocksInput struct {
-	Limit         int       `query:"limit" minimum:"1" maximum:"500"`
-	Offset        int       `query:"offset" minimum:"0"`
-	Name          string    `query:"name" maxLength:"255"`
-	EnvironmentID uuid.UUID `query:"environment_id" format:"uuid"`
-	OrphanedOnly  bool      `query:"orphaned_only"`
-	_             struct{}  `additionalProperties:"false"`
+	Limit          int       `query:"limit" minimum:"1" maximum:"500"`
+	Offset         int       `query:"offset" minimum:"0"`
+	Name           string    `query:"name" maxLength:"255"`
+	EnvironmentID  uuid.UUID `query:"environment_id" format:"uuid"`
+	OrganizationID uuid.UUID `query:"organization_id" format:"uuid"` // optional; global admin uses this to scope to one org
+	OrphanedOnly   bool      `query:"orphaned_only"`
+	_              struct{}  `additionalProperties:"false"`
 }
 
 type listAllocationsInput struct {
-	Limit         int       `query:"limit" minimum:"1" maximum:"500"`
-	Offset        int       `query:"offset" minimum:"0"`
-	Name          string    `query:"name" maxLength:"255"`
-	BlockName     string    `query:"block_name" maxLength:"255"`
-	EnvironmentID uuid.UUID `query:"environment_id" format:"uuid"`
-	_             struct{}  `additionalProperties:"false"`
+	Limit          int       `query:"limit" minimum:"1" maximum:"500"`
+	Offset         int       `query:"offset" minimum:"0"`
+	Name           string    `query:"name" maxLength:"255"`
+	BlockName      string    `query:"block_name" maxLength:"255"`
+	EnvironmentID  uuid.UUID `query:"environment_id" format:"uuid"`
+	OrganizationID uuid.UUID `query:"organization_id" format:"uuid"` // optional; global admin uses this to scope to one org
+	_              struct{}  `additionalProperties:"false"`
 }
 
 type suggestEnvironmentBlockCIDRInput struct {
@@ -110,6 +113,12 @@ type updateAllocationInput struct {
 	ID   uuid.UUID `json:"id" path:"id" required:"true" format:"uuid"`
 	Name string    `json:"name" required:"true" minLength:"1" maxLength:"255"`
 	_    struct{}  `additionalProperties:"false"`
+}
+
+// List reserved blocks input (admin only). Optional organization_id for global admin to scope to one org.
+type listReservedBlocksInput struct {
+	OrganizationID uuid.UUID `query:"organization_id" format:"uuid"`
+	_              struct{}  `additionalProperties:"false"`
 }
 
 // Reserved block input types (admin only)

@@ -4,7 +4,7 @@
   import Icon from '@iconify/svelte'
   import ErrorModal from '../lib/ErrorModal.svelte'
   import { cidrRange } from '../lib/cidr.js'
-  import { user } from '../lib/auth.js'
+  import { user, selectedOrgForGlobalAdmin, isGlobalAdmin } from '../lib/auth.js'
   import { listEnvironments, listBlocks, listAllocations, listReservedBlocks, exportCSV } from '../lib/api.js'
 
   const GRAPH_ICON_SIZE = 12
@@ -498,22 +498,30 @@
     }
   }
 
-  onMount(async () => {
+  function listOpts() {
+    const u = get(user)
+    const opts = {}
+    if (isGlobalAdmin(u) && get(selectedOrgForGlobalAdmin)) opts.organization_id = get(selectedOrgForGlobalAdmin)
+    return opts
+  }
+
+  async function load() {
     loading = true
     error = ''
     const u = get(user)
+    const opts = listOpts()
     try {
       const [envsRes, blksRes, allocsRes] = await Promise.all([
-        listEnvironments(),
-        listBlocks(),
-        listAllocations(),
+        listEnvironments(opts),
+        listBlocks(opts),
+        listAllocations(opts),
       ])
       environments = envsRes.environments
       blocks = blksRes.blocks
       allocations = allocsRes.allocations
       if (u?.role === 'admin') {
         try {
-          const r = await listReservedBlocks()
+          const r = await listReservedBlocks(opts)
           reservedBlocks = r.reserved_blocks || []
         } catch (_) {}
       }
@@ -523,7 +531,9 @@
     } finally {
       loading = false
     }
-  })
+  }
+
+  $: $user, $selectedOrgForGlobalAdmin, $user && (!isGlobalAdmin($user) || $selectedOrgForGlobalAdmin) && load()
 </script>
 
 <div class="dashboard">
@@ -551,11 +561,11 @@
           <span class="stat-value">{allocations.length}</span>
           <span class="stat-label">Allocations</span>
         </a>
-        <a href="#networks" class="stat-card stat-card-link">
+        <a href="#networks" class="stat-card stat-card-link" title="Total IPs: {totalIPs.toLocaleString()}">
           <span class="stat-value">{totalIPs.toLocaleString()}</span>
           <span class="stat-label">Total IPs</span>
         </a>
-        <a href="#networks" class="stat-card stat-card-link">
+        <a href="#networks" class="stat-card stat-card-link" title="Allocated IPs: {usedIPs.toLocaleString()}">
           <span class="stat-value">{usedIPs.toLocaleString()}</span>
           <span class="stat-label">Allocated IPs</span>
         </a>
@@ -891,6 +901,7 @@
     gap: 0.875rem;
   }
   .stat-card {
+    container-type: inline-size;
     background: var(--surface);
     border-radius: var(--radius);
     padding: 1.125rem 1rem;
@@ -898,6 +909,7 @@
     flex-direction: column;
     gap: 0.25rem;
     box-shadow: var(--shadow-sm);
+    min-width: 0;
   }
   .stat-card-accent .stat-value {
     color: var(--accent);
@@ -913,11 +925,12 @@
     box-shadow: var(--shadow-sm);
   }
   .stat-value {
-    font-size: 1.75rem;
+    font-size: clamp(0.75rem, min(1.75rem, 15cqw), 1.75rem);
     font-weight: 600;
     color: var(--text);
     font-variant-numeric: tabular-nums;
     line-height: 1.2;
+    min-height: 0;
   }
   .stat-label {
     font-size: 0.75rem;

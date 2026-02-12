@@ -112,15 +112,86 @@ func (s *Store) DeleteOrganization(id uuid.UUID) error {
 	if _, exists := s.organizations[id]; !exists {
 		return fmt.Errorf("organization not found")
 	}
-	for _, u := range s.users {
-		if u.OrganizationID == id {
-			return fmt.Errorf("organization has users; remove or reassign them first")
-		}
-	}
+	// Cascade: environments (and their blocks, allocations) → reserved blocks → signup invites → api tokens → users → organization
+	var orgEnvIDs []uuid.UUID
 	for _, env := range s.environments {
 		if env.OrganizationID == id {
-			return fmt.Errorf("organization has environments; remove them first")
+			orgEnvIDs = append(orgEnvIDs, env.Id)
 		}
+	}
+	for _, envID := range orgEnvIDs {
+		for bid, block := range s.blocks {
+			if block.EnvironmentID != envID {
+				continue
+			}
+			blockName := strings.TrimSpace(block.Name)
+			for aid, alloc := range s.allocations {
+				if strings.EqualFold(strings.TrimSpace(alloc.Block.Name), blockName) {
+					delete(s.allocations, aid)
+				}
+			}
+			delete(s.blocks, bid)
+		}
+		delete(s.environments, envID)
+	}
+	var reservedIDsToDelete []uuid.UUID
+	for rid, r := range s.reservedBlocks {
+		if r.OrganizationID == id {
+			reservedIDsToDelete = append(reservedIDsToDelete, rid)
+		}
+	}
+	for _, rid := range reservedIDsToDelete {
+		delete(s.reservedBlocks, rid)
+	}
+	var inviteIDsToDelete []uuid.UUID
+	for invID, inv := range s.signupInvites {
+		if inv != nil && inv.OrganizationID == id {
+			inviteIDsToDelete = append(inviteIDsToDelete, invID)
+		}
+	}
+	for _, invID := range inviteIDsToDelete {
+		if inv := s.signupInvites[invID]; inv != nil {
+			delete(s.inviteByHash, inv.TokenHash)
+		}
+		delete(s.signupInvites, invID)
+	}
+	var orgUserIDs []uuid.UUID
+	for uid, u := range s.users {
+		if u.OrganizationID == id {
+			orgUserIDs = append(orgUserIDs, uid)
+		}
+	}
+	orgUserIDSet := make(map[uuid.UUID]bool)
+	for _, uid := range orgUserIDs {
+		orgUserIDSet[uid] = true
+	}
+	var tokenIDsToDelete []uuid.UUID
+	var sessionIDsToDelete []string
+	for tokenID, tok := range s.tokens {
+		if tok != nil && orgUserIDSet[tok.UserID] {
+			tokenIDsToDelete = append(tokenIDsToDelete, tokenID)
+		}
+	}
+	for sid, sess := range s.sessions {
+		if sess != nil && orgUserIDSet[sess.UserID] {
+			sessionIDsToDelete = append(sessionIDsToDelete, sid)
+		}
+	}
+	for _, tokenID := range tokenIDsToDelete {
+		if tok := s.tokens[tokenID]; tok != nil {
+			delete(s.tokenByHash, tok.KeyHash)
+		}
+		delete(s.tokens, tokenID)
+	}
+	for _, sid := range sessionIDsToDelete {
+		delete(s.sessions, sid)
+	}
+	for _, uid := range orgUserIDs {
+		u := s.users[uid]
+		if u != nil {
+			delete(s.usersByEmail, strings.ToLower(strings.TrimSpace(u.Email)))
+		}
+		delete(s.users, uid)
 	}
 	delete(s.organizations, id)
 	return nil
@@ -337,9 +408,16 @@ func (s *Store) ListAllocationsFiltered(name string, blockName string, environme
 	if environmentID != uuid.Nil {
 		blockNamesOK = make(map[string]bool)
 		for _, block := range s.blocks {
-			if block.EnvironmentID == environmentID {
-				blockNamesOK[strings.ToLower(strings.TrimSpace(block.Name))] = true
+			if block.EnvironmentID != environmentID {
+				continue
 			}
+			if organizationID != nil {
+				env, exists := s.environments[block.EnvironmentID]
+				if !exists || env.OrganizationID != *organizationID {
+					continue
+				}
+			}
+			blockNamesOK[strings.ToLower(strings.TrimSpace(block.Name))] = true
 		}
 	} else if organizationID != nil {
 		blockNamesOK = make(map[string]bool)
@@ -659,7 +737,8 @@ func hashToken(raw string) string {
 
 // CreateAPIToken creates a new API token for the user. Returns the raw token (only shown once).
 // expiresAt is optional; nil means the token never expires.
-func (s *Store) CreateAPIToken(userID uuid.UUID, name string, expiresAt *time.Time) (token *APIToken, rawToken string, err error) {
+// organizationID is optional; when set (global admin only), the token is scoped to that org.
+func (s *Store) CreateAPIToken(userID uuid.UUID, name string, expiresAt *time.Time, organizationID *uuid.UUID) (token *APIToken, rawToken string, err error) {
 	secret := make([]byte, apiTokenSecretBytes)
 	if _, err := rand.Read(secret); err != nil {
 		return nil, "", err
@@ -672,14 +751,19 @@ func (s *Store) CreateAPIToken(userID uuid.UUID, name string, expiresAt *time.Ti
 	if _, exists := s.users[userID]; !exists {
 		return nil, "", fmt.Errorf("user not found")
 	}
+	orgID := uuid.Nil
+	if organizationID != nil {
+		orgID = *organizationID
+	}
 	id := s.GenerateID()
 	token = &APIToken{
-		ID:        id,
-		UserID:    userID,
-		Name:      strings.TrimSpace(name),
-		KeyHash:   keyHash,
-		CreatedAt: time.Now(),
-		ExpiresAt: expiresAt,
+		ID:             id,
+		UserID:         userID,
+		Name:           strings.TrimSpace(name),
+		KeyHash:        keyHash,
+		CreatedAt:      time.Now(),
+		ExpiresAt:      expiresAt,
+		OrganizationID: orgID,
 	}
 	s.tokens[id] = token
 	s.tokenByHash[keyHash] = id
@@ -688,6 +772,21 @@ func (s *Store) CreateAPIToken(userID uuid.UUID, name string, expiresAt *time.Ti
 
 // GetUserByTokenHash returns the user for the given token hash, or nil if not found or token expired.
 func (s *Store) GetUserByTokenHash(keyHash string) (*User, error) {
+	tok, err := s.GetAPITokenByKeyHash(keyHash)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	user, exists := s.users[tok.UserID]
+	s.mu.RUnlock()
+	if !exists {
+		return nil, fmt.Errorf("user not found")
+	}
+	return user, nil
+}
+
+// GetAPITokenByKeyHash returns the API token for the given key hash, or error if not found or expired.
+func (s *Store) GetAPITokenByKeyHash(keyHash string) (*APIToken, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	tokenID, exists := s.tokenByHash[keyHash]
@@ -701,11 +800,7 @@ func (s *Store) GetUserByTokenHash(keyHash string) (*User, error) {
 	if tok.ExpiresAt != nil && time.Now().After(*tok.ExpiresAt) {
 		return nil, fmt.Errorf("token expired")
 	}
-	user, exists := s.users[tok.UserID]
-	if !exists {
-		return nil, fmt.Errorf("user not found")
-	}
-	return user, nil
+	return tok, nil
 }
 
 // ListAPITokens returns all API tokens for the user (without secret).

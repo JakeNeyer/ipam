@@ -218,3 +218,27 @@ func TestGlobalAdmin_OrgAdminCannotCallUpdateUserOrganization(t *testing.T) {
 		t.Errorf("PATCH /api/admin/users/:id/organization as org admin: status = %d, want 403", rr.Code)
 	}
 }
+
+// TestGlobalAdmin_CannotChangeOwnOrganization proves a global admin cannot change their own organization.
+func TestGlobalAdmin_CannotChangeOwnOrganization(t *testing.T) {
+	s, globalAdmin, org, _ := setupGlobalAdminTest(t)
+	handler := UpdateUserOrganizationHandler(s)
+
+	body := []byte(`{"organization_id":"` + org.ID.String() + `"}`)
+	path := "/api/admin/users/" + globalAdmin.ID.String() + "/organization"
+	req := httptest.NewRequest(http.MethodPatch, path, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(auth.WithUser(req.Context(), globalAdmin))
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("PATCH own organization as global admin: status = %d, want 403", rr.Code)
+	}
+	var errBody map[string]string
+	_ = json.Unmarshal(rr.Body.Bytes(), &errBody)
+	if errBody["error"] != "cannot change your own organization" {
+		t.Errorf("error = %q, want %q", errBody["error"], "cannot change your own organization")
+	}
+}

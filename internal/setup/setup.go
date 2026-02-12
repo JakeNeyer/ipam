@@ -35,8 +35,12 @@ func NewStore(ctx context.Context) (st store.Storer, close func(), err error) {
 
 // EnsureInitialAdmin creates the first admin when INITIAL_ADMIN_EMAIL is set and no users exist.
 // When oauthEnabled is true, INITIAL_ADMIN_PASSWORD is optional; otherwise both email and password are required.
+// Also accepts INTIAL_ADMIN_EMAIL (missing N) as a common typo.
 func EnsureInitialAdmin(st store.Storer, oauthEnabled bool) {
 	email := strings.TrimSpace(os.Getenv("INITIAL_ADMIN_EMAIL"))
+	if email == "" {
+		email = strings.TrimSpace(os.Getenv("INTIAL_ADMIN_EMAIL"))
+	}
 	password := os.Getenv("INITIAL_ADMIN_PASSWORD")
 	if email == "" {
 		return

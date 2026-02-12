@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { theme } from './lib/theme.js'
-  import { checkAuth, authChecked, user, setupRequired, checkSetupRequired, logout } from './lib/auth.js'
+  import { checkAuth, authChecked, user, setupRequired, checkSetupRequired, logout, selectedOrgForGlobalAdmin, selectedOrgNameForGlobalAdmin, isGlobalAdmin } from './lib/auth.js'
   import { completeTour } from './lib/api.js'
   import Nav from './lib/Nav.svelte'
   import CommandPalette from './lib/CommandPalette.svelte'
@@ -17,8 +17,9 @@
   import Admin from './routes/Admin.svelte'
   import ReservedBlocks from './routes/ReservedBlocks.svelte'
   import SubnetCalculator from './routes/SubnetCalculator.svelte'
-import NetworkAdvisor from './routes/NetworkAdvisor.svelte'
+  import NetworkAdvisor from './routes/NetworkAdvisor.svelte'
   import Landing from './routes/Landing.svelte'
+  import GlobalAdminDashboard from './routes/GlobalAdminDashboard.svelte'
 
   let route = 'landing'
   let showTour = false
@@ -46,7 +47,7 @@ import NetworkAdvisor from './routes/NetworkAdvisor.svelte'
     routeCreateAllocation = opts.createAllocation === true
     routeEnvId = opts.env ?? null
     if (path === 'dashboard') {
-      window.location.hash = ''
+      window.location.hash = 'dashboard'
     } else if (path === 'networks') {
       const params = new URLSearchParams()
       if (environmentId) params.set('environment', environmentId)
@@ -64,6 +65,8 @@ import NetworkAdvisor from './routes/NetworkAdvisor.svelte'
       window.location.hash = 'environments' + (q ? '?' + q : '')
     } else if (path === 'docs') {
       window.location.hash = opts.page ? 'docs/' + opts.page : 'docs'
+    } else if (path === 'global-admin') {
+      window.location.hash = 'global-admin'
     } else if (path === 'admin') {
       window.location.hash = 'admin'
     } else if (path === 'reserved-blocks') {
@@ -132,8 +135,14 @@ import NetworkAdvisor from './routes/NetworkAdvisor.svelte'
     } else if (path === 'docs' || path.startsWith('docs/')) {
       route = 'docs'
       routeDocsPage = path === 'docs' ? '' : path.slice(5)
+    } else if (path === 'global-admin') {
+      route = 'global-admin'
+      selectedOrgForGlobalAdmin.set(null)
+      selectedOrgNameForGlobalAdmin.set(null)
     } else if (path === 'admin') {
       route = 'admin'
+      selectedOrgForGlobalAdmin.set(null)
+      selectedOrgNameForGlobalAdmin.set(null)
     } else if (path === 'reserved-blocks') {
       route = 'reserved-blocks'
     } else if (path === 'subnet-calculator') {
@@ -183,6 +192,9 @@ import NetworkAdvisor from './routes/NetworkAdvisor.svelte'
 
   $: if ($authChecked && $user && (route === 'admin' || route === 'reserved-blocks') && $user.role !== 'admin') {
     window.location.hash = ''
+  }
+  $: if ($authChecked && $user && isGlobalAdmin($user) && route === 'dashboard' && !$selectedOrgForGlobalAdmin) {
+    window.location.hash = 'global-admin'
   }
 
   let setupCheckRequested = false
@@ -267,9 +279,23 @@ import NetworkAdvisor from './routes/NetworkAdvisor.svelte'
   {/if}
 {:else}
   <div class="app" role="presentation">
-    <Nav current={route} currentUser={$user} on:nav={(e) => go(e.detail)} on:logout={handleLogout} />
+    <Nav
+      current={route}
+      currentUser={$user}
+      selectedOrgIdFromParent={$selectedOrgForGlobalAdmin}
+      on:nav={(e) => go(e.detail)}
+      on:logout={handleLogout}
+    />
     <main class="main" data-tour="tour-command-palette">
-      {#if route === 'dashboard'}
+      {#if isGlobalAdmin($user) && route === 'global-admin'}
+        <GlobalAdminDashboard
+          on:selectOrg={(e) => {
+            selectedOrgForGlobalAdmin.set(e.detail.id)
+            selectedOrgNameForGlobalAdmin.set(e.detail.name)
+            go('dashboard')
+          }}
+        />
+      {:else if route === 'dashboard'}
         <Dashboard
           on:envBlocks={(e) => go('networks', e.detail)}
           on:viewOrphaned={() => { window.location.hash = 'networks?orphaned=1'; parseHash() }}

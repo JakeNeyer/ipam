@@ -12,3 +12,4 @@ IPAM is an IP Address Management application for tracking environments, network 
 - [Network Advisor](#docs/network-advisor) — Plan and generate an IP strategy.
 - [Subnet calculator](#docs/subnet-calculator) — Explore subnets without creating resources.
 - [Reserved blocks](#docs/reserved-blocks) — Reserved CIDR ranges (admin only).
+- [Admin](#docs/admin) — Manage users, organizations, signup links, and API tokens (admin only).

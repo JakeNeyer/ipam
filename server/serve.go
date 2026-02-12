@@ -25,7 +25,7 @@ func NewServer(s store.Storer, cfg *config.Config) *web.Service {
 		gzip.Middleware,
 	)
 
-	getSetupStatusUC := handlers.NewGetSetupStatusUseCase(s)
+	getSetupStatusUC := handlers.NewGetSetupStatusUseCase(s, cfg)
 	svc.Get("/api/setup/status", getSetupStatusUC)
 
 	postSetupUC := handlers.NewPostSetupUseCase(s, cfg)

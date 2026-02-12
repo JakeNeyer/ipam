@@ -46,13 +46,19 @@ func Middleware(s store.Storer) func(http.Handler) http.Handler {
 				}
 			}
 
+			var effectiveOrg uuid.UUID
 			if user == nil {
 				if bearer := r.Header.Get("Authorization"); strings.HasPrefix(bearer, "Bearer ") {
 					rawToken := strings.TrimSpace(strings.TrimPrefix(bearer, "Bearer "))
 					if rawToken != "" {
 						keyHash := hashToken(rawToken)
-						if u, err := s.GetUserByTokenHash(keyHash); err == nil {
-							user = u
+						if tok, err := s.GetAPITokenByKeyHash(keyHash); err == nil {
+							if u, err := s.GetUser(tok.UserID); err == nil {
+								user = u
+								if tok.OrganizationID != uuid.Nil {
+									effectiveOrg = tok.OrganizationID
+								}
+							}
 						}
 					}
 				}
@@ -64,6 +70,9 @@ func Middleware(s store.Storer) func(http.Handler) http.Handler {
 			}
 			ctx := WithRequest(r.Context(), r)
 			ctx = WithUser(ctx, user)
+			if effectiveOrg != uuid.Nil {
+				ctx = WithEffectiveOrganization(ctx, effectiveOrg)
+			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

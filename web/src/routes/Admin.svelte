@@ -40,6 +40,8 @@
   let editingOrgName = ''
   let updatingOrgId = null
   let deletingOrgId = null
+  let showDeleteOrgModal = false
+  let orgToDelete = null // { id, name } when modal is open
 
   let userSortBy = 'email' // 'email' | 'role'
   let userSortDir = 'asc'
@@ -308,9 +310,15 @@
     }
   }
 
-  async function handleDeleteOrganization(orgId) {
-    if (!orgId) return
-    if (!confirm('Delete this organization? It must have no users and no environments.')) return
+  function openDeleteOrgModal(org) {
+    orgToDelete = org ? { id: org.id, name: org.name } : null
+    showDeleteOrgModal = !!org
+  }
+
+  async function confirmDeleteOrganization() {
+    if (!orgToDelete?.id) return
+    const orgId = orgToDelete.id
+    openDeleteOrgModal(null)
     deletingOrgId = orgId
     organizationsError = ''
     try {
@@ -321,6 +329,11 @@
     } finally {
       deletingOrgId = null
     }
+  }
+
+  async function handleDeleteOrganization(org) {
+    if (!org?.id) return
+    openDeleteOrgModal(org)
   }
 
   function formatOrgDate(iso) {
@@ -338,7 +351,15 @@
     loadTokens()
     loadOrganizations()
   })
+
+  function handleKeydown(e) {
+    if (showDeleteOrgModal && e.key === 'Escape') {
+      openDeleteOrgModal(null)
+    }
+  }
 </script>
+
+<svelte:window on:keydown={handleKeydown} />
 
 <div class="admin-page">
   <header class="page-header">
@@ -346,8 +367,44 @@
   </header>
 
   <AddUserModal open={showAddUserModal} isGlobalAdmin={isGlobalAdmin} organizations={organizations} on:close={() => (showAddUserModal = false)} on:created={load} />
-  <ApiTokensModal open={showApiTokensModal} on:close={() => { showApiTokensModal = false; loadTokens() }} />
+  <ApiTokensModal
+    open={showApiTokensModal}
+    isGlobalAdmin={isGlobalAdmin}
+    organizations={organizations}
+    on:close={() => { showApiTokensModal = false; loadTokens() }}
+  />
   <SignupInviteModal open={showSignupInviteModal} isGlobalAdmin={isGlobalAdmin} organizations={organizations} on:close={() => { showSignupInviteModal = false; loadInvites() }} />
+
+  {#if showDeleteOrgModal && orgToDelete}
+    <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions -->
+    <div
+      class="modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="delete-org-modal-title"
+      aria-describedby="delete-org-modal-desc"
+      on:click={() => openDeleteOrgModal(null)}
+    >
+      <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+      <div class="modal delete-org-modal" on:click|stopPropagation>
+        <h2 id="delete-org-modal-title" class="modal-title">Delete organization</h2>
+        <p id="delete-org-modal-desc" class="modal-desc">
+          Deleting <strong>{orgToDelete.name}</strong> will permanently remove this organization and <strong>all of its resources</strong>:
+        </p>
+        <ul class="modal-cascade-list">
+          <li>Environments and all network blocks and allocations in them</li>
+          <li>Reserved blocks</li>
+          <li>Users (and their API tokens and sessions)</li>
+          <li>Signup links</li>
+        </ul>
+        <p class="modal-warning">This cannot be undone.</p>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" on:click={() => openDeleteOrgModal(null)}>Cancel</button>
+          <button type="button" class="btn btn-danger" on:click={confirmDeleteOrganization}>Delete organization</button>
+        </div>
+      </div>
+    </div>
+  {/if}
 
   {#if isGlobalAdmin}
   <div class="admin-card">
@@ -443,7 +500,7 @@
                       type="button"
                       class="btn btn-danger btn-small"
                       disabled={deletingOrgId === org.id}
-                      on:click={() => handleDeleteOrganization(org.id)}
+                      on:click={() => handleDeleteOrganization(org)}
                       title="Delete organization"
                     >
                       {deletingOrgId === org.id ? 'Deleting…' : 'Delete'}
@@ -580,7 +637,8 @@
                     <select
                       class="org-select"
                       value={u.organization_id ?? ''}
-                      disabled={updatingUserOrgId === u.id || deletingUserId === u.id}
+                      disabled={updatingUserOrgId === u.id || deletingUserId === u.id || u.id === $user?.id}
+                      title={u.id === $user?.id ? 'You cannot change your own organization' : ''}
                       on:change={(e) => handleUpdateUserOrganization(u.id, e.currentTarget.value)}
                     >
                       <option value="">— None (global admin)</option>
@@ -651,6 +709,7 @@
                   {/if}
                 </button>
               </th>
+              <th class="th-scope">Scope</th>
               <th></th>
             </tr>
           </thead>
@@ -660,6 +719,14 @@
                 <td class="name">{t.name}</td>
                 <td>{formatTokenDate(t.created_at)}</td>
                 <td class="expires">{formatExpiry(t.expires_at)}</td>
+                <td class="scope">
+                  {#if t.organization_id && organizations.length > 0}
+                    {@const org = organizations.find((o) => o.id === t.organization_id)}
+                    {org ? org.name : t.organization_id}
+                  {:else}
+                    Full access
+                  {/if}
+                </td>
                 <td class="table-actions">
                   <button
                     type="button"
@@ -870,5 +937,58 @@
   }
   .table td.name {
     font-weight: 500;
+  }
+
+  /* Delete organization warning modal */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.35);
+    padding: 1rem;
+  }
+  .modal-overlay .modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-md);
+    max-width: 420px;
+    width: 100%;
+    max-height: 90vh;
+    overflow: auto;
+    padding: 1rem 1.25rem;
+  }
+  .modal-overlay .modal-title {
+    margin: 0 0 0.75rem;
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .modal-overlay .modal-desc {
+    margin: 0 0 0.5rem;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    line-height: 1.45;
+  }
+  .modal-overlay .modal-cascade-list {
+    margin: 0 0 0.75rem;
+    padding-left: 1.25rem;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+  .modal-overlay .modal-warning {
+    margin: 0 0 1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--danger, #dc2626);
+  }
+  .modal-overlay .modal-actions {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: flex-end;
   }
 </style>

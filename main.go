@@ -45,6 +45,7 @@ func main() {
 	serverCfg := config.LoadFromEnv()
 	oauthEnabled := len(serverCfg.EnabledOAuthProviders()) > 0
 	setup.EnsureInitialAdmin(st, oauthEnabled)
+	setup.EnsureDemoFixtures(st)
 
 	s := server.NewServer(st, serverCfg)
 

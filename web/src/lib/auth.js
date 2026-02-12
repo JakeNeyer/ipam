@@ -11,6 +11,19 @@ export const authChecked = writable(false)
 export const setupRequired = writable(null)
 
 /**
+ * Selected organization ID for global admin "switch org" context.
+ * When set, list/create calls scope to this org. When null, global admin sees all orgs.
+ * @type {import('svelte/store').Writable<string | null>}
+ */
+export const selectedOrgForGlobalAdmin = writable(null)
+
+/**
+ * Display name of the selected org (for global admin banner). Kept in sync when org is selected.
+ * @type {import('svelte/store').Writable<string | null>}
+ */
+export const selectedOrgNameForGlobalAdmin = writable(null)
+
+/**
  * Fetches current user and updates the store. Call on app load.
  * @returns {Promise<boolean>} true if logged in, false otherwise
  */
@@ -35,7 +48,14 @@ export async function logout() {
     await apiLogout()
   } finally {
     user.set(null)
+    selectedOrgForGlobalAdmin.set(null)
+    selectedOrgNameForGlobalAdmin.set(null)
   }
+}
+
+/** True when the current user is global admin (admin with no organization). */
+export function isGlobalAdmin(u) {
+  return u?.role === 'admin' && (u?.organization_id == null || u?.organization_id === '')
 }
 
 /**

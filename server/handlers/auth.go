@@ -194,24 +194,27 @@ func NewTourCompletedUseCase(s store.Storer) usecase.Interactor {
 
 // API token response types
 type apiTokenResponse struct {
-	ID        string  `json:"id"`
-	Name      string  `json:"name"`
-	CreatedAt string  `json:"created_at"`
-	ExpiresAt *string `json:"expires_at,omitempty"`
+	ID             string  `json:"id"`
+	Name           string  `json:"name"`
+	CreatedAt      string  `json:"created_at"`
+	ExpiresAt      *string `json:"expires_at,omitempty"`
+	OrganizationID string  `json:"organization_id,omitempty"` // when set, token is scoped to this org
 }
 
 type createTokenResponse struct {
-	ID        string  `json:"id"`
-	Name      string  `json:"name"`
+	ID             string  `json:"id"`
+	Name           string  `json:"name"`
 	Token     string  `json:"token"`
-	CreatedAt string  `json:"created_at"`
-	ExpiresAt *string `json:"expires_at,omitempty"`
+	CreatedAt      string  `json:"created_at"`
+	ExpiresAt      *string `json:"expires_at,omitempty"`
+	OrganizationID string  `json:"organization_id,omitempty"`
 }
 
 // CreateTokenRequest is the body for POST /api/auth/me/tokens.
 type CreateTokenRequest struct {
-	Name      string  `json:"name"`
-	ExpiresAt *string `json:"expires_at,omitempty"`
+	Name           string  `json:"name"`
+	ExpiresAt      *string `json:"expires_at,omitempty"`
+	OrganizationID *string `json:"organization_id,omitempty"` // optional; global admin only — scopes token to this org
 }
 
 // listTokensOutput is the response for GET /api/auth/me/tokens.
@@ -242,11 +245,16 @@ func NewListTokensUseCase(s store.Storer) usecase.Interactor {
 				s := t.ExpiresAt.Format(time.RFC3339)
 				expiresAt = &s
 			}
+			orgID := ""
+			if t.OrganizationID != uuid.Nil {
+				orgID = t.OrganizationID.String()
+			}
 			out = append(out, apiTokenResponse{
-				ID:        t.ID.String(),
-				Name:      t.Name,
-				CreatedAt: t.CreatedAt.Format(time.RFC3339),
-				ExpiresAt: expiresAt,
+				ID:             t.ID.String(),
+				Name:           t.Name,
+				CreatedAt:      t.CreatedAt.Format(time.RFC3339),
+				ExpiresAt:      expiresAt,
+				OrganizationID: orgID,
 			})
 		}
 		output.Tokens = out
@@ -272,6 +280,23 @@ func NewCreateTokenUseCase(s store.Storer) usecase.Interactor {
 		if name == "" {
 			return status.Wrap(errors.New("name is required"), status.InvalidArgument)
 		}
+		var orgID *uuid.UUID
+		if input.OrganizationID != nil && *input.OrganizationID != "" {
+			if !auth.IsGlobalAdmin(user) {
+				return status.Wrap(errors.New("only global admins can create org-scoped tokens"), status.PermissionDenied)
+			}
+			parsed, err := uuid.Parse(*input.OrganizationID)
+			if err != nil {
+				return status.Wrap(errors.New("organization_id must be a valid UUID"), status.InvalidArgument)
+			}
+			if _, err := s.GetOrganization(parsed); err != nil {
+				return status.Wrap(errors.New("organization not found"), status.NotFound)
+			}
+			orgID = &parsed
+		}
+		if auth.IsGlobalAdmin(user) && orgID == nil {
+			return status.Wrap(errors.New("organization_id is required for global admin tokens"), status.InvalidArgument)
+		}
 		var expiresAt *time.Time
 		if input.ExpiresAt != nil && *input.ExpiresAt != "" {
 			t, err := time.Parse(time.RFC3339, *input.ExpiresAt)
@@ -283,7 +308,7 @@ func NewCreateTokenUseCase(s store.Storer) usecase.Interactor {
 			}
 			expiresAt = &t
 		}
-		token, rawToken, err := s.CreateAPIToken(user.ID, name, expiresAt)
+		token, rawToken, err := s.CreateAPIToken(user.ID, name, expiresAt, orgID)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -292,12 +317,17 @@ func NewCreateTokenUseCase(s store.Storer) usecase.Interactor {
 			s := token.ExpiresAt.Format(time.RFC3339)
 			expiresAtStr = &s
 		}
+		createOrgID := ""
+		if token.OrganizationID != uuid.Nil {
+			createOrgID = token.OrganizationID.String()
+		}
 		output.Token = createTokenResponse{
-			ID:        token.ID.String(),
-			Name:      token.Name,
-			Token:     rawToken,
-			CreatedAt: token.CreatedAt.Format(time.RFC3339),
-			ExpiresAt: expiresAtStr,
+			ID:             token.ID.String(),
+			Name:           token.Name,
+			Token:          rawToken,
+			CreatedAt:      token.CreatedAt.Format(time.RFC3339),
+			ExpiresAt:      expiresAtStr,
+			OrganizationID: createOrgID,
 		}
 		return nil
 	})

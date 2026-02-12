@@ -4,6 +4,7 @@
   import Icon from '@iconify/svelte'
   import ErrorModal from '../lib/ErrorModal.svelte'
   import { cidrRange } from '../lib/cidr.js'
+  import { user, selectedOrgForGlobalAdmin, isGlobalAdmin } from '../lib/auth.js'
   import { listEnvironments, listAllocations, createEnvironment, updateEnvironment, deleteEnvironment, getEnvironment } from '../lib/api.js'
 
   export let openCreateFromQuery = false
@@ -77,6 +78,12 @@
     return list
   })()
 
+  function listOpts(extra = {}) {
+    const opts = { ...extra }
+    if (isGlobalAdmin($user) && $selectedOrgForGlobalAdmin) opts.organization_id = $selectedOrgForGlobalAdmin
+    return opts
+  }
+
   async function load() {
     loading = true
     error = ''
@@ -84,7 +91,7 @@
       if (openEnvironmentId) {
         const [detail, allocsRes] = await Promise.all([
           getEnvironment(openEnvironmentId),
-          listAllocations(),
+          listAllocations(listOpts()),
         ])
         environments = [{ id: detail.id, name: detail.name }]
         envTotal = 1
@@ -93,8 +100,8 @@
         expandedEnvBlocks = detail.blocks || []
       } else {
         const [envsRes, allocsRes] = await Promise.all([
-          listEnvironments({ limit: envPageSize, offset: envPage * envPageSize }),
-          listAllocations(),
+          listEnvironments(listOpts({ limit: envPageSize, offset: envPage * envPageSize })),
+          listAllocations(listOpts()),
         ])
         environments = envsRes.environments
         envTotal = envsRes.total
@@ -110,7 +117,7 @@
     }
   }
 
-  $: openEnvironmentId, load()
+  $: openEnvironmentId, $selectedOrgForGlobalAdmin, load()
 
   $: envStart = envTotal === 0 ? 0 : envPage * envPageSize + 1
   $: envEnd = Math.min(envPage * envPageSize + envPageSize, envTotal)
@@ -167,7 +174,7 @@
         initialBlockName.trim() && initialBlockCidr.trim()
           ? { name: initialBlockName.trim(), cidr: initialBlockCidr.trim() }
           : null
-      await createEnvironment(name, initialBlock)
+      await createEnvironment(name, initialBlock, isGlobalAdmin($user) ? $selectedOrgForGlobalAdmin : null)
       createName = ''
       initialBlockName = ''
       initialBlockCidr = ''

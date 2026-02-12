@@ -16,15 +16,12 @@ import (
 
 // NewListReservedBlocksUseCase returns a use case for GET /api/reserved-blocks. Admin only.
 func NewListReservedBlocksUseCase(s store.Storer) usecase.Interactor {
-	u := usecase.NewInteractor(func(ctx context.Context, input struct{}, output *reservedBlockListOutput) error {
+	u := usecase.NewInteractor(func(ctx context.Context, input listReservedBlocksInput, output *reservedBlockListOutput) error {
 		user := auth.UserFromContext(ctx)
 		if user == nil || user.Role != store.RoleAdmin {
 			return status.Wrap(errors.New("forbidden"), status.PermissionDenied)
 		}
-		var orgID *uuid.UUID
-		if !auth.IsGlobalAdmin(user) {
-			orgID = &user.OrganizationID
-		}
+		orgID := auth.ResolveOrgID(ctx, user, input.OrganizationID)
 		list, err := s.ListReservedBlocks(orgID)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
@@ -62,12 +59,13 @@ func NewCreateReservedBlockUseCase(s store.Storer) usecase.Interactor {
 		if !network.ValidateCIDR(cidr) {
 			return status.Wrap(errors.New("invalid CIDR format"), status.InvalidArgument)
 		}
-		orgID := user.OrganizationID
-		if auth.IsGlobalAdmin(user) && input.OrganizationID != uuid.Nil {
-			orgID = input.OrganizationID
+		orgIDPtr := auth.ResolveOrgID(ctx, user, input.OrganizationID)
+		if orgIDPtr == nil {
+			return status.Wrap(errors.New("organization is required for global admin"), status.InvalidArgument)
 		}
-		if !auth.IsGlobalAdmin(user) && orgID == uuid.Nil {
-			return status.Wrap(errors.New("organization is required"), status.InvalidArgument)
+		orgID := *orgIDPtr
+		if _, err := s.GetOrganization(orgID); err != nil {
+			return status.Wrap(errors.New("organization not found"), status.NotFound)
 		}
 		overlap, err := s.OverlapsReservedBlock(cidr, &orgID)
 		if err != nil {
@@ -108,6 +106,13 @@ func NewDeleteReservedBlockUseCase(s store.Storer) usecase.Interactor {
 		if user == nil || user.Role != store.RoleAdmin {
 			return status.Wrap(errors.New("forbidden"), status.PermissionDenied)
 		}
+		r, err := s.GetReservedBlock(input.ID)
+		if err != nil {
+			return status.Wrap(errors.New("reserved block not found"), status.NotFound)
+		}
+		if userOrg := auth.UserOrgForAccess(ctx, user); userOrg != uuid.Nil && r.OrganizationID != userOrg {
+			return status.Wrap(errors.New("reserved block not found"), status.NotFound)
+		}
 		if err := s.DeleteReservedBlock(input.ID); err != nil {
 			if err.Error() == "reserved block not found" {
 				return status.Wrap(err, status.NotFound)
@@ -131,6 +136,9 @@ func NewUpdateReservedBlockUseCase(s store.Storer) usecase.Interactor {
 		}
 		r, err := s.GetReservedBlock(input.ID)
 		if err != nil {
+			return status.Wrap(errors.New("reserved block not found"), status.NotFound)
+		}
+		if userOrg := auth.UserOrgForAccess(ctx, user); userOrg != uuid.Nil && r.OrganizationID != userOrg {
 			return status.Wrap(errors.New("reserved block not found"), status.NotFound)
 		}
 		r.Name = strings.TrimSpace(input.Name)

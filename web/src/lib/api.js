@@ -75,22 +75,29 @@ async function del(path) {
 }
 
 /**
- * @param {{ limit?: number, offset?: number, name?: string }} opts
+ * @param {{ limit?: number, offset?: number, name?: string, organization_id?: string }} opts
  * @returns {{ environments: Array, total: number }}
  */
 export async function listEnvironments(opts = {}) {
   const limit = opts.limit ?? 500
   const params = { limit: limit || 500, offset: opts.offset ?? 0 }
   if (opts.name != null && opts.name !== '') params.name = opts.name
+  if (opts.organization_id != null && opts.organization_id !== '') params.organization_id = opts.organization_id
   const data = await get('/environments', params)
   return { environments: data.environments ?? [], total: data.total ?? 0 }
 }
 
-export async function createEnvironment(name, initialBlock = null) {
+/**
+ * @param {string} name
+ * @param {{ name: string, cidr: string } | null} [initialBlock]
+ * @param {string | null} [organizationId] - Global admin: create env in this org
+ */
+export async function createEnvironment(name, initialBlock = null, organizationId = null) {
   const body = { name }
   if (initialBlock && initialBlock.name && initialBlock.cidr) {
     body.initial_block = { name: initialBlock.name, cidr: initialBlock.cidr }
   }
+  if (organizationId != null && organizationId !== '') body.organization_id = organizationId
   return post('/environments', body)
 }
 
@@ -112,7 +119,7 @@ export async function deleteEnvironment(id) {
 }
 
 /**
- * @param {{ limit?: number, offset?: number, name?: string, environment_id?: string, orphaned_only?: boolean }} opts
+ * @param {{ limit?: number, offset?: number, name?: string, environment_id?: string, organization_id?: string, orphaned_only?: boolean }} opts
  * @returns {{ blocks: Array, total: number }}
  */
 export async function listBlocks(opts = {}) {
@@ -120,6 +127,7 @@ export async function listBlocks(opts = {}) {
   const params = { limit: limit || 500, offset: opts.offset ?? 0 }
   if (opts.name != null && opts.name !== '') params.name = opts.name
   if (opts.environment_id != null && opts.environment_id !== '') params.environment_id = opts.environment_id
+  if (opts.organization_id != null && opts.organization_id !== '') params.organization_id = opts.organization_id
   if (opts.orphaned_only) params.orphaned_only = 'true'
   const data = await get('/blocks', params)
   return { blocks: data.blocks ?? [], total: data.total ?? 0 }
@@ -157,7 +165,7 @@ export async function suggestEnvironmentBlockCidr(environmentId, prefix) {
 }
 
 /**
- * @param {{ limit?: number, offset?: number, name?: string, block_name?: string, environment_id?: string }} opts
+ * @param {{ limit?: number, offset?: number, name?: string, block_name?: string, environment_id?: string, organization_id?: string }} opts
  * @returns {{ allocations: Array, total: number }}
  */
 export async function listAllocations(opts = {}) {
@@ -166,6 +174,7 @@ export async function listAllocations(opts = {}) {
   if (opts.name != null && opts.name !== '') params.name = opts.name
   if (opts.block_name != null && opts.block_name !== '') params.block_name = opts.block_name
   if (opts.environment_id != null && opts.environment_id !== '') params.environment_id = opts.environment_id
+  if (opts.organization_id != null && opts.organization_id !== '') params.organization_id = opts.organization_id
   const data = await get('/allocations', params)
   return { allocations: data.allocations ?? [], total: data.total ?? 0 }
 }
@@ -226,7 +235,7 @@ export async function completeTour() {
 
 /**
  * List API tokens for the current user.
- * @returns {{ tokens: Array<{ id: string, name: string, created_at: string, expires_at?: string | null }> }}
+ * @returns {{ tokens: Array<{ id: string, name: string, created_at: string, expires_at?: string | null, organization_id?: string }> }}
  */
 export async function listTokens() {
   const data = await get('/auth/me/tokens')
@@ -236,12 +245,13 @@ export async function listTokens() {
 /**
  * Create an API token. The raw token is only returned once.
  * @param {string} name
- * @param {{ expires_at?: string | null }} [options] - Optional. expires_at: RFC3339 date; omit = never expires.
- * @returns {{ token: { id: string, name: string, token: string, created_at: string, expires_at?: string | null } }}
+ * @param {{ expires_at?: string | null, organization_id?: string | null }} [options] - Optional. expires_at: RFC3339; organization_id: global admin only, scopes token to this org.
+ * @returns {{ token: { id: string, name: string, token: string, created_at: string, expires_at?: string | null, organization_id?: string } }}
  */
 export async function createToken(name, options = {}) {
   const body = { name }
   if (options.expires_at) body.expires_at = options.expires_at
+  if (options.organization_id != null && options.organization_id !== '') body.organization_id = options.organization_id
   const data = await post('/auth/me/tokens', body)
   return data
 }
@@ -263,8 +273,13 @@ export async function deleteToken(id) {
  * List reserved blocks (blacklisted CIDR ranges). Admin only.
  * @returns {{ reserved_blocks: Array<{ id: string, cidr: string, reason: string, created_at: string }> }}
  */
-export async function listReservedBlocks() {
-  const data = await get('/reserved-blocks')
+/**
+ * @param {{ organization_id?: string }} [opts] - Global admin: scope to this org
+ */
+export async function listReservedBlocks(opts = {}) {
+  const params = {}
+  if (opts.organization_id != null && opts.organization_id !== '') params.organization_id = opts.organization_id
+  const data = await (Object.keys(params).length ? get('/reserved-blocks', params) : get('/reserved-blocks'))
   return { reserved_blocks: data.reserved_blocks ?? [] }
 }
 
@@ -371,7 +386,8 @@ export async function updateOrganization(id, name) {
 }
 
 /**
- * Delete an organization. Global admin only. Fails if the org has users or environments.
+ * Delete an organization. Global admin only. Cascades: all environments, blocks, allocations,
+ * reserved blocks, signup links, and users in the org are permanently deleted.
  * @param {string} id - Organization UUID
  */
 export async function deleteOrganization(id) {
