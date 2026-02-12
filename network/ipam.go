@@ -281,7 +281,11 @@ func CIDRAddressCount(cidr string) (*big.Int, error) {
 	if bits < ones {
 		return nil, fmt.Errorf("invalid mask for CIDR %s", cidr)
 	}
-	hostBits := uint(bits - ones)
+	diff := bits - ones
+	if diff < 0 {
+		return nil, fmt.Errorf("invalid mask for CIDR %s", cidr)
+	}
+	hostBits := uint(diff)
 	// 2^hostBits
 	count := new(big.Int).Lsh(big.NewInt(1), hostBits)
 	return count, nil
