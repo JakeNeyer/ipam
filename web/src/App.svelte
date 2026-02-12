@@ -27,6 +27,7 @@
   let routeEnvironmentId = null
   let routeEnvId = null
   let routeOrphanedOnly = false
+  let routeUnusedOnly = false
   let routeBlockName = null
   let routeAllocationName = null
   let routeCreateEnv = false
@@ -40,6 +41,7 @@
     route = path
     routeEnvironmentId = environmentId
     routeOrphanedOnly = false
+    routeUnusedOnly = opts.unused === true
     routeBlockName = opts.block ?? null
     routeAllocationName = opts.allocation ?? null
     routeCreateEnv = opts.create === true
@@ -51,6 +53,7 @@
     } else if (path === 'networks') {
       const params = new URLSearchParams()
       if (environmentId) params.set('environment', environmentId)
+      if (opts.unused) params.set('unused', '1')
       if (opts.block) params.set('block', opts.block)
       if (opts.allocation) params.set('allocation', opts.allocation)
       if (opts.createBlock) params.set('createBlock', '1')
@@ -109,6 +112,7 @@
       routeEnvironmentId = null
       routeEnvId = null
       routeOrphanedOnly = false
+      routeUnusedOnly = false
       routeBlockName = null
       routeAllocationName = null
       routeCreateEnv = false
@@ -120,6 +124,7 @@
           const envId = params.get('environment')
           if (envId) routeEnvironmentId = envId
           routeOrphanedOnly = params.get('orphaned') === '1' || params.get('orphaned') === 'true'
+          routeUnusedOnly = params.get('unused') === '1' || params.get('unused') === 'true'
           const blockName = params.get('block')
           routeBlockName = blockName || null
           const allocationName = params.get('allocation')
@@ -154,6 +159,7 @@
       routeEnvironmentId = null
       routeEnvId = null
       routeOrphanedOnly = false
+      routeUnusedOnly = false
       routeBlockName = null
       routeAllocationName = null
       routeCreateEnv = false
@@ -307,14 +313,15 @@
         <Networks
           environmentId={routeEnvironmentId}
           orphanedOnly={routeOrphanedOnly}
+          unusedOnly={routeUnusedOnly}
           blockNameFilter={routeBlockName}
           allocationFilter={routeAllocationName}
           openCreateBlockFromQuery={routeCreateBlock}
           openCreateAllocationFromQuery={routeCreateAllocation}
-          on:clearEnv={() => { routeEnvironmentId = null; routeOrphanedOnly = false; routeBlockName = null; routeAllocationName = null; window.location.hash = 'networks' }}
+          on:clearEnv={() => { routeEnvironmentId = null; routeOrphanedOnly = false; routeUnusedOnly = false; routeBlockName = null; routeAllocationName = null; window.location.hash = 'networks' }}
           on:setEnv={(e) => go('networks', e.detail)}
-          on:setBlockFilter={(e) => { const block = e.detail?.block ?? null; routeAllocationName = null; const params = new URLSearchParams(); if (routeEnvironmentId) params.set('environment', routeEnvironmentId); if (routeOrphanedOnly) params.set('orphaned', '1'); if (block) params.set('block', block); window.location.hash = 'networks' + (params.toString() ? '?' + params.toString() : ''); parseHash(); }}
-          on:setAllocationFilter={(e) => { const allocation = e.detail?.allocation ?? null; const params = new URLSearchParams(); if (routeEnvironmentId) params.set('environment', routeEnvironmentId); if (routeOrphanedOnly) params.set('orphaned', '1'); if (routeBlockName) params.set('block', routeBlockName); if (allocation) params.set('allocation', allocation); window.location.hash = 'networks' + (params.toString() ? '?' + params.toString() : ''); parseHash(); }}
+          on:setBlockFilter={(e) => { const block = e.detail?.block ?? null; routeAllocationName = null; const params = new URLSearchParams(); if (routeEnvironmentId) params.set('environment', routeEnvironmentId); if (routeOrphanedOnly) params.set('orphaned', '1'); if (routeUnusedOnly) params.set('unused', '1'); if (block) params.set('block', block); window.location.hash = 'networks' + (params.toString() ? '?' + params.toString() : ''); parseHash(); }}
+          on:setAllocationFilter={(e) => { const allocation = e.detail?.allocation ?? null; const params = new URLSearchParams(); if (routeEnvironmentId) params.set('environment', routeEnvironmentId); if (routeOrphanedOnly) params.set('orphaned', '1'); if (routeUnusedOnly) params.set('unused', '1'); if (routeBlockName) params.set('block', routeBlockName); if (allocation) params.set('allocation', allocation); window.location.hash = 'networks' + (params.toString() ? '?' + params.toString() : ''); parseHash(); }}
           on:clearCreateQuery={() => { routeCreateBlock = false; routeCreateAllocation = false; const h = window.location.hash; if (h.includes('createBlock=1') || h.includes('createAllocation=1')) { const p = new URLSearchParams((h.split('?')[1] || '')); p.delete('createBlock'); p.delete('createAllocation'); const q = p.toString(); window.location.hash = 'networks' + (q ? '?' + q : '') } }}
         />
       {:else if route === 'admin'}

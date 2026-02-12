@@ -14,6 +14,7 @@
 
   export let environmentId = null
   export let orphanedOnly = false
+  export let unusedOnly = false
   export let blockNameFilter = null
   export let allocationFilter = null
   export let openCreateBlockFromQuery = false
@@ -117,20 +118,23 @@
     loading = true
     error = ''
     try {
-      const blockOpts = listOpts({ limit: blockPageSize, offset: blockPage * blockPageSize })
+      const isUnused = effectiveFilter === 'unused'
+      const blockLimit = isUnused ? 500 : blockPageSize
+      const blockOffset = isUnused ? 0 : blockPage * blockPageSize
+      const blockOpts = listOpts({ limit: blockLimit, offset: blockOffset })
       if (blockNameFilter && String(blockNameFilter).trim() !== '') blockOpts.name = String(blockNameFilter).trim()
       if (effectiveFilter === 'orphaned') blockOpts.orphaned_only = true
-      else if (effectiveFilter !== 'all') blockOpts.environment_id = effectiveFilter
+      else if (effectiveFilter !== 'all' && !isUnused) blockOpts.environment_id = effectiveFilter
       const blockFilterOpts = listOpts({ limit: 500, offset: 0 })
       if (effectiveFilter === 'orphaned') blockFilterOpts.orphaned_only = true
-      else if (effectiveFilter !== 'all') blockFilterOpts.environment_id = effectiveFilter
+      else if (effectiveFilter !== 'all' && !isUnused) blockFilterOpts.environment_id = effectiveFilter
       const allocOpts = listOpts({ limit: allocPageSize, offset: allocPage * allocPageSize })
       if (blockNameFilter && String(blockNameFilter).trim() !== '') allocOpts.block_name = String(blockNameFilter).trim()
       if (allocationFilter && String(allocationFilter).trim() !== '') allocOpts.name = String(allocationFilter).trim()
-      if (effectiveFilter !== 'all' && effectiveFilter !== 'orphaned') allocOpts.environment_id = effectiveFilter
+      if (effectiveFilter !== 'all' && effectiveFilter !== 'orphaned' && effectiveFilter !== 'unused') allocOpts.environment_id = effectiveFilter
       const allocOptionsOpts = listOpts({ limit: 500, offset: 0 })
       if (blockNameFilter && String(blockNameFilter).trim() !== '') allocOptionsOpts.block_name = String(blockNameFilter).trim()
-      if (effectiveFilter !== 'all' && effectiveFilter !== 'orphaned') allocOptionsOpts.environment_id = effectiveFilter
+      if (effectiveFilter !== 'all' && effectiveFilter !== 'orphaned' && effectiveFilter !== 'unused') allocOptionsOpts.environment_id = effectiveFilter
       const promises = [
         listEnvironments(listOpts()),
         listBlocks(blockOpts),
@@ -151,8 +155,18 @@
       const allocOptionsRes = results[4]
       const allocBlockNamesRes = results.length > 5 ? results[5] : null
       environments = envsRes.environments
-      blocks = blksRes.blocks
-      blockTotal = blksRes.total
+      if (isUnused) {
+        const blockNamesWithAllocations = new Set(
+          (allocOptionsRes.allocations || []).map((a) => (a.block_name || '').trim().toLowerCase())
+        )
+        blocks = (blksRes.blocks || []).filter(
+          (b) => !blockNamesWithAllocations.has((b.name || '').trim().toLowerCase())
+        )
+        blockTotal = blocks.length
+      } else {
+        blocks = blksRes.blocks
+        blockTotal = blksRes.total
+      }
       allocations = allocsRes.allocations
       allocTotal = allocsRes.total
       blockFilterOptions = blockNamesRes.blocks.map((b) => ({ value: b.name, label: b.name }))
@@ -180,9 +194,11 @@
     }
   }
 
-  $: blockStart = blockTotal === 0 ? 0 : blockPage * blockPageSize + 1
-  $: blockEnd = Math.min(blockPage * blockPageSize + blockPageSize, blockTotal)
-  $: blockTotalPages = blockPageSize > 0 ? Math.ceil(blockTotal / blockPageSize) : 0
+  $: blockTotalForDisplay = effectiveFilter === 'unused' ? sortedBlocks.length : blockTotal
+  $: blockStart = blockTotalForDisplay === 0 ? 0 : blockPage * blockPageSize + 1
+  $: blockEnd = Math.min(blockPage * blockPageSize + blockPageSize, blockTotalForDisplay)
+  $: blockTotalPages = blockPageSize > 0 ? Math.ceil(blockTotalForDisplay / blockPageSize) : 0
+  $: blocksToShow = effectiveFilter === 'unused' ? sortedBlocks.slice(blockPage * blockPageSize, (blockPage + 1) * blockPageSize) : sortedBlocks
   $: allocStart = allocTotal === 0 ? 0 : allocPage * allocPageSize + 1
   $: allocEnd = Math.min(allocPage * allocPageSize + allocPageSize, allocTotal)
   $: allocTotalPages = allocPageSize > 0 ? Math.ceil(allocTotal / allocPageSize) : 0
@@ -217,7 +233,7 @@
     return env?.name ?? null
   }
 
-  $: effectiveFilter = orphanedOnly ? 'orphaned' : (environmentId ?? blockFilter)
+  $: effectiveFilter = unusedOnly ? 'unused' : orphanedOnly ? 'orphaned' : (environmentId ?? blockFilter)
 
   let blockSortBy = 'name' // 'name' | 'environment' | 'cidr' | 'total_ips' | 'used_ips' | 'available_ips' | 'usage'
   let blockSortDir = 'asc' // 'asc' | 'desc'
@@ -466,6 +482,10 @@
       blockFilter = 'orphaned'
       dispatch('clearEnv')
       window.location.hash = 'networks'
+    } else if (value === 'unused') {
+      blockFilter = 'unused'
+      dispatch('clearEnv')
+      window.location.hash = 'networks?unused=1'
     } else {
       blockFilter = value
       dispatch('setEnv', value)
@@ -615,6 +635,7 @@
         options={[
           { value: 'all', label: 'All' },
           { value: 'orphaned', label: 'Orphaned only' },
+          { value: 'unused', label: 'Unused only' },
           ...environments.map((e) => ({ value: String(e.id), label: e.name })),
         ]}
         value={String(effectiveFilter)}
@@ -757,8 +778,10 @@
           <svelte:fragment slot="body">
             {#if displayedBlocks.length === 0}
               <tr>
-                <td colspan="7" class="table-empty-cell">
-                  {#if effectiveFilter === 'orphaned'}
+                <td colspan="8" class="table-empty-cell">
+                  {#if effectiveFilter === 'unused'}
+                    No unused blocks (all blocks have at least one allocation).
+                  {:else if effectiveFilter === 'orphaned'}
                     No orphaned blocks.
                   {:else if effectiveFilter !== 'all'}
                     No blocks in this environment yet. Create one above.
@@ -768,7 +791,7 @@
                 </td>
               </tr>
             {:else}
-              {#each sortedBlocks as block}
+              {#each blocksToShow as block}
                 {@const blockRange = cidrRange(block.cidr)}
                 <tr>
                   {#if editingBlockId === block.id}
@@ -801,6 +824,9 @@
                       {:else}
                         {@const envName = getEnvironmentName(block.environment_id)}
                         <span class="tag tag-env">{envName ?? '—'}</span>
+                      {/if}
+                      {#if allocationCountForBlock(block.name) === 0}
+                        <span class="tag tag-unused" title="No allocations in this block">Unused</span>
                       {/if}
                     </td>
                     <td class="cidr">
@@ -854,7 +880,7 @@
         </DataTable>
         {#if displayedBlocks.length > 0}
           <div class="pagination">
-            <span class="pagination-info">Showing {blockStart}–{blockEnd} of {blockTotal}</span>
+            <span class="pagination-info">Showing {blockStart}–{blockEnd} of {blockTotalForDisplay}</span>
             <div class="pagination-controls">
               <button type="button" class="btn btn-small" disabled={blockPage <= 0} on:click={() => { blockPage -= 1; load() }}>Previous</button>
               <span class="pagination-page">Page {blockPage + 1} of {blockTotalPages || 1}</span>
@@ -1397,6 +1423,13 @@
     background: rgba(88, 166, 255, 0.15);
     border: 1px solid var(--accent);
     color: var(--accent);
+  }
+  .tag-unused {
+    display: inline-block;
+    margin-top: 0.2rem;
+    background: rgba(107, 114, 128, 0.2);
+    border: 1px solid var(--text-muted);
+    color: var(--text-muted);
   }
   .cidr {
     vertical-align: top;

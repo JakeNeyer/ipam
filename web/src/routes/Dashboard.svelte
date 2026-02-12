@@ -35,6 +35,17 @@
       b.environment_id === '' ||
       String(b.environment_id).toLowerCase() === NIL_UUID
   ).length
+  $: blockNamesWithAllocations = (() => {
+    const set = new Set()
+    for (const a of allocations) {
+      const name = (a.block_name || '').trim().toLowerCase()
+      if (name) set.add(name)
+    }
+    return set
+  })()
+  $: unusedBlockCount = blocks.filter(
+    (b) => !blockNamesWithAllocations.has((b.name || '').trim().toLowerCase())
+  ).length
 
   function blockUtilization(block) {
     if (!block) return 0
@@ -138,13 +149,18 @@
     })
     allocsByBlock.forEach((list) => list.sort((a, b) => (a.name || '').localeCompare(b.name || '')))
 
-    let blockRows = blockOrder.map((item, i) => ({
-      id: item.block.id,
-      name: item.block.name,
-      cidr: item.block.cidr || '',
-      environmentId: item.envId,
-      y: GRAPH.padding + i * rowPitch,
-    }))
+    let blockRows = blockOrder.map((item, i) => {
+      const blockKey = (item.block.name || '').toLowerCase()
+      const allocCount = (allocsByBlock.get(blockKey) || []).length
+      return {
+        id: item.block.id,
+        name: item.block.name,
+        cidr: item.block.cidr || '',
+        environmentId: item.envId,
+        y: GRAPH.padding + i * rowPitch,
+        isUnused: allocCount === 0,
+      }
+    })
     let allocOrder = []
     blockRows.forEach((br) => {
       const key = (br.name || '').toLowerCase()
@@ -175,13 +191,18 @@
       items.forEach((item) => newBlockOrder.push(item))
     })
     blockOrder = newBlockOrder
-    blockRows = blockOrder.map((item, i) => ({
-      id: item.block.id,
-      name: item.block.name,
-      cidr: item.block.cidr || '',
-      environmentId: item.envId,
-      y: GRAPH.padding + i * rowPitch,
-    }))
+    blockRows = blockOrder.map((item, i) => {
+      const blockKey = (item.block.name || '').toLowerCase()
+      const allocCount = (allocsByBlock.get(blockKey) || []).length
+      return {
+        id: item.block.id,
+        name: item.block.name,
+        cidr: item.block.cidr || '',
+        environmentId: item.envId,
+        y: GRAPH.padding + i * rowPitch,
+        isUnused: allocCount === 0,
+      }
+    })
     allocOrder = []
     blockRows.forEach((br) => {
       const key = (br.name || '').toLowerCase()
@@ -593,6 +614,16 @@
       </div>
     {/if}
 
+    {#if unusedBlockCount > 0}
+      <div class="unused-card">
+        <span class="unused-card-message">
+          <Icon icon="lucide:package" class="unused-card-icon" width="1.125rem" height="1.125rem" />
+          {unusedBlockCount} unused block{unusedBlockCount === 1 ? '' : 's'} — no allocations in these blocks.
+        </span>
+        <a href="#networks?unused=1" class="unused-card-link">View on Networks →</a>
+      </div>
+    {/if}
+
     {#if blocks.length > 0}
       <section class="chart-section">
         <h2 class="section-title">Block utilization</h2>
@@ -727,6 +758,7 @@
                 class="graph-node-wrap"
                 class:graph-node-orphaned-block={node.environmentId === 'orphaned'}
                 class:graph-node-reserved-block={node.environmentId === 'reserved'}
+                class:graph-node-unused-block={node.isUnused && node.environmentId !== 'orphaned' && node.environmentId !== 'reserved'}
                 role="button"
                 tabindex="0"
                 on:mouseenter={() => (graphHovered = { type: 'block', id: node.id })}
@@ -738,6 +770,7 @@
                   class="graph-node graph-node-block"
                   class:graph-node-orphaned-block-rect={node.environmentId === 'orphaned'}
                   class:graph-node-reserved-block-rect={node.environmentId === 'reserved'}
+                  class:graph-node-unused-block-rect={node.isUnused && node.environmentId !== 'orphaned' && node.environmentId !== 'reserved'}
                   x={node.x}
                   y={node.y}
                   width={GRAPH.nodeWidth}
@@ -745,15 +778,13 @@
                   rx="4"
                 />
                 <foreignObject x={node.x + GRAPH_ICON_LEFT} y={node.y + (GRAPH.nodeHeight - GRAPH_ICON_SIZE) / 2} width={GRAPH_ICON_SIZE} height={GRAPH_ICON_SIZE}>
-                  <div xmlns="http://www.w3.org/1999/xhtml" class="graph-node-icon">
+                  <div xmlns="http://www.w3.org/1999/xhtml" class="graph-node-icon" class:graph-node-icon-unused={node.isUnused && node.environmentId !== 'orphaned' && node.environmentId !== 'reserved'}>
                     <Icon icon="lucide:network" width={GRAPH_ICON_SIZE} height={GRAPH_ICON_SIZE} />
                   </div>
                 </foreignObject>
                 <text x={node.x + GRAPH_TEXT_CENTER_X_OFFSET} y={node.y + (11 * GRAPH.nodeHeight) / 34} class="graph-label" text-anchor="middle">{node.name}</text>
                 <text x={node.x + GRAPH_TEXT_CENTER_X_OFFSET} y={node.y + (24 * GRAPH.nodeHeight) / 34} class="graph-label graph-label-cidr" text-anchor="middle">{node.cidr || '—'}</text>
-                {#if node.cidr && cidrRange(node.cidr)}
-                  <title>{node.cidr} → {cidrRange(node.cidr).start} – {cidrRange(node.cidr).end}</title>
-                {/if}
+                <title>{[node.isUnused ? 'Unused (no allocations).' : '', node.cidr && cidrRange(node.cidr) ? `${node.cidr} → ${cidrRange(node.cidr).start} – ${cidrRange(node.cidr).end}` : ''].filter(Boolean).join(' ')}</title>
               </g>
             {/each}
             <!-- allocation nodes -->
@@ -978,6 +1009,36 @@
   .orphaned-card-link:hover {
     text-decoration: underline;
   }
+  .unused-card {
+    margin-bottom: 2rem;
+    padding: 1rem 1.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    background: rgba(107, 114, 128, 0.08);
+    border: 1px solid rgba(107, 114, 128, 0.35);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+  }
+  .unused-card-message {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+  .unused-card-link {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--accent);
+    text-decoration: none;
+  }
+  .unused-card-link:hover {
+    text-decoration: underline;
+  }
   .graph-section {
     margin-top: 2.5rem;
     margin-bottom: 2.5rem;
@@ -1016,7 +1077,7 @@
   .graph-node-wrap[role='button'] {
     cursor: pointer;
   }
-  .graph-node-wrap[role='button']:hover .graph-node-block:not(.graph-node-orphaned-block-rect):not(.graph-node-reserved-block-rect),
+  .graph-node-wrap[role='button']:hover .graph-node-block:not(.graph-node-orphaned-block-rect):not(.graph-node-reserved-block-rect):not(.graph-node-unused-block-rect),
   .graph-node-wrap[role='button']:hover .graph-node-env:not(.graph-node-orphaned):not(.graph-node-reserved) {
     fill: var(--accent-dim);
     stroke: var(--accent);
@@ -1066,7 +1127,19 @@
     fill: rgba(239, 68, 68, 0.2);
     stroke: var(--danger);
   }
-  .graph-node-block:not(.graph-node-orphaned-block-rect):not(.graph-node-reserved-block-rect) {
+  .graph-node-unused-block-rect {
+    fill: rgba(107, 114, 128, 0.12);
+    stroke: var(--text-muted);
+  }
+  .graph-node-wrap[role='button']:hover .graph-node-unused-block-rect {
+    fill: rgba(107, 114, 128, 0.22);
+    stroke: var(--text-muted);
+  }
+  .graph-node-icon-unused {
+    color: var(--text-muted);
+    opacity: 0.85;
+  }
+  .graph-node-block:not(.graph-node-orphaned-block-rect):not(.graph-node-reserved-block-rect):not(.graph-node-unused-block-rect) {
     fill: rgba(88, 166, 255, 0.08);
     stroke: var(--accent);
   }
