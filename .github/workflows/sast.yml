@@ -24,7 +24,7 @@ jobs:
       - name: Run Gosec (main app)
         uses: securego/gosec@master
         with:
-          args: './...'
+          args: './internal/... ./network/... ./server/... ./store/... .'
 
       - name: Run Gosec (Terraform provider)
         run: |
