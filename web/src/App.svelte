@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { theme } from './lib/theme.js'
-  import { checkAuth, authChecked, user, setupRequired, checkSetupRequired } from './lib/auth.js'
+  import { checkAuth, authChecked, user, setupRequired, checkSetupRequired, logout } from './lib/auth.js'
   import { completeTour } from './lib/api.js'
   import Nav from './lib/Nav.svelte'
   import CommandPalette from './lib/CommandPalette.svelte'
@@ -173,7 +173,6 @@ import NetworkAdvisor from './routes/NetworkAdvisor.svelte'
   }
 
   async function handleLogout() {
-    const { logout } = await import('./lib/auth.js')
     await logout()
     window.location.hash = ''
   }

@@ -890,10 +890,10 @@
 
 {#if showStartOverModal}
   <!-- svelte-ignore a11y-click-events-have-key-events -->
-  <div class="modal-backdrop" on:click={() => (showStartOverModal = false)}>
-    <!-- svelte-ignore a11y-click-events-have-key-events -->
-    <div class="modal-dialog" on:click|stopPropagation>
-      <h3 class="modal-title">Start over?</h3>
+  <div class="modal-backdrop" role="presentation" on:click={() => (showStartOverModal = false)}>
+    <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions -->
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="start-over-title" on:click|stopPropagation>
+      <h3 id="start-over-title" class="modal-title">Start over?</h3>
       <p class="modal-body">This will discard your current plan and return to Step 1. Any unsaved changes will be lost.</p>
       <div class="modal-actions">
         <button type="button" class="btn btn-small" on:click={() => (showStartOverModal = false)}>Cancel</button>
@@ -1061,16 +1061,6 @@
   .advisor-env-card h3 {
     margin: 0 0 0.65rem;
     font-size: 0.95rem;
-  }
-  .advisor-env-card label {
-    display: block;
-    margin-bottom: 0.65rem;
-  }
-  .advisor-env-card label span {
-    display: block;
-    margin-bottom: 0.2rem;
-    font-size: 0.82rem;
-    color: var(--text-muted);
   }
   .advisor-env-card input[type="range"] {
     width: 100%;

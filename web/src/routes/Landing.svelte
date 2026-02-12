@@ -330,7 +330,7 @@
           id="terraform-tab-aws"
           on:click={() => (terraformTab = 'aws')}
         >
-          <Icon icon="simple-icons:amazonaws" class="terraform-tab-icon" aria-hidden="true" />
+          <span class="terraform-tab-icon"><Icon icon="simple-icons:amazonaws" aria-hidden="true" /></span>
           <span>AWS</span>
         </button>
         <button
@@ -343,7 +343,7 @@
           id="terraform-tab-azure"
           on:click={() => (terraformTab = 'azure')}
         >
-          <Icon icon="simple-icons:microsoftazure" class="terraform-tab-icon" aria-hidden="true" />
+          <span class="terraform-tab-icon"><Icon icon="simple-icons:microsoftazure" aria-hidden="true" /></span>
           <span>Azure</span>
         </button>
         <button
@@ -356,7 +356,7 @@
           id="terraform-tab-gcp"
           on:click={() => (terraformTab = 'gcp')}
         >
-          <Icon icon="simple-icons:googlecloud" class="terraform-tab-icon" aria-hidden="true" />
+          <span class="terraform-tab-icon"><Icon icon="simple-icons:googlecloud" aria-hidden="true" /></span>
           <span>GCP</span>
         </button>
       </div>

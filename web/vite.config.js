@@ -6,6 +6,9 @@ export default defineConfig({
   // Relative asset paths let the built SPA work at "/" or under a subpath.
   base: './',
   plugins: [tailwindcss(), svelte()],
+  build: {
+    chunkSizeWarningLimit: 600,
+  },
   server: {
     port: 5173,
     proxy: {
