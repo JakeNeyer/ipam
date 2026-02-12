@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/JakeNeyer/ipam/internal/logger"
 	"github.com/JakeNeyer/ipam/internal/setup"
@@ -78,7 +79,14 @@ func main() {
 		addr = "localhost:8011"
 	}
 	logger.Info("server listening", slog.String("addr", "http://"+addr), slog.String("docs", "http://"+addr+"/docs"))
-	if err := http.ListenAndServe(addr, handler); err != nil {
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		logger.Error("server failed", logger.ErrAttr(err))
 		os.Exit(1)
 	}

@@ -1,0 +1,35 @@
+# SAST using gosec (https://github.com/securego/gosec)
+name: SAST (gosec)
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  gosec:
+    runs-on: ubuntu-latest
+    env:
+      GO111MODULE: on
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Run Gosec (main app)
+        uses: securego/gosec@master
+        with:
+          args: './...'
+
+      - name: Run Gosec (Terraform provider)
+        run: |
+          cd terraform-provider-ipam
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          gosec ./...
+        env:
+          GO111MODULE: on

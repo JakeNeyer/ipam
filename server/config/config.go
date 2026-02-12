@@ -21,7 +21,7 @@ type OAuthConfig struct {
 // OAuthProviderConfig is the config for one OAuth provider (e.g. GitHub).
 type OAuthProviderConfig struct {
 	ClientID     string
-	ClientSecret string
+	ClientSecret string // #nosec G117 -- OAuth client secret from config, not logged
 	Scopes       []string
 }
 

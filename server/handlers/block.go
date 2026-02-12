@@ -22,7 +22,11 @@ func calculateTotalIPs(cidr string) int {
 		return 0
 	}
 	ones, bits := ipnet.Mask.Size()
-	return 1 << uint(bits-ones)
+	n := bits - ones
+	if n < 0 || n > 64 {
+		return 0
+	}
+	return 1 << uint(n)
 }
 
 // blockNamesMatch compares block names for usage attribution (case-insensitive, trimmed).

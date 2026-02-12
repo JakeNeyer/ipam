@@ -53,5 +53,6 @@ func swaggerThemeCSS() template.HTML {
 	.swagger-ui .dialog-ux .modal-ux-header { border-bottom: 1px solid #2d3139 !important; color: #e4e6eb !important; }
 	.swagger-ui .dialog-ux .modal-ux-content { color: #e4e6eb !important; }
 	</style>`
+	// #nosec G203 -- css is a constant string, not user input
 	return template.HTML(css)
 }

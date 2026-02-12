@@ -192,7 +192,8 @@ func ipToU32(ip net.IP) uint32 {
 }
 
 func u32ToIP(v uint32) net.IP {
-	return net.IPv4(byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
+	// Explicit masking: we want the low 8 bits of each octet (no overflow).
+	return net.IPv4(byte((v>>24)&0xff), byte((v>>16)&0xff), byte((v>>8)&0xff), byte(v&0xff))
 }
 
 // NextAvailableCIDR finds the next available CIDR block within the given supernet. It attempts best-effort bin-packing
@@ -232,7 +233,11 @@ func NextAvailableCIDR(supernet string, prefixLength int) (string, error) {
 			return candidate.String(), nil
 		}
 
-		increment := uint(supernet_bits - prefixLength)
+		hostBits := supernet_bits - prefixLength
+		if hostBits < 0 || hostBits > 32 {
+			break
+		}
+		increment := uint(hostBits)
 		for i := len(current) - 1; i >= 0; i-- {
 			current[i] += 1 << increment
 			if current[i] != 0 {

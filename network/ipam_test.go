@@ -1,8 +1,57 @@
 package network
 
 import (
+	"net"
 	"testing"
 )
+
+// TestU32ToIP tests u32ToIP round-trip and known values.
+func TestU32ToIP(t *testing.T) {
+	tests := []struct {
+		name string
+		v    uint32
+		want string
+	}{
+		{"zero", 0, "0.0.0.0"},
+		{"one", 1, "0.0.0.1"},
+		{"byte boundaries", 0x01020304, "1.2.3.4"},
+		{"private", 0xc0a80101, "192.168.1.1"},
+		{"all ones", 0xffffffff, "255.255.255.255"},
+		{"high byte", 0xff000000, "255.0.0.0"},
+		{"low byte", 0x000000ff, "0.0.0.255"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := u32ToIP(tt.v)
+			if got == nil {
+				t.Fatal("u32ToIP returned nil")
+			}
+			if s := got.String(); s != tt.want {
+				t.Errorf("u32ToIP(%#x) = %s, want %s", tt.v, s, tt.want)
+			}
+			// Round-trip: ipToU32(u32ToIP(v)) == v
+			if back := ipToU32(got); back != tt.v {
+				t.Errorf("ipToU32(u32ToIP(%#x)) = %#x, want %#x", tt.v, back, tt.v)
+			}
+		})
+	}
+}
+
+// TestU32ToIP_roundTripFromIP tests that parsing an IP and converting via u32 gives the same IP.
+func TestU32ToIP_roundTripFromIP(t *testing.T) {
+	ips := []string{"0.0.0.0", "10.0.0.1", "192.168.1.1", "255.255.255.255"}
+	for _, s := range ips {
+		ip := net.ParseIP(s)
+		if ip == nil || ip.To4() == nil {
+			t.Fatalf("ParseIP(%q) failed or not IPv4", s)
+		}
+		v := ipToU32(ip)
+		got := u32ToIP(v)
+		if got.String() != s {
+			t.Errorf("round trip: ip %s -> u32 %#x -> ip %s", s, v, got.String())
+		}
+	}
+}
 
 // TestValidateCIDR tests the ValidateCIDR function
 func TestValidateCIDR(t *testing.T) {
@@ -333,6 +382,20 @@ func TestNextAvailableCIDR(t *testing.T) {
 			expectedContains: true,
 			expectErr:        false,
 		},
+		{
+			name:             "prefix equals supernet returns first /16",
+			supernet:         "10.0.0.0/16",
+			prefixLength:     16,
+			expectedContains: true,
+			expectErr:        false,
+		},
+		{
+			name:             "/32 in /24 returns first IP",
+			supernet:         "10.0.0.0/24",
+			prefixLength:     32,
+			expectedContains: true,
+			expectErr:        false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -399,6 +462,24 @@ func TestNextAvailableCIDRWithAllocations(t *testing.T) {
 			expectedCIDR:  "10.0.0.0/24",
 			expectErr:     false,
 			expectInSuper: true,
+		},
+		{
+			name:          "invalid supernet returns error",
+			supernet:      "invalid",
+			prefixLength:  24,
+			allocated:     nil,
+			expectedCIDR:  "",
+			expectErr:     true,
+			expectInSuper: false,
+		},
+		{
+			name:          "no space left returns error",
+			supernet:      "10.0.0.0/24",
+			prefixLength:  24,
+			allocated:     []string{"10.0.0.0/24"},
+			expectedCIDR:  "",
+			expectErr:     true,
+			expectInSuper: false,
 		},
 	}
 	for _, tt := range tests {

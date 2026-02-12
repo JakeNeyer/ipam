@@ -38,7 +38,7 @@ type ValidateSignupInviteResponse struct {
 type RegisterWithInviteRequest struct {
 	Token    string `json:"token"`
 	Email    string `json:"email"`
-	Password string `json:"password"`
+	Password string `json:"password"` // #nosec G117 -- request DTO for signup, not a log/secret leak
 }
 
 // SignupInviteResponse is one invite in the list for GET /api/admin/signup-invites.

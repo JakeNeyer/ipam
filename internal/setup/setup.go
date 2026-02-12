@@ -28,7 +28,7 @@ func NewStore(ctx context.Context) (st store.Storer, close func(), err error) {
 	logger.Info("store", slog.String("type", "postgres"))
 	closeFn := func() {}
 	if pg, ok := st.(*store.PostgresStore); ok {
-		closeFn = func() { pg.Close() }
+		closeFn = func() { _ = pg.Close() }
 	}
 	return st, closeFn, nil
 }

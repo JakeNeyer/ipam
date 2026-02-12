@@ -54,6 +54,7 @@ func (c *Client) do(method, path string, body interface{}, result interface{}) e
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
+	// #nosec G704 -- base URL is from provider config, request path is built from resource IDs
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("request: %w", err)

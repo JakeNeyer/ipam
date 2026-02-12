@@ -15,7 +15,7 @@ import (
 // CreateUserRequest is the body for POST /api/admin/users.
 type CreateUserRequest struct {
 	Email          string    `json:"email"`
-	Password       string    `json:"password"`
+	Password       string    `json:"password"` // #nosec G117 -- request DTO for admin create user, not a log/secret leak
 	Role           string    `json:"role"`
 	OrganizationID uuid.UUID `json:"organization_id,omitempty"`
 }

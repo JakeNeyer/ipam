@@ -18,7 +18,7 @@ func Unauthorized(appOrigin string, next http.Handler) http.Handler {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(body))
+		_, _ = w.Write([]byte(body))
 	})
 }
 
@@ -29,12 +29,24 @@ func Static(dir string, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		p := filepath.Join(dir, filepath.Clean(strings.TrimPrefix(r.URL.Path, "/")))
-		if rel, err := filepath.Rel(dir, p); err != nil || strings.HasPrefix(rel, "..") {
+		absDir, err := filepath.Abs(dir)
+		if err != nil {
 			http.ServeFile(w, r, filepath.Join(dir, "index.html"))
 			return
 		}
-		if f, err := os.Stat(p); err == nil && !f.IsDir() {
+		p := filepath.Join(dir, filepath.Clean(strings.TrimPrefix(r.URL.Path, "/")))
+		absP, err := filepath.Abs(p)
+		if err != nil {
+			http.ServeFile(w, r, filepath.Join(dir, "index.html"))
+			return
+		}
+		rel, err := filepath.Rel(absDir, absP)
+		if err != nil || strings.Contains(rel, "..") {
+			http.ServeFile(w, r, filepath.Join(dir, "index.html"))
+			return
+		}
+		// p is safe: absP was verified under absDir via Rel above
+		if f, err := os.Stat(p); err == nil && !f.IsDir() { // #nosec G703
 			http.ServeFile(w, r, p)
 			return
 		}
@@ -79,6 +91,8 @@ func ResolveStaticDir() string {
 }
 
 func staticDirHasIndex(dir string) bool {
-	f, err := os.Stat(filepath.Join(dir, "index.html"))
+	cleanDir := filepath.Clean(dir)
+	// dir is from ResolveStaticDir (env or known rel paths); we only join with constant "index.html"
+	f, err := os.Stat(filepath.Join(cleanDir, "index.html")) // #nosec G703
 	return err == nil && f != nil && !f.IsDir()
 }

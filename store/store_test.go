@@ -528,6 +528,120 @@ func TestGetUserByEmail(t *testing.T) {
 	}
 }
 
+// TestUpdateReservedBlock tests UpdateReservedBlock with table-driven cases.
+func TestUpdateReservedBlock(t *testing.T) {
+	tests := []struct {
+		name    string
+		setup   func(*Store) uuid.UUID
+		update  *ReservedBlock
+		wantErr bool
+	}{
+		{
+			name:    "not found",
+			setup:   func(s *Store) uuid.UUID { return uuid.New() },
+			update:  &ReservedBlock{ID: uuid.New(), CIDR: "10.0.0.0/24", Reason: "x"},
+			wantErr: true,
+		},
+		{
+			name: "updated",
+			setup: func(s *Store) uuid.UUID {
+				r := &ReservedBlock{CIDR: "10.0.0.0/24", Reason: "old"}
+				_ = s.CreateReservedBlock(r)
+				return r.ID
+			},
+			update:  nil, // set in test
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := NewStore()
+			id := tt.setup(s)
+			up := tt.update
+			if tt.name == "updated" {
+				up = &ReservedBlock{ID: id, CIDR: "10.0.1.0/24", Reason: "new"}
+			}
+			err := s.UpdateReservedBlock(id, up)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("UpdateReservedBlock() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr {
+				got, _ := s.GetReservedBlock(id)
+				if got.CIDR != up.CIDR || got.Reason != up.Reason {
+					t.Errorf("UpdateReservedBlock() after update CIDR=%q Reason=%q, want %q %q", got.CIDR, got.Reason, up.CIDR, up.Reason)
+				}
+			}
+		})
+	}
+}
+
+// TestListEnvironments tests ListEnvironments (unfiltered).
+func TestListEnvironments(t *testing.T) {
+	s := NewStore()
+	list, err := s.ListEnvironments()
+	if err != nil {
+		t.Fatalf("ListEnvironments() error = %v", err)
+	}
+	if len(list) != 0 {
+		t.Errorf("ListEnvironments() len = %d, want 0", len(list))
+	}
+	env := &network.Environment{Id: uuid.New(), Name: "prod"}
+	_ = s.CreateEnvironment(env)
+	list, err = s.ListEnvironments()
+	if err != nil {
+		t.Fatalf("ListEnvironments() error = %v", err)
+	}
+	if len(list) != 1 || list[0].Name != "prod" {
+		t.Errorf("ListEnvironments() = %v", list)
+	}
+}
+
+// TestDeleteEnvironment tests DeleteEnvironment.
+func TestDeleteEnvironment(t *testing.T) {
+	s := NewStore()
+	env := &network.Environment{Id: uuid.New(), Name: "prod"}
+	_ = s.CreateEnvironment(env)
+	err := s.DeleteEnvironment(env.Id)
+	if err != nil {
+		t.Errorf("DeleteEnvironment() error = %v", err)
+	}
+	_, err = s.GetEnvironment(env.Id)
+	if err == nil {
+		t.Error("GetEnvironment() after delete expected error")
+	}
+	err = s.DeleteEnvironment(uuid.New())
+	if err == nil {
+		t.Error("DeleteEnvironment(unknown) expected error")
+	}
+}
+
+// TestCreateBlock tests CreateBlock and GetBlock.
+func TestCreateBlock(t *testing.T) {
+	s := NewStore()
+	env := &network.Environment{Id: uuid.New(), Name: "e1"}
+	_ = s.CreateEnvironment(env)
+	block := &network.Block{ID: uuid.New(), Name: "b1", CIDR: "10.0.0.0/24", EnvironmentID: env.Id}
+	err := s.CreateBlock(block)
+	if err != nil {
+		t.Errorf("CreateBlock() error = %v", err)
+	}
+	if block.ID == uuid.Nil {
+		t.Error("CreateBlock() did not set ID")
+	}
+	got, err := s.GetBlock(block.ID)
+	if err != nil {
+		t.Errorf("GetBlock() error = %v", err)
+	}
+	if got.Name != "b1" || got.CIDR != "10.0.0.0/24" {
+		t.Errorf("GetBlock() = %+v", got)
+	}
+	_, err = s.GetBlock(uuid.New())
+	if err == nil {
+		t.Error("GetBlock(unknown) expected error")
+	}
+}
+
 // TestGetUserByTokenHash tests GetUserByTokenHash with table-driven cases (valid, not found, expired).
 func TestGetUserByTokenHash(t *testing.T) {
 	past := time.Now().Add(-time.Hour)

@@ -38,7 +38,7 @@ func userToResponse(u *store.User) UserResponse {
 // loginInput is the request body for POST /api/auth/login.
 type loginInput struct {
 	Email    string `json:"email"`
-	Password string `json:"password"`
+	Password string `json:"password"` // #nosec G117 -- request DTO for login, not a log/secret leak
 }
 
 // loginOutput is the response for POST /api/auth/login. Embeds response.EmbeddedSetter so the use case can set the session cookie.

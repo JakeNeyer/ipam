@@ -53,7 +53,7 @@ func NewGetSetupStatusUseCase(s store.Storer, cfg *config.Config) usecase.Intera
 // postSetupInput is the body for POST /api/setup.
 type postSetupInput struct {
 	Email    string `json:"email"`
-	Password string `json:"password"`
+	Password string `json:"password"` // #nosec G117 -- request DTO for setup, not a log/secret leak
 }
 
 // postSetupOutput is the response for POST /api/setup.

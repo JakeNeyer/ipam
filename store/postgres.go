@@ -281,6 +281,7 @@ func (s *PostgresStore) ListEnvironmentsFiltered(name string, organizationID *uu
 	selQ += ` ORDER BY name`
 	argIdx := len(selArgs) + 1
 	if limit > 0 {
+		// #nosec G202 -- placeholder indices only, no user input in query text
 		selQ += fmt.Sprintf(` LIMIT $%d OFFSET $%d`, argIdx, argIdx+1)
 		selArgs = append(selArgs, limit, offset)
 	}
@@ -439,6 +440,7 @@ func (s *PostgresStore) ListBlocksFiltered(name string, environmentID *uuid.UUID
 	}
 	selQ += ` ORDER BY name`
 	if limit > 0 {
+		// #nosec G202 -- placeholder indices only, no user input in query text
 		selQ += fmt.Sprintf(` LIMIT $%d OFFSET $%d`, i, i+1)
 		selArgs = append(selArgs, limit, offset)
 	}
@@ -579,6 +581,7 @@ func (s *PostgresStore) ListAllocationsFiltered(name string, blockName string, e
 	}
 	selQ += ` ORDER BY name`
 	if limit > 0 {
+		// #nosec G202 -- placeholder indices only, no user input in query text
 		selQ += fmt.Sprintf(` LIMIT $%d OFFSET $%d`, i, i+1)
 		selArgs = append(selArgs, limit, offset)
 	}

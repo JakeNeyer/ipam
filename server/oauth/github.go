@@ -43,6 +43,7 @@ func (g *githubUserInfo) FetchUser(ctx context.Context, token *oauth2.Token) (pr
 	}
 	token.SetAuthHeader(req)
 	req.Header.Set("Accept", "application/json")
+	// #nosec G704 -- URL is constant GitHub API endpoint (githubUserURL)
 	resp, err := g.client.Do(req)
 	if err != nil {
 		return "", "", err
@@ -77,6 +78,7 @@ func (g *githubUserInfo) fetchPrimaryEmail(ctx context.Context, token *oauth2.To
 	}
 	token.SetAuthHeader(req)
 	req.Header.Set("Accept", "application/json")
+	// #nosec G704 -- URL is constant GitHub API endpoint (githubEmailsURL)
 	resp, err := g.client.Do(req)
 	if err != nil {
 		return "", err
