@@ -10,9 +10,33 @@ export const authChecked = writable(false)
 /** @type {import('svelte/store').Writable<boolean | null>} true = setup required, false = not required, null = not yet checked */
 export const setupRequired = writable(null)
 
+const SELECTED_ORG_STORAGE_KEY = 'ipam-global-admin-selected-org'
+
+function getPersistedSelectedOrg() {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = localStorage.getItem(SELECTED_ORG_STORAGE_KEY)
+    if (!raw) return null
+    const data = JSON.parse(raw)
+    if (data && typeof data.id === 'string' && data.id) return { id: data.id, name: data.name ?? null }
+    return null
+  } catch {
+    return null
+  }
+}
+
+function setPersistedSelectedOrg(id, name) {
+  if (typeof window === 'undefined') return
+  try {
+    if (id) localStorage.setItem(SELECTED_ORG_STORAGE_KEY, JSON.stringify({ id, name: name ?? null }))
+    else localStorage.removeItem(SELECTED_ORG_STORAGE_KEY)
+  } catch (_) {}
+}
+
 /**
  * Selected organization ID for global admin "switch org" context.
  * When set, list/create calls scope to this org. When null, global admin sees all orgs.
+ * Persisted so it survives page refresh.
  * @type {import('svelte/store').Writable<string | null>}
  */
 export const selectedOrgForGlobalAdmin = writable(null)
@@ -24,6 +48,18 @@ export const selectedOrgForGlobalAdmin = writable(null)
 export const selectedOrgNameForGlobalAdmin = writable(null)
 
 /**
+ * Set the selected org for global admin (e.g. from nav dropdown or global admin dashboard).
+ * Persists to localStorage so selection survives page refresh.
+ * @param {string | null} id - Organization UUID or null to clear
+ * @param {string | null} [name] - Display name (optional when clearing)
+ */
+export function setSelectedOrgForGlobalAdmin(id, name) {
+  selectedOrgForGlobalAdmin.set(id)
+  selectedOrgNameForGlobalAdmin.set(name ?? null)
+  setPersistedSelectedOrg(id, name ?? null)
+}
+
+/**
  * Fetches current user and updates the store. Call on app load.
  * @returns {Promise<boolean>} true if logged in, false otherwise
  */
@@ -31,6 +67,13 @@ export async function checkAuth() {
   try {
     const u = await getMe()
     user.set(u)
+    if (u && isGlobalAdmin(u)) {
+      const persisted = getPersistedSelectedOrg()
+      if (persisted) {
+        selectedOrgForGlobalAdmin.set(persisted.id)
+        selectedOrgNameForGlobalAdmin.set(persisted.name)
+      }
+    }
     authChecked.set(true)
     return u != null
   } catch {

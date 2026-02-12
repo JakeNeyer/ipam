@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { theme } from './lib/theme.js'
-  import { checkAuth, authChecked, user, setupRequired, checkSetupRequired, logout, selectedOrgForGlobalAdmin, selectedOrgNameForGlobalAdmin, isGlobalAdmin } from './lib/auth.js'
+  import { checkAuth, authChecked, user, setupRequired, checkSetupRequired, logout, selectedOrgForGlobalAdmin, selectedOrgNameForGlobalAdmin, isGlobalAdmin, setSelectedOrgForGlobalAdmin } from './lib/auth.js'
   import { completeTour } from './lib/api.js'
   import Nav from './lib/Nav.svelte'
   import CommandPalette from './lib/CommandPalette.svelte'
@@ -290,8 +290,7 @@
       {#if isGlobalAdmin($user) && route === 'global-admin'}
         <GlobalAdminDashboard
           on:selectOrg={(e) => {
-            selectedOrgForGlobalAdmin.set(e.detail.id)
-            selectedOrgNameForGlobalAdmin.set(e.detail.name)
+            setSelectedOrgForGlobalAdmin(e.detail.id, e.detail.name)
             go('dashboard')
           }}
         />

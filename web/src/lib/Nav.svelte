@@ -3,7 +3,7 @@
   import { get } from 'svelte/store'
   import Icon from '@iconify/svelte'
   import { theme } from './theme.js'
-  import { selectedOrgForGlobalAdmin, selectedOrgNameForGlobalAdmin, isGlobalAdmin } from './auth.js'
+  import { selectedOrgForGlobalAdmin, selectedOrgNameForGlobalAdmin, isGlobalAdmin, setSelectedOrgForGlobalAdmin } from './auth.js'
   import { listOrganizations } from './api.js'
   export let current = 'dashboard'
   export let currentUser: { id?: string; email?: string; role?: string; organization_id?: string | null } | null = null
@@ -50,14 +50,12 @@
     const select = e.currentTarget as HTMLSelectElement
     const value = select?.value ?? ''
     if (!value) {
-      selectedOrgForGlobalAdmin.set(null)
-      selectedOrgNameForGlobalAdmin.set(null)
+      setSelectedOrgForGlobalAdmin(null, null)
       return
     }
     const org = organizations.find((o) => o.id === value)
     if (org) {
-      selectedOrgForGlobalAdmin.set(org.id)
-      selectedOrgNameForGlobalAdmin.set(org.name)
+      setSelectedOrgForGlobalAdmin(org.id, org.name)
     }
   }
 
