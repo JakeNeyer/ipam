@@ -4,6 +4,7 @@
   import Icon from '@iconify/svelte'
   import ErrorModal from '../lib/ErrorModal.svelte'
   import { cidrRange } from '../lib/cidr.js'
+  import { formatBlockCount, compareBlockCount, utilizationPercent as utilPct, sumCounts } from '../lib/blockCount.js'
   import { user, selectedOrgForGlobalAdmin, isGlobalAdmin } from '../lib/auth.js'
   import { listEnvironments, listBlocks, listAllocations, listReservedBlocks, exportCSV } from '../lib/api.js'
 
@@ -23,11 +24,11 @@
   let allocations = []
   let reservedBlocks = []
 
-  $: totalIPs = blocks.reduce((s, b) => s + (b.total_ips ?? 0), 0)
-  $: usedIPs = blocks.reduce((s, b) => s + (b.used_ips ?? 0), 0)
-  $: utilizationPercent = totalIPs > 0 ? Math.round((usedIPs / totalIPs) * 100) : 0
+  $: totalIPs = sumCounts(blocks.map((b) => b.total_ips))
+  $: usedIPs = sumCounts(blocks.map((b) => b.used_ips))
+  $: utilizationPercent = utilPct(totalIPs, usedIPs)
   $: overallUtilizationDisplay =
-    totalIPs <= 0 ? '0' : (usedIPs / totalIPs) * 100 < 1 && usedIPs > 0 ? '<1' : String(utilizationPercent)
+    compareBlockCount(totalIPs, '0') <= 0 ? '0' : utilizationPercent < 1 && compareBlockCount(usedIPs, '0') > 0 ? '<1' : String(Math.round(utilizationPercent))
   $: orphanedCount = blocks.filter(
     (b) =>
       b.environment_id == null ||
@@ -36,18 +37,18 @@
   ).length
 
   function blockUtilization(block) {
-    if (!block || block.total_ips === 0) return 0
-    return Math.min(100, Math.round((block.used_ips / block.total_ips) * 100))
+    if (!block) return 0
+    return Math.min(100, Math.round(utilPct(block.total_ips, block.used_ips)))
   }
 
   function utilizationLabel(block) {
-    if (!block || block.total_ips === 0) return '0%'
-    const p = (block.used_ips / block.total_ips) * 100
-    if (block.used_ips > 0 && p < 1) return '<1%'
+    if (!block) return '0%'
+    const p = utilPct(block.total_ips, block.used_ips)
+    if (compareBlockCount(block.used_ips, '0') > 0 && p < 1) return '<1%'
     return Math.round(p) + '%'
   }
 
-  $: blocksForChart = [...blocks].sort((a, b) => (b.used_ips ?? 0) - (a.used_ips ?? 0)).slice(0, 12)
+  $: blocksForChart = [...blocks].sort((a, b) => compareBlockCount(b.used_ips, a.used_ips)).slice(0, 12)
 
   function envIdsMatch(a, b) {
     if (a == null || b == null) return false
@@ -561,12 +562,12 @@
           <span class="stat-value">{allocations.length}</span>
           <span class="stat-label">Allocations</span>
         </a>
-        <a href="#networks" class="stat-card stat-card-link" title="Total IPs: {totalIPs.toLocaleString()}">
-          <span class="stat-value">{totalIPs.toLocaleString()}</span>
+        <a href="#networks" class="stat-card stat-card-link" title="Total IPs: {formatBlockCount(totalIPs)}">
+          <span class="stat-value">{formatBlockCount(totalIPs)}</span>
           <span class="stat-label">Total IPs</span>
         </a>
-        <a href="#networks" class="stat-card stat-card-link" title="Allocated IPs: {usedIPs.toLocaleString()}">
-          <span class="stat-value">{usedIPs.toLocaleString()}</span>
+        <a href="#networks" class="stat-card stat-card-link" title="Allocated IPs: {formatBlockCount(usedIPs)}">
+          <span class="stat-value">{formatBlockCount(usedIPs)}</span>
           <span class="stat-label">Allocated IPs</span>
         </a>
         <a href="#networks" class="stat-card stat-card-accent stat-card-link">

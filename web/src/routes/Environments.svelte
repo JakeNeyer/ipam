@@ -4,6 +4,7 @@
   import Icon from '@iconify/svelte'
   import ErrorModal from '../lib/ErrorModal.svelte'
   import { cidrRange } from '../lib/cidr.js'
+  import { formatBlockCount } from '../lib/blockCount.js'
   import { user, selectedOrgForGlobalAdmin, isGlobalAdmin } from '../lib/auth.js'
   import { listEnvironments, listAllocations, createEnvironment, updateEnvironment, deleteEnvironment, getEnvironment } from '../lib/api.js'
 
@@ -293,7 +294,7 @@
             </label>
             <label>
               <span>CIDR</span>
-              <input type="text" bind:value={initialBlockCidr} placeholder="e.g. 10.0.0.0/8" disabled={createSubmitting} />
+              <input type="text" bind:value={initialBlockCidr} placeholder="e.g. 10.0.0.0/8 or fd00::/64" disabled={createSubmitting} />
             </label>
           </div>
         </div>
@@ -431,7 +432,7 @@
                               {#if cidrRange(block.cidr)}
                                 <span class="block-range">{cidrRange(block.cidr).start} – {cidrRange(block.cidr).end}</span>
                               {/if}
-                              <span class="block-ips">{block.total_ips?.toLocaleString() ?? 0} IPs</span>
+                              <span class="block-ips">{formatBlockCount(block.total_ips)} IPs</span>
                               <span class="block-expand"><Icon icon={expandedBlockName === block.name ? 'lucide:chevron-down' : 'lucide:chevron-right'} width="1em" height="1em" /></span>
                             </div>
                             {#if expandedBlockName === block.name}

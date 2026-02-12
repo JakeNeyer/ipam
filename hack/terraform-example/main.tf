@@ -21,6 +21,7 @@ resource "ipam_environment" "hack" {
   name = "tf-hack-env"
 }
 
+# IPv4 block and allocations
 resource "ipam_block" "hack" {
   name           = "tf-hack-block"
   cidr           = "10.200.0.0/24"
@@ -38,6 +39,19 @@ resource "ipam_allocation" "hack_auto" {
   name           = "tf-hack-alloc-auto"
   block_name     = ipam_block.hack.name
   prefix_length  = 26
+}
+
+# IPv6 ULA block and allocation
+resource "ipam_block" "hack_ula" {
+  name           = "tf-hack-ula"
+  cidr           = "fd00:200::/48"
+  environment_id = ipam_environment.hack.id
+}
+
+resource "ipam_allocation" "hack_ula_subnet" {
+  name       = "tf-hack-ula-subnet"
+  block_name = ipam_block.hack_ula.name
+  cidr       = "fd00:200::/64"
 }
 
 output "environment_id" {
@@ -62,4 +76,12 @@ output "allocation_auto_id" {
 
 output "allocation_auto_cidr" {
   value = ipam_allocation.hack_auto.cidr
+}
+
+output "block_ula_id" {
+  value = ipam_block.hack_ula.id
+}
+
+output "allocation_ula_cidr" {
+  value = ipam_allocation.hack_ula_subnet.cidr
 }

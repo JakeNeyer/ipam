@@ -8,6 +8,7 @@
   import DataTable from '../lib/DataTable.svelte'
   import SearchableSelect from '../lib/SearchableSelect.svelte'
   import { cidrRange, parseCidrToInt } from '../lib/cidr.js'
+  import { formatBlockCount, compareBlockCount, utilizationPercent as utilPct } from '../lib/blockCount.js'
   import { user, selectedOrgForGlobalAdmin, isGlobalAdmin } from '../lib/auth.js'
   import { listEnvironments, listBlocks, listAllocations, createBlock, createAllocation, updateBlock, updateAllocation, deleteBlock, deleteAllocation } from '../lib/api.js'
 
@@ -261,11 +262,11 @@
         return mult * (pa.baseInt - pb.baseInt)
       })
     } else if (blockSortBy === 'total_ips') {
-      list.sort((a, b) => mult * ((a.total_ips ?? 0) - (b.total_ips ?? 0)))
+      list.sort((a, b) => mult * compareBlockCount(a.total_ips, b.total_ips))
     } else if (blockSortBy === 'used_ips') {
-      list.sort((a, b) => mult * ((a.used_ips ?? 0) - (b.used_ips ?? 0)))
+      list.sort((a, b) => mult * compareBlockCount(a.used_ips, b.used_ips))
     } else if (blockSortBy === 'available_ips') {
-      list.sort((a, b) => mult * ((a.available_ips ?? 0) - (b.available_ips ?? 0)))
+      list.sort((a, b) => mult * compareBlockCount(a.available_ips, b.available_ips))
     } else if (blockSortBy === 'usage') {
       list.sort((a, b) => mult * (utilizationPercent(a) - utilizationPercent(b)))
     }
@@ -334,17 +335,17 @@
   })()
 
   function utilizationPercent(block) {
-    if (!block || block.total_ips === 0) return 0
-    const raw = (block.used_ips / block.total_ips) * 100
-    if (raw > 0 && raw < 1) return 1
-    return Math.round(raw)
+    if (!block) return 0
+    const p = utilPct(block.total_ips, block.used_ips)
+    if (p > 0 && p < 1) return 1
+    return Math.round(p)
   }
 
   function utilizationPercentLabel(block) {
-    if (!block || block.total_ips === 0) return '0%'
-    const raw = (block.used_ips / block.total_ips) * 100
-    if (block.used_ips > 0 && raw < 1) return '<1%'
-    return Math.round(raw) + '%'
+    if (!block) return '0%'
+    const p = utilPct(block.total_ips, block.used_ips)
+    if (compareBlockCount(block.used_ips, '0') > 0 && p < 1) return '<1%'
+    return Math.round(p) + '%'
   }
 
   async function handleCreateBlock() {
@@ -355,11 +356,17 @@
       errorModalMessage = blockError
       return
     }
+    const envId = blockEnvironmentId && blockEnvironmentId !== '' ? blockEnvironmentId : null
+    if (!envId && isGlobalAdmin($user) && (!$selectedOrgForGlobalAdmin || $selectedOrgForGlobalAdmin === '')) {
+      blockError = 'Select an organization for orphan blocks (blocks without an environment)'
+      errorModalMessage = blockError
+      return
+    }
+    const orgId = !envId && isGlobalAdmin($user) && $selectedOrgForGlobalAdmin ? $selectedOrgForGlobalAdmin : null
     blockSubmitting = true
     blockError = ''
     try {
-      const envId = blockEnvironmentId && blockEnvironmentId !== '' ? blockEnvironmentId : null
-      await createBlock(name, cidr, envId)
+      await createBlock(name, cidr, envId, orgId)
       blockName = ''
       blockCidr = ''
       blockEnvironmentId = ''
@@ -402,20 +409,26 @@
       errorModalMessage = editBlockError
       return
     }
+    const newEnvId = editBlockEnvironmentId ? String(editBlockEnvironmentId) : ''
+    if (newEnvId === '' && isGlobalAdmin($user) && (!$selectedOrgForGlobalAdmin || $selectedOrgForGlobalAdmin === '')) {
+      editBlockError = 'Select an organization for orphan blocks'
+      errorModalMessage = editBlockError
+      return
+    }
     const block = blocks.find((b) => String(b.id) === String(editingBlockId))
     if (block) {
       const origName = (block.name || '').trim()
       const origEnvId = isOrphanedBlock(block) ? '' : String(block.environment_id ?? '')
-      const newEnvId = editBlockEnvironmentId ? String(editBlockEnvironmentId) : ''
       if (origName === name && origEnvId === newEnvId) {
         cancelEditBlock()
         return
       }
     }
+    const orgId = newEnvId === '' && isGlobalAdmin($user) && $selectedOrgForGlobalAdmin ? $selectedOrgForGlobalAdmin : null
     editBlockSubmitting = true
     editBlockError = ''
     try {
-      await updateBlock(editingBlockId, name, editBlockEnvironmentId)
+      await updateBlock(editingBlockId, name, editBlockEnvironmentId || '', orgId)
       cancelEditBlock()
       await load()
     } catch (e) {
@@ -796,9 +809,9 @@
                         <span class="cidr-range">{blockRange.start} – {blockRange.end}</span>
                       {/if}
                     </td>
-                    <td class="num">{block.total_ips.toLocaleString()}</td>
-                    <td class="num">{block.used_ips.toLocaleString()}</td>
-                    <td class="num">{block.available_ips.toLocaleString()}</td>
+                    <td class="num">{formatBlockCount(block.total_ips)}</td>
+                    <td class="num">{formatBlockCount(block.used_ips)}</td>
+                    <td class="num">{formatBlockCount(block.available_ips)}</td>
                     <td>
                       <div class="usage-cell">
                         <div class="bar-wrap">

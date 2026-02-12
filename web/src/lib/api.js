@@ -133,19 +133,33 @@ export async function listBlocks(opts = {}) {
   return { blocks: data.blocks ?? [], total: data.total ?? 0 }
 }
 
-export async function createBlock(name, cidr, environmentId = null) {
+/**
+ * Create a network block. For orphan blocks (no environment), organizationId is required for global admin.
+ * @param {string} name
+ * @param {string} cidr
+ * @param {string|null} [environmentId] - environment UUID or null for orphan block
+ * @param {string|null} [organizationId] - required for orphan blocks when global admin; org-scoped users use their org
+ */
+export async function createBlock(name, cidr, environmentId = null, organizationId = null) {
   const body = { name, cidr }
   if (environmentId) body.environment_id = environmentId
+  if (!environmentId && organizationId) body.organization_id = organizationId
   return post('/blocks', body)
 }
 
 // Used only for block environment_id "unset"; never send for global-admin / organization_id (omit field instead).
 const NIL_UUID = '00000000-0000-0000-0000-000000000000'
 
-export async function updateBlock(id, name, environmentId = null) {
+/**
+ * Update a network block. When setting to orphan (no environment), organizationId is required for global admin.
+ */
+export async function updateBlock(id, name, environmentId = null, organizationId = null) {
   const body = { name }
   if (environmentId !== undefined && environmentId !== null) {
     body.environment_id = environmentId === '' ? NIL_UUID : environmentId
+  }
+  if (environmentId === '' || environmentId === null) {
+    if (organizationId) body.organization_id = organizationId
   }
   return put('/blocks/' + id, body)
 }

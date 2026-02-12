@@ -53,6 +53,41 @@ func TestU32ToIP_roundTripFromIP(t *testing.T) {
 	}
 }
 
+// TestCIDRAddressCount tests CIDRAddressCount for IPv4 and IPv6.
+func TestCIDRAddressCount(t *testing.T) {
+	tests := []struct {
+		cidr     string
+		wantStr  string
+		fitsInt64 bool
+	}{
+		{"10.0.0.0/24", "256", true},
+		{"10.0.0.0/16", "65536", true},
+		{"2001:db8::/64", "18446744073709551616", false},
+		{"2001:db8::/128", "1", true},
+		{"invalid", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.cidr, func(t *testing.T) {
+			got, err := CIDRAddressCount(tt.cidr)
+			if tt.wantStr == "" {
+				if err == nil || got != nil {
+					t.Errorf("CIDRAddressCount(%q) want error", tt.cidr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("CIDRAddressCount(%q): %v", tt.cidr, err)
+			}
+			if got.String() != tt.wantStr {
+				t.Errorf("CIDRAddressCount(%q) = %s, want %s", tt.cidr, got.String(), tt.wantStr)
+			}
+			if CIDRAddressCountFitsInt64(tt.cidr) != tt.fitsInt64 {
+				t.Errorf("CIDRAddressCountFitsInt64(%q) = %v, want %v", tt.cidr, CIDRAddressCountFitsInt64(tt.cidr), tt.fitsInt64)
+			}
+		})
+	}
+}
+
 // TestValidateCIDR tests the ValidateCIDR function
 func TestValidateCIDR(t *testing.T) {
 	tests := []struct {

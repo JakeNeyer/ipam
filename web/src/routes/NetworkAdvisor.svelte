@@ -1,15 +1,22 @@
 <script>
   import { tick } from 'svelte'
-  import { getSubnetInfo, parseCidrToInt } from '../lib/cidr.js'
+  import {
+    getSubnetInfo,
+    parseCidrToInt,
+    parseCidrToBigInt,
+    cidrRangeToBigInt,
+    formatAddressFromBigInt,
+    alignUpBigInt,
+  } from '../lib/cidr.js'
   import {
     totalIPsForPrefix,
     suggestBlockForEnvironment,
-    networkTotalIPsForEnvironment,
-    environmentPlannedIPs,
     blockSizeForEnvironment,
+    totalAllocatedBlockIPsForDisplay,
     getMaxNetworks as sizingGetMaxNetworks,
     getMaxHostsPerNetwork as sizingGetMaxHostsPerNetwork,
   } from '../lib/networkSizing.js'
+  import { formatBlockCount } from '../lib/blockCount.js'
   import { createBlock, createEnvironment, createReservedBlock, listBlocks, listReservedBlocks } from '../lib/api.js'
   import { user, selectedOrgForGlobalAdmin, isGlobalAdmin } from '../lib/auth.js'
 
@@ -18,6 +25,7 @@
     { label: '172.16.0.0/12 (medium private range)', cidr: '172.16.0.0/12' },
     { label: '192.168.0.0/16 (small private range)', cidr: '192.168.0.0/16' },
   ]
+  const IPV6_ULA_OPTION = { label: 'fd00::/8 (ULA)', cidr: 'fd00::/8' }
 
   const CIDR_HINTS = [
     {
@@ -26,14 +34,19 @@
       description: 'Best for long-term growth and many environments.',
     },
     {
-      title: 'Balanced private space',
+      title: 'Balanced private range',
       cidr: '172.16.0.0/12',
       description: 'Good middle ground for most organizations.',
     },
     {
-      title: 'Compact private space',
+      title: 'Compact private range',
       cidr: '192.168.0.0/16',
       description: 'Useful for smaller deployments and labs.',
+    },
+    {
+      title: 'IPv6 ULA',
+      cidr: 'fd00::/8',
+      description: 'Unique Local Addresses for private IPv6 networks.',
     },
   ]
   const OTHER_CIDR_HINT = {
@@ -92,10 +105,13 @@
   let hasInitialMaximized = false
 
   function isPrivateCidr(cidr) {
-    const parsed = parseCidrToInt(cidr)
+    const parsed = parseCidrToBigInt(cidr)
     if (!parsed) return false
-    const i = parsed.baseInt >>> 0
-    // Force unsigned comparisons to avoid JS signed bitwise mismatch.
+    if (parsed.version === 6) {
+      // fd00::/8 (ULA)
+      return (parsed.baseBigInt >> 120n) === 0xfdn
+    }
+    const i = Number(parsed.baseBigInt & 0xffffffffn) >>> 0
     if (((i & 0xff000000) >>> 0) === (0x0a000000 >>> 0)) return true
     if (((i & 0xfff00000) >>> 0) === (0xac100000 >>> 0)) return true
     if (((i & 0xffff0000) >>> 0) === (0xc0a80000 >>> 0)) return true
@@ -119,9 +135,12 @@
     return Math.max(1, Math.round(Math.pow(max, t)))
   }
 
+  const advisorVersion = () => parsedStart?.version ?? 4
+
   /** Set each env to 1 network and max hostsPerNetwork for the base CIDR (iterative: each env's max depends on prior envs) */
   function setEnvironmentsToMaxForBaseCidr(envs) {
     const basePrefix = parsedStart?.prefix ?? 0
+    const version = advisorVersion()
     if (!basePrefix || envs.length === 0) return envs
     const result = []
     for (let i = 0; i < envs.length; i += 1) {
@@ -134,6 +153,7 @@
         env.id,
         envWithOneNetwork,
         0,
+        version,
       )
       result.push({ ...env, networks: 1, hostsPerNetwork: maxHosts })
     }
@@ -147,6 +167,7 @@
       id,
       envOverride,
       0,
+      advisorVersion(),
     )
   }
 
@@ -160,19 +181,16 @@
   }
 
   function normalizeCidr(cidr) {
-    const parsed = parseCidrToInt(cidr)
+    const parsed = parseCidrToBigInt(cidr)
     if (!parsed) return ''
-    const info = getSubnetInfo(cidr.split('/')[0], parsed.prefix)
+    const network = cidr.indexOf('/') >= 0 ? cidr.slice(0, cidr.indexOf('/')).trim() : cidr.trim()
+    const info = getSubnetInfo(network, parsed.prefix, parsed.version)
     return info?.cidr ?? ''
   }
 
+  /** Returns { start, end, prefix, cidr, version } where start/end are bigint for range math. */
   function cidrToRange(cidr) {
-    const parsed = parseCidrToInt(cidr)
-    if (!parsed) return null
-    const size = 2 ** (32 - parsed.prefix)
-    const start = parsed.baseInt >>> 0
-    const end = start + size - 1
-    return { start, end, prefix: parsed.prefix, cidr: normalizeCidr(cidr) || cidr }
+    return cidrRangeToBigInt(cidr)
   }
 
   function rangesOverlap(a, b) {
@@ -182,35 +200,38 @@
   /** Suggested reserved block CIDR within base (e.g. last /16 for /8, last /24 for /16) */
   function suggestedReservedCidrPlaceholder() {
     const baseRange = parsedStart ? cidrToRange(normalizeCidr(startCidr) || startCidr) : null
-    if (!baseRange) return 'e.g. 10.255.0.0/16'
-    const baseSize = baseRange.end - baseRange.start + 1
+    if (!baseRange) return parsedStart?.version === 6 ? 'e.g. fd00::1:0/64' : 'e.g. 10.255.0.0/16'
+    const baseSize = baseRange.end - baseRange.start + 1n
     const suggestedPrefix = baseRange.prefix >= 16 ? 24 : 16
-    const suggestedSize = 2 ** (32 - suggestedPrefix)
+    const bits = baseRange.version === 6 ? 128 : 32
+    const suggestedSize = 1n << BigInt(bits - suggestedPrefix)
     if (suggestedSize > baseSize) return baseRange.cidr
-    const lastStart = baseRange.end - suggestedSize + 1
-    return `${intToAddress(lastStart)}/${suggestedPrefix}`
+    const lastStart = baseRange.end - suggestedSize + 1n
+    const addrStr = baseRange.version === 6 ? formatAddressFromBigInt(lastStart, 6) : intToAddress(Number(lastStart))
+    return `${addrStr}/${suggestedPrefix}`
   }
 
-  /** Sum of IPs in ranges that overlap startRange, with overlapping ranges merged */
+  /** Sum of IPs in ranges that overlap startRange, with overlapping ranges merged. Returns number or bigint. */
   function occupiedIPsWithinRange(startRange, ranges) {
     const clipped = ranges
       .filter((r) => rangesOverlap(r, startRange))
       .map((r) => ({
-        start: Math.max(r.start, startRange.start),
-        end: Math.min(r.end, startRange.end),
+        start: r.start > startRange.start ? r.start : startRange.start,
+        end: r.end < startRange.end ? r.end : startRange.end,
       }))
-    if (clipped.length === 0) return 0
-    const sorted = clipped.sort((a, b) => a.start - b.start)
-    const merged = [sorted[0]]
+    if (clipped.length === 0) return startRange.version === 6 ? 0n : 0
+    const sorted = clipped.slice().sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0))
+    const merged = [{ ...sorted[0] }]
     for (let i = 1; i < sorted.length; i += 1) {
       const last = merged[merged.length - 1]
-      if (sorted[i].start <= last.end + 1) {
-        last.end = Math.max(last.end, sorted[i].end)
+      if (sorted[i].start <= last.end + 1n) {
+        last.end = sorted[i].end > last.end ? sorted[i].end : last.end
       } else {
-        merged.push(sorted[i])
+        merged.push({ ...sorted[i] })
       }
     }
-    return merged.reduce((s, r) => s + (r.end - r.start + 1), 0)
+    const sum = merged.reduce((s, r) => s + (r.end - r.start + 1n), 0n)
+    return startRange.version === 4 && sum <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(sum) : sum
   }
 
   async function loadExistingOccupiedInBase() {
@@ -218,7 +239,7 @@
     const startRange = cidrToRange(normalizeCidr(startCidr) || startCidr)
     if (!startRange) return
     loadingOccupied = true
-    existingOccupiedIPs = 0
+    existingOccupiedIPs = startRange.version === 6 ? 0n : 0
     try {
       const opts = {}
       if (isGlobalAdmin($user) && $selectedOrgForGlobalAdmin) opts.organization_id = $selectedOrgForGlobalAdmin
@@ -229,15 +250,15 @@
       const ranges = []
       for (const b of blocksRes.blocks || []) {
         const r = cidrToRange(b.cidr)
-        if (r) ranges.push(r)
+        if (r && r.version === startRange.version) ranges.push(r)
       }
       for (const r of reservedRes.reserved_blocks || []) {
         const rg = cidrToRange(r.cidr)
-        if (rg) ranges.push(rg)
+        if (rg && rg.version === startRange.version) ranges.push(rg)
       }
       existingOccupiedIPs = occupiedIPsWithinRange(startRange, ranges)
     } catch {
-      existingOccupiedIPs = 0
+      existingOccupiedIPs = startRange.version === 6 ? 0n : 0
     } finally {
       loadingOccupied = false
     }
@@ -249,13 +270,18 @@
   }
 
   function findNextFreeCidr(startRange, prefix, occupiedRanges) {
-    const size = 2 ** (32 - prefix)
-    let cursor = alignUp(startRange.start, size)
-    while (cursor + size - 1 <= startRange.end) {
-      const candidate = { start: cursor, end: cursor + size - 1 }
+    const bits = startRange.version === 6 ? 128 : 32
+    const size = 1n << BigInt(bits - prefix)
+    let cursor = alignUpBigInt(startRange.start, size)
+    const endMax = startRange.end
+    while (cursor + size - 1n <= endMax) {
+      const candidate = { start: cursor, end: cursor + size - 1n, prefix: startRange.prefix, version: startRange.version }
       const conflict = occupiedRanges.find((r) => rangesOverlap(candidate, r))
-      if (!conflict) return `${intToAddress(cursor)}/${prefix}`
-      cursor = alignUp(conflict.end + 1, size)
+      if (!conflict) {
+        const addrStr = startRange.version === 6 ? formatAddressFromBigInt(cursor, 6) : intToAddress(Number(cursor))
+        return `${addrStr}/${prefix}`
+      }
+      cursor = alignUpBigInt(conflict.end + 1n, size)
     }
     return ''
   }
@@ -321,6 +347,7 @@
       id,
       envOverride,
       0,
+      advisorVersion(),
     )
   }
 
@@ -362,7 +389,7 @@
       .map((env) => ({
         env,
         envName: (env.name || '').trim(),
-        suggestion: suggestBlockForEnvironment(env),
+        suggestion: suggestBlockForEnvironment(env, startRange.version),
       }))
       .filter((item) => item.envName.length > 0)
     if (envPlans.length === 0) {
@@ -407,7 +434,12 @@
       for (const draft of draftsToCreate) {
         if (!draft.cidr) throw new Error('Reserved blocks require a valid CIDR.')
         const reservedRange = cidrToRange(draft.cidr)
-        if (!reservedRange || reservedRange.start < startRange.start || reservedRange.end > startRange.end) {
+        if (
+          !reservedRange ||
+          reservedRange.version !== startRange.version ||
+          reservedRange.start < startRange.start ||
+          reservedRange.end > startRange.end
+        ) {
           throw new Error(`Reserved block ${draft.cidr} must be within ${normalizedStart}.`)
         }
         if (occupiedRanges.some((r) => rangesOverlap(r, reservedRange))) {
@@ -474,26 +506,56 @@
     if (currentStep > 1) currentStep -= 1
   }
 
-  $: parsedStart = parseCidrToInt(startCidr)
-  $: startInfo = parsedStart ? getSubnetInfo(startCidr.split('/')[0], parsedStart.prefix) : null
-  $: startTotalIPs = parsedStart ? totalIPsForPrefix(parsedStart.prefix) : 0
+  $: parsedStart = parseCidrToBigInt(startCidr)
+  $: startInfo = parsedStart
+    ? getSubnetInfo(
+        startCidr.indexOf('/') >= 0 ? startCidr.slice(0, startCidr.indexOf('/')).trim() : startCidr.trim(),
+        parsedStart.prefix,
+        parsedStart.version,
+      )
+    : null
+  $: startTotalIPs = parsedStart ? totalIPsForPrefix(parsedStart.prefix, parsedStart.version) : parsedStart?.version === 6 ? '0' : 0
+  $: startTotalIPsBigInt =
+    parsedStart && startTotalIPs != null
+      ? typeof startTotalIPs === 'string'
+        ? BigInt(startTotalIPs)
+        : BigInt(startTotalIPs)
+      : 0n
   $: startUsableIPs = startInfo?.usable ?? 0
-  $: environmentSizing = environments.map((env) => ({ env, suggestion: suggestBlockForEnvironment(env) }))
+  $: advisorVer = advisorVersion()
+  $: environmentSizing = environments.map((env) => ({ env, suggestion: suggestBlockForEnvironment(env, advisorVer) }))
   $: totalRequiredIPs = environmentSizing.reduce((sum, item) => sum + item.suggestion.requiredIPs, 0)
   $: totalNetworkBlocksToCreate = environments.reduce((sum, env) => sum + Math.max(1, Number(env.networks) || 1), 0)
   $: totalRequiredBlockIPs = environmentSizing.reduce((sum, item) => sum + item.suggestion.requiredBlockIPs, 0)
-  /** Sum of IPs consumed (N subnets × subnet size each; matches actual generation) */
-  $: totalAllocatedBlockIPs = environmentSizing.reduce(
-    (sum, item) => sum + item.suggestion.requiredBlockIPs,
-    0,
-  )
+  /** Sum of IPs consumed (N subnets × subnet size each; matches actual generation). BigInt for IPv6 to avoid Infinity. */
+  $: totalAllocatedBlockIPsDisplay = (() => {
+    const v = parsedStart?.version ?? advisorVer
+    const raw = totalAllocatedBlockIPsForDisplay(environments, v)
+    // Safety: if IPv6 but helper returns a number (shouldn't), coerce to BigInt for comparisons.
+    if (v === 6 && typeof raw !== 'bigint') {
+      const n = Number(raw)
+      return Number.isFinite(n) ? BigInt(Math.trunc(n)) : 0n
+    }
+    return raw
+  })()
+  $: totalAllocatedBlockIPs =
+    typeof totalAllocatedBlockIPsDisplay === 'bigint'
+      ? totalAllocatedBlockIPsDisplay
+      : environmentSizing.reduce((sum, item) => sum + item.suggestion.requiredBlockIPs, 0)
   $: totalPlannedUsableIPs = environmentSizing.reduce((sum, item) => sum + item.suggestion.usableIPsInPlannedSubnets, 0)
   $: aggregateFreeIPs = Math.max(0, totalPlannedUsableIPs - totalRequiredIPs)
   $: aggregateUsedPercent =
     totalPlannedUsableIPs > 0 ? Math.min(100, Math.round((totalRequiredIPs / totalPlannedUsableIPs) * 100)) : 0
   /** Base CIDR block space usage: each env takes a portion; compare allocated block IPs to base total */
   $: usagePercent =
-    startTotalIPs > 0 ? Math.min(100, Math.round((totalAllocatedBlockIPs / startTotalIPs) * 100)) : 0
+    startTotalIPsBigInt > 0n
+      ? Math.min(
+          100,
+          typeof totalAllocatedBlockIPsDisplay === 'bigint'
+            ? Number((totalAllocatedBlockIPsDisplay * 100n) / startTotalIPsBigInt)
+            : Number((BigInt(totalAllocatedBlockIPs) * 100n) / startTotalIPsBigInt),
+        )
+      : 0
   $: reservedDraftEntries = reservedBlocksDraft
     .map((entry) => ({
       ...entry,
@@ -514,9 +576,20 @@
     if (ranges.length === 0) return 0
     return occupiedIPsWithinRange(startRange, ranges)
   })()
-  $: totalOccupiedForSizing = existingOccupiedIPs + reservedDraftOccupiedIPs
-  $: availableIPsInBase = Math.max(0, startTotalIPs - totalOccupiedForSizing)
-  $: fitsInBaseCidr = startTotalIPs > 0 && totalAllocatedBlockIPs <= availableIPsInBase
+  $: totalOccupiedForSizing =
+    parsedStart?.version === 6
+      ? BigInt(existingOccupiedIPs) + BigInt(reservedDraftOccupiedIPs)
+      : Number(existingOccupiedIPs) + Number(reservedDraftOccupiedIPs)
+  $: availableIPsInBase =
+    parsedStart?.version === 6
+      ? (startTotalIPsBigInt - totalOccupiedForSizing > 0n ? startTotalIPsBigInt - totalOccupiedForSizing : 0n)
+      : Math.max(0, Number(startTotalIPs) - totalOccupiedForSizing)
+  $: fitsInBaseCidr =
+    (parsedStart?.version === 6 &&
+      startTotalIPsBigInt > 0n &&
+      typeof totalAllocatedBlockIPsDisplay === 'bigint' &&
+      totalAllocatedBlockIPsDisplay <= availableIPsInBase) ||
+    (parsedStart?.version === 4 && Number(startTotalIPs) > 0 && totalAllocatedBlockIPs <= availableIPsInBase)
   $: normalizedBaseCidr = parsedStart ? (normalizeCidr(startCidr) || startCidr) : ''
   $: if (parsedStart && environments.length > 0 && !hasInitialMaximized) {
     hasInitialMaximized = true
@@ -550,7 +623,12 @@
     lastOccupiedLoadKey = ''
   }
   $: hasValidEnvironmentNames = environments.some((e) => (e.name || '').trim().length > 0)
-  $: selectedStartHint = CIDR_HINTS.some((h) => h.cidr === startCidr.trim()) ? startCidr.trim() : 'other'
+  $: selectedStartHint = (() => {
+    const norm = normalizeCidr(startCidr) || startCidr.trim()
+    if (!norm) return 'other'
+    const match = CIDR_HINTS.find((h) => h.cidr && normalizeCidr(h.cidr) === norm)
+    return match ? match.cidr : 'other'
+  })()
   $: canContinue =
     currentStep === 1 ? !!parsedStart :
     currentStep === 2 ? hasValidEnvironmentNames :
@@ -612,15 +690,15 @@
       <div class="start-cidr-input">
         <div class="form-row">
           <label for="advisor-start-cidr">Starting CIDR</label>
-          <input id="advisor-start-cidr" class="input" type="text" bind:value={startCidr} placeholder="e.g. 10.0.0.0/8" />
+          <input id="advisor-start-cidr" class="input" type="text" bind:value={startCidr} placeholder="e.g. 10.0.0.0/8 or fd00::/8" />
         </div>
       </div>
       {#if !parsedStart}
-        <p class="error">Enter a valid CIDR (example: `10.0.0.0/8`).</p>
+        <p class="error">Enter a valid CIDR (e.g. 10.0.0.0/8 or fd00::/8).</p>
       {:else if !isPrivateCidr(startCidr)}
-        <p class="warn">This CIDR is valid, but it is not in an RFC 1918 private range.</p>
+        <p class="warn">This CIDR is valid, but it is not in a private range (RFC 1918 or IPv6 ULA).</p>
       {:else}
-        <p class="ok">Private CIDR detected. Estimated usable IPs: {startUsableIPs.toLocaleString()}.</p>
+        <p class="ok">Private CIDR detected. Estimated usable IPs: {typeof startUsableIPs === 'number' ? startUsableIPs.toLocaleString() : formatBlockCount(startUsableIPs)}.</p>
       {/if}
     {:else if currentStep === 2}
       <h2>Step 2: Define environments</h2>
@@ -706,13 +784,13 @@
     {:else if currentStep === 4}
       <h2>Step 4: Size network blocks</h2>
       <p class="muted">Estimate hosts and number of networks in each environment. Reserved blocks are deducted first.</p>
-      {#if parsedStart && totalOccupiedForSizing > 0 && !loadingOccupied}
+      {#if parsedStart && (typeof totalOccupiedForSizing === 'bigint' ? totalOccupiedForSizing > 0n : totalOccupiedForSizing > 0) && !loadingOccupied}
         <p class="field-note" style="margin-bottom: 0.75rem">
-          <strong>{totalOccupiedForSizing.toLocaleString()}</strong> IPs in base CIDR are used by existing blocks
-          {#if reservedDraftOccupiedIPs > 0}
-            and reserved blocks ({reservedDraftOccupiedIPs.toLocaleString()})
+          <strong>{formatBlockCount(totalOccupiedForSizing)}</strong> IPs in base CIDR are used by existing blocks
+          {#if (typeof reservedDraftOccupiedIPs === 'bigint' ? reservedDraftOccupiedIPs > 0n : reservedDraftOccupiedIPs > 0)}
+            and reserved blocks ({formatBlockCount(reservedDraftOccupiedIPs)})
           {/if}
-          . Sliders limited to <strong>{availableIPsInBase.toLocaleString()}</strong> available IPs.
+          . Sliders limited to <strong>{formatBlockCount(availableIPsInBase)}</strong> available IPs.
         </p>
       {:else if parsedStart && loadingOccupied}
         <p class="field-note" style="margin-bottom: 0.75rem">Checking existing blocks…</p>
@@ -720,9 +798,9 @@
       <div class="advisor-grid">
         {#each environmentSizing as item}
           {@const env = item.env}
-          {@const baseTotal = startTotalIPs}
+          {@const baseTotalNum = typeof startTotalIPs === 'string' ? Number(startTotalIPs) : startTotalIPs}
           {@const subnetSize = item.suggestion.networkUsableIPs}
-          {@const sliderMax = Math.max(1, subnetSize > 0 ? Math.floor(baseTotal / subnetSize) : 1)}
+          {@const sliderMax = Math.max(1, subnetSize > 0 && Number.isFinite(baseTotalNum) ? Math.min(1e9, Math.floor(baseTotalNum / subnetSize)) : 1)}
           {@const ipsPerNetwork = item.suggestion.networkUsableIPs}
           {@const totalIPs = item.suggestion.requiredBlockIPs}
           <article class="advisor-env-card" class:exceeded={!fitsInBaseCidr}>
@@ -747,8 +825,8 @@
               />
             </div>
             <div class="env-sizing-detail">
-              <span>{ipsPerNetwork.toLocaleString()} IPs per network</span>
-              <span>{totalIPs.toLocaleString()} IPs total</span>
+              <span>{typeof ipsPerNetwork === 'number' && Number.isFinite(ipsPerNetwork) ? ipsPerNetwork.toLocaleString() : formatBlockCount(ipsPerNetwork)} IPs per network</span>
+              <span>{typeof totalIPs === 'number' && Number.isFinite(totalIPs) ? totalIPs.toLocaleString() : formatBlockCount(totalIPs)} IPs total</span>
             </div>
           </article>
         {/each}
@@ -757,23 +835,23 @@
         <h3>Aggregate sizing result</h3>
         <div>Required host IPs (usable): <strong>{totalRequiredIPs.toLocaleString()}</strong></div>
         <div>
-          Total block IPs consumed (from base CIDR): <strong>{totalAllocatedBlockIPs.toLocaleString()}</strong>
+          Total block IPs consumed (from base CIDR): <strong>{formatBlockCount(totalAllocatedBlockIPsDisplay)}</strong>
         </div>
         {#if parsedStart}
           <div class={fitsInBaseCidr ? 'ok' : 'warn'}>
             {fitsInBaseCidr
               ? `Fits in ${normalizeCidr(startCidr) || startCidr} (${usagePercent}% of base CIDR used)`
-              : `Exceeds base CIDR — need ${totalAllocatedBlockIPs.toLocaleString()} IPs, only ${availableIPsInBase.toLocaleString()} available (existing & reserved deducted)`}
+              : `Exceeds base CIDR — need ${formatBlockCount(totalAllocatedBlockIPsDisplay)} IPs, only ${formatBlockCount(availableIPsInBase)} available (existing & reserved deducted)`}
           </div>
         {/if}
-        <div>Planned subnet capacity (all environments): <strong>{totalPlannedUsableIPs.toLocaleString()}</strong></div>
+        <div>Planned subnet capacity (all environments): <strong>{typeof totalPlannedUsableIPs === 'number' && Number.isFinite(totalPlannedUsableIPs) ? totalPlannedUsableIPs.toLocaleString() : formatBlockCount(totalPlannedUsableIPs)}</strong></div>
         <div class="ip-capacity">
           <div class="ip-capacity-head">
-            <span>Block IPs used: <strong>{totalAllocatedBlockIPs.toLocaleString()}</strong></span>
+            <span>Block IPs used: <strong>{formatBlockCount(totalAllocatedBlockIPsDisplay)}</strong></span>
             <span>
-              Base CIDR total: <strong>{startTotalIPs.toLocaleString()}</strong>
-              {#if totalOccupiedForSizing > 0}
-                <span class="muted">(deducts existing & reserved blocks → {availableIPsInBase.toLocaleString()} available)</span>
+              Base CIDR total: <strong>{formatBlockCount(startTotalIPs)}</strong>
+              {#if (typeof totalOccupiedForSizing === 'bigint' ? totalOccupiedForSizing > 0n : totalOccupiedForSizing > 0)}
+                <span class="muted">(deducts existing & reserved blocks → {formatBlockCount(availableIPsInBase)} available)</span>
               {/if}
             </span>
           </div>
@@ -832,27 +910,27 @@
       <h2>Step 5: Advisor summary</h2>
       <p>Network blocks to be created: <strong>{totalNetworkBlocksToCreate.toLocaleString()}</strong></p>
       <p>Required host IPs across environments: <strong>{totalRequiredIPs.toLocaleString()}</strong></p>
-      <p>Total block space consumed from base CIDR: <strong>{totalAllocatedBlockIPs.toLocaleString()}</strong></p>
+      <p>Total block space consumed from base CIDR: <strong>{formatBlockCount(totalAllocatedBlockIPsDisplay)}</strong></p>
       {#if parsedStart}
         {#if loadingOccupied}
           <p class="muted">Checking existing blocks in base CIDR…</p>
         {:else}
           <p>
-            Base CIDR: <strong>{startTotalIPs.toLocaleString()}</strong> total IPs
-            {#if totalOccupiedForSizing > 0}
-              — <strong>{totalOccupiedForSizing.toLocaleString()}</strong> used
-              ({#if existingOccupiedIPs > 0}{existingOccupiedIPs.toLocaleString()} existing{/if}
-              {#if existingOccupiedIPs > 0 && reservedDraftOccupiedIPs > 0}, {/if}
-              {#if reservedDraftOccupiedIPs > 0}{reservedDraftOccupiedIPs.toLocaleString()} reserved{/if})
+            Base CIDR: <strong>{formatBlockCount(startTotalIPs)}</strong> total IPs
+            {#if (typeof totalOccupiedForSizing === 'bigint' ? totalOccupiedForSizing > 0n : totalOccupiedForSizing > 0)}
+              — <strong>{formatBlockCount(totalOccupiedForSizing)}</strong> used
+              ({#if (typeof existingOccupiedIPs === 'bigint' ? existingOccupiedIPs > 0n : existingOccupiedIPs > 0)}{formatBlockCount(existingOccupiedIPs)} existing{/if}
+              {#if (typeof existingOccupiedIPs === 'bigint' ? existingOccupiedIPs > 0n : existingOccupiedIPs > 0) && (typeof reservedDraftOccupiedIPs === 'bigint' ? reservedDraftOccupiedIPs > 0n : reservedDraftOccupiedIPs > 0)}, {/if}
+              {#if (typeof reservedDraftOccupiedIPs === 'bigint' ? reservedDraftOccupiedIPs > 0n : reservedDraftOccupiedIPs > 0)}{formatBlockCount(reservedDraftOccupiedIPs)} reserved{/if})
             {/if}
           </p>
           <p>
-            Available for plan: <strong>{availableIPsInBase.toLocaleString()}</strong> IPs
+            Available for plan: <strong>{formatBlockCount(availableIPsInBase)}</strong> IPs
           </p>
         {/if}
         {#if !loadingOccupied}
           {#if !fitsInBaseCidr}
-            <p class="warn">Plan needs {totalAllocatedBlockIPs.toLocaleString()} IPs but only {availableIPsInBase.toLocaleString()} available. Reduce environment sizes or choose a larger base CIDR.</p>
+            <p class="warn">Plan needs {formatBlockCount(totalAllocatedBlockIPsDisplay)} IPs but only {formatBlockCount(availableIPsInBase)} available. Reduce environment sizes or choose a larger base CIDR.</p>
           {:else}
             <p class="ok">Current plan fits within available capacity.</p>
           {/if}
@@ -860,11 +938,11 @@
       {/if}
       <div class="summary-grid">
         {#each environments as env}
-          {@const suggestion = suggestBlockForEnvironment(env)}
+          {@const suggestion = suggestBlockForEnvironment(env, advisorVer)}
           <div class="summary-card">
             <div class="summary-title">{env.name || 'Environment'}</div>
             <div>Network blocks to be created: <strong>{Math.max(1, Number(env.networks) || 1).toLocaleString()}</strong></div>
-            <div>Capacity: {suggestion.usableIPs.toLocaleString()} usable IPs</div>
+            <div>Capacity: {typeof suggestion.usableIPs === 'number' ? suggestion.usableIPs.toLocaleString() : formatBlockCount(suggestion.usableIPs)} usable IPs</div>
           </div>
         {/each}
       </div>

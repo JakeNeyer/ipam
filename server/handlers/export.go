@@ -79,11 +79,7 @@ func NewExportCSVUseCase(s store.Storer) usecase.Interactor {
 		}
 
 		for _, b := range blocks {
-			used := computeUsedIPsForBlock(s, b.Name, orgID)
-			avail := b.Usage.TotalIPs - used
-			if avail < 0 {
-				avail = 0
-			}
+			totalStr, usedStr, availStr, _ := derivedBlockUsage(s, b.Name, b.CIDR, orgID)
 			envName := envByID[b.EnvironmentID.String()]
 			start, end := cidrStartEnd(b.CIDR)
 			_ = wr.Write([]string{
@@ -92,9 +88,9 @@ func NewExportCSVUseCase(s store.Storer) usecase.Interactor {
 				start,
 				end,
 				envName,
-				strconv.Itoa(b.Usage.TotalIPs),
-				strconv.Itoa(used),
-				strconv.Itoa(avail),
+				totalStr,
+				usedStr,
+				availStr,
 			})
 		}
 
@@ -185,11 +181,7 @@ func ExportCSVHandler(s store.Storer) http.Handler {
 		wr := csv.NewWriter(&buf)
 		_ = wr.Write([]string{"name", "cidr", "cidr_start", "cidr_end", "environment_name", "total_ips", "used_ips", "available_ips"})
 		for _, b := range blocks {
-			used := computeUsedIPsForBlock(s, b.Name, orgID)
-			avail := b.Usage.TotalIPs - used
-			if avail < 0 {
-				avail = 0
-			}
+			totalStr, usedStr, availStr, _ := derivedBlockUsage(s, b.Name, b.CIDR, orgID)
 			envName := envByID[b.EnvironmentID.String()]
 			start, end := cidrStartEnd(b.CIDR)
 			_ = wr.Write([]string{
@@ -198,9 +190,9 @@ func ExportCSVHandler(s store.Storer) http.Handler {
 				start,
 				end,
 				envName,
-				strconv.Itoa(b.Usage.TotalIPs),
-				strconv.Itoa(used),
-				strconv.Itoa(avail),
+				totalStr,
+				usedStr,
+				availStr,
 			})
 		}
 		wr.Flush()

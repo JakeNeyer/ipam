@@ -76,9 +76,11 @@ terraform destroy -var-file=terraform.tfvars
 The example `main.tf` declares:
 
 - **ipam_environment.hack** – name `tf-hack-env`
-- **ipam_block.hack** – name `tf-hack-block`, CIDR `10.200.0.0/24`, in that environment
+- **ipam_block.hack** – name `tf-hack-block`, CIDR `10.200.0.0/24`, in that environment (IPv4)
 - **ipam_allocation.hack** – name `tf-hack-alloc`, CIDR `10.200.0.0/26`, in that block (explicit CIDR)
 - **ipam_allocation.hack_auto** – name `tf-hack-alloc-auto`, auto-allocated /26 via `/api/allocations/auto` (prefix_length)
+- **ipam_block.hack_ula** – name `tf-hack-ula`, CIDR `fd00:200::/48`, in that environment (IPv6 ULA)
+- **ipam_allocation.hack_ula_subnet** – name `tf-hack-ula-subnet`, CIDR `fd00:200::/64`, in the IPv6 block
 
 Run `terraform destroy` when finished to remove these resources from IPAM.
 

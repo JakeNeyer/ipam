@@ -12,8 +12,10 @@ const MIN_NETWORKS = 1
 const MIN_HOSTS = 8
 const HOST_STEP = 8
 const MAX_PREFIX = 32
+const MAX_PREFIX_IPV6 = 128
 const MIN_PREFIX = 0
 const MAX_HOST_SEARCH = 2 ** 30
+const SAFE_INT = 2 ** 53 - 1
 
 function toNumber(value, fallback = 0) {
   const n = Number(value)
@@ -24,9 +26,11 @@ function toInt(value, fallback = 0) {
   return Math.trunc(toNumber(value, fallback))
 }
 
-function clampPrefix(prefix) {
+/** Clamp prefix to valid range for IP version. version: 4 or 6; default 4. */
+function clampPrefix(prefix, version = 4) {
   const p = toInt(prefix, -1)
-  if (p < MIN_PREFIX || p > MAX_PREFIX) return null
+  const max = version === 6 ? MAX_PREFIX_IPV6 : MAX_PREFIX
+  if (p < MIN_PREFIX || p > max) return null
   return p
 }
 
@@ -54,17 +58,20 @@ function requiredHostsPerSubnet(env) {
   return Math.max(1, Math.ceil(hosts * (1 + growth / 100)))
 }
 
-function prefixForAtLeastTotalIPs(requiredTotal) {
+function prefixForAtLeastTotalIPs(requiredTotal, version = 4) {
   const needed = Math.max(1, Math.ceil(toNumber(requiredTotal, 1)))
-  for (let prefix = MAX_PREFIX; prefix >= MIN_PREFIX; prefix -= 1) {
-    if (totalIPsForPrefix(prefix) >= needed) return prefix
+  const maxP = version === 6 ? MAX_PREFIX_IPV6 : MAX_PREFIX
+  for (let prefix = maxP; prefix >= MIN_PREFIX; prefix -= 1) {
+    const total = totalIPsForPrefix(prefix, version)
+    const n = typeof total === 'string' ? Number(total) : total
+    if (Number.isFinite(n) && n >= needed) return prefix
   }
   return MIN_PREFIX
 }
 
-function subnetPrefixForEnvironment(env) {
+function subnetPrefixForEnvironment(env, version = 4) {
   const neededIPs = requiredHostsPerSubnet(env)
-  return prefixForAtLeastTotalIPs(neededIPs)
+  return prefixForAtLeastTotalIPs(neededIPs, version)
 }
 
 function envByIdWithOverride(environments, envId, envOverride = null) {
@@ -72,8 +79,8 @@ function envByIdWithOverride(environments, envId, envOverride = null) {
   return (environments || []).find((env) => env?.id === envId) ?? null
 }
 
-function blockFitsCapacity(env, capacity) {
-  return blockSizeForEnvironment(env) <= Math.max(0, toNumber(capacity, 0))
+function blockFitsCapacity(env, capacity, version = 4) {
+  return blockSizeForEnvironment(env, version) <= Math.max(0, toNumber(capacity, 0))
 }
 
 function maxByBinarySearch({ min, max, step, fits }) {
@@ -97,39 +104,56 @@ function maxByBinarySearch({ min, max, step, fits }) {
 
 // --- CIDR math ---
 
-export function totalIPsForPrefix(prefix) {
-  const normalized = clampPrefix(prefix)
-  if (normalized == null) return 0
-  return 2 ** (32 - normalized)
+/**
+ * Total IPs for a prefix length. version 4 or 6; default 4.
+ * For IPv6, returns string when count > 2^53 to avoid precision loss (uses BigInt for large exponents).
+ */
+export function totalIPsForPrefix(prefix, version = 4) {
+  const normalized = clampPrefix(prefix, version)
+  if (normalized == null) return version === 6 ? '0' : 0
+  const bits = version === 6 ? 128 : 32
+  const exp = bits - normalized
+  if (version === 6 && exp > 53) {
+    return (1n << BigInt(exp)).toString()
+  }
+  const count = 2 ** exp
+  if (version === 6 && count > SAFE_INT) return String(count)
+  return count
 }
 
-export function usableIPsForPrefix(prefix) {
-  const total = totalIPsForPrefix(prefix)
-  return total >= 2 ? total - 2 : 0
+export function usableIPsForPrefix(prefix, version = 4) {
+  const total = totalIPsForPrefix(prefix, version)
+  if (version === 6) return total
+  const n = typeof total === 'number' ? total : Number(total)
+  return n >= 2 ? n - 2 : 0
 }
 
 // --- Per-environment sizing ---
 
-export function networkTotalIPsForEnvironment(env) {
-  return totalIPsForPrefix(subnetPrefixForEnvironment(env))
+export function networkTotalIPsForEnvironment(env, version = 4) {
+  const t = totalIPsForPrefix(subnetPrefixForEnvironment(env, version), version)
+  return typeof t === 'number' ? t : Number(t)
 }
 
-export function suggestBlockForEnvironment(env) {
+export function suggestBlockForEnvironment(env, version = 4) {
   const networks = clampNetworks(env?.networks)
   const requiredPerSubnet = requiredHostsPerSubnet(env)
-  const subnetPrefix = subnetPrefixForEnvironment(env)
-  const subnetTotalIPs = totalIPsForPrefix(subnetPrefix)
-  const subnetUsableIPs = totalIPsForPrefix(subnetPrefix)
+  const subnetPrefix = subnetPrefixForEnvironment(env, version)
+  const subnetTotalIPs = totalIPsForPrefix(subnetPrefix, version)
+  const subnetUsableIPs =
+    typeof subnetTotalIPs === 'number' ? subnetTotalIPs : Number(subnetTotalIPs)
 
-  const requiredBlockIPs = networks * subnetTotalIPs
-  const blockPrefix = prefixForAtLeastTotalIPs(requiredBlockIPs)
-  const blockUsableIPs = totalIPsForPrefix(blockPrefix)
+  const requiredBlockIPs = networks * subnetUsableIPs
+  const blockPrefix = prefixForAtLeastTotalIPs(requiredBlockIPs, version)
+  const blockUsableIPs = totalIPsForPrefix(blockPrefix, version)
+  const blockUsableNum =
+    typeof blockUsableIPs === 'number' ? blockUsableIPs : Number(blockUsableIPs)
 
   return {
     requiredIPs: networks * requiredPerSubnet,
     requiredBlockIPs,
     prefix: blockPrefix,
-    usableIPs: blockUsableIPs,
+    usableIPs: blockUsableNum,
     networkPrefix: subnetPrefix,
     networkUsableIPs: subnetUsableIPs,
     usableIPsInPlannedSubnets: networks * subnetUsableIPs,
@@ -137,22 +161,50 @@ export function suggestBlockForEnvironment(env) {
   }
 }
 
-export function blockSizeForEnvironment(env) {
-  const suggestion = suggestBlockForEnvironment(env)
-  return totalIPsForPrefix(suggestion.prefix)
+export function blockSizeForEnvironment(env, version = 4) {
+  const suggestion = suggestBlockForEnvironment(env, version)
+  const t = totalIPsForPrefix(suggestion.prefix, version)
+  return typeof t === 'number' ? t : Number(t)
 }
 
-export function totalAllocatedBlockIPs(environments) {
-  return (environments || []).reduce((sum, env) => sum + blockSizeForEnvironment(env), 0)
+/** Block size as string for IPv6 (avoids Infinity); as number for IPv4. Used for BigInt sums in advisor. */
+export function blockSizeForEnvironmentAsString(env, version = 4) {
+  const suggestion = suggestBlockForEnvironment(env, version)
+  const t = totalIPsForPrefix(suggestion.prefix, version)
+  return typeof t === 'string' ? t : String(t)
+}
+
+export function totalAllocatedBlockIPs(environments, version = 4) {
+  return (environments || []).reduce(
+    (sum, env) => sum + blockSizeForEnvironment(env, version),
+    0,
+  )
+}
+
+/** Total allocated block IPs as BigInt for IPv6 (avoids Infinity); as number for IPv4. */
+export function totalAllocatedBlockIPsForDisplay(environments, version = 4) {
+  if (version === 6) {
+    let sum = 0n
+    for (const env of environments || []) {
+      const s = blockSizeForEnvironmentAsString(env, version)
+      try {
+        sum += BigInt(s)
+      } catch {
+        // ignore invalid
+      }
+    }
+    return sum
+  }
+  return totalAllocatedBlockIPs(environments, version)
 }
 
 /**
  * Legacy helper: planned subnet total (not rounded to environment block size).
  * Kept for compatibility with existing UI.
  */
-export function environmentPlannedIPs(env) {
+export function environmentPlannedIPs(env, version = 4) {
   const networks = clampNetworks(env?.networks)
-  return networks * networkTotalIPsForEnvironment(env)
+  return networks * networkTotalIPsForEnvironment(env, version)
 }
 
 // --- Capacity and max knobs ---
@@ -163,19 +215,21 @@ export function remainingCapacity(
   envId,
   envOverride = null,
   existingOccupiedIPs = 0,
+  version = 4,
 ) {
-  const baseTotalIPs = totalIPsForPrefix(basePrefix)
-  if (baseTotalIPs <= 0) return 0
+  const baseTotalIPs = totalIPsForPrefix(basePrefix, version)
+  const baseNum = typeof baseTotalIPs === 'number' ? baseTotalIPs : Number(baseTotalIPs)
+  if (!Number.isFinite(baseNum) || baseNum <= 0) return 0
 
   const occupied = Math.max(0, toNumber(existingOccupiedIPs, 0))
-  const availableBaseIPs = Math.max(0, baseTotalIPs - occupied)
+  const availableBaseIPs = Math.max(0, baseNum - occupied)
   const targetEnv = envByIdWithOverride(environments, envId, envOverride)
 
   const othersUsed = (environments || []).reduce((sum, env) => {
     if (!env) return sum
     if (targetEnv && env?.id === targetEnv.id) return sum
     if (!targetEnv && env?.id === envId) return sum
-    return sum + blockSizeForEnvironment(env)
+    return sum + blockSizeForEnvironment(env, version)
   }, 0)
 
   return Math.max(0, availableBaseIPs - othersUsed)
@@ -187,6 +241,7 @@ export function getMaxNetworks(
   envId,
   envOverride = null,
   existingOccupiedIPs = 0,
+  version = 4,
 ) {
   const env = envByIdWithOverride(environments, envId, envOverride)
   if (!env) return MIN_NETWORKS
@@ -197,6 +252,7 @@ export function getMaxNetworks(
     envId,
     envOverride,
     existingOccupiedIPs,
+    version,
   )
   if (capacity <= 0) return MIN_NETWORKS
 
@@ -206,7 +262,8 @@ export function getMaxNetworks(
     growthPercent: normalizeGrowthPercent(env.growthPercent),
   }
 
-  const fits = (networks) => blockFitsCapacity({ ...baseEnv, networks }, capacity)
+  const fits = (networks) =>
+    blockFitsCapacity({ ...baseEnv, networks }, capacity, version)
   if (!fits(MIN_NETWORKS)) return MIN_NETWORKS
 
   let hi = Math.max(MIN_NETWORKS, clampNetworks(baseEnv.networks))
@@ -227,6 +284,7 @@ export function getMaxHostsPerNetwork(
   envId,
   envOverride = null,
   existingOccupiedIPs = 0,
+  version = 4,
 ) {
   const env = envByIdWithOverride(environments, envId, envOverride)
   if (!env) return MIN_HOSTS
@@ -237,6 +295,7 @@ export function getMaxHostsPerNetwork(
     envId,
     envOverride,
     existingOccupiedIPs,
+    version,
   )
   if (capacity <= 0) return MIN_HOSTS
 
@@ -247,7 +306,11 @@ export function getMaxHostsPerNetwork(
   }
 
   const fits = (hostsPerNetwork) =>
-    blockFitsCapacity({ ...baseEnv, hostsPerNetwork: normalizeHosts(hostsPerNetwork) }, capacity)
+    blockFitsCapacity(
+      { ...baseEnv, hostsPerNetwork: normalizeHosts(hostsPerNetwork) },
+      capacity,
+      version,
+    )
 
   if (!fits(MIN_HOSTS)) return MIN_HOSTS
 

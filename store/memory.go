@@ -134,6 +134,26 @@ func (s *Store) DeleteOrganization(id uuid.UUID) error {
 		}
 		delete(s.environments, envID)
 	}
+	// Orphan blocks scoped to this org
+	var orphanBlockIDs []uuid.UUID
+	for bid, block := range s.blocks {
+		if block.EnvironmentID == uuid.Nil && block.OrganizationID == id {
+			orphanBlockIDs = append(orphanBlockIDs, bid)
+		}
+	}
+	for _, bid := range orphanBlockIDs {
+		block := s.blocks[bid]
+		if block == nil {
+			continue
+		}
+		blockName := strings.TrimSpace(block.Name)
+		for aid, alloc := range s.allocations {
+			if strings.EqualFold(strings.TrimSpace(alloc.Block.Name), blockName) {
+				delete(s.allocations, aid)
+			}
+		}
+		delete(s.blocks, bid)
+	}
 	var reservedIDsToDelete []uuid.UUID
 	for rid, r := range s.reservedBlocks {
 		if r.OrganizationID == id {
@@ -319,10 +339,16 @@ func (s *Store) ListBlocksFiltered(name string, environmentID *uuid.UUID, organi
 		if environmentID != nil && block.EnvironmentID != *environmentID {
 			continue
 		}
-		if organizationID != nil && block.EnvironmentID != uuid.Nil {
-			env, exists := s.environments[block.EnvironmentID]
-			if !exists || env.OrganizationID != *organizationID {
-				continue
+		if organizationID != nil {
+			if block.EnvironmentID != uuid.Nil {
+				env, exists := s.environments[block.EnvironmentID]
+				if !exists || env.OrganizationID != *organizationID {
+					continue
+				}
+			} else {
+				if block.OrganizationID != *organizationID {
+					continue
+				}
 			}
 		}
 		if nameLower == "" || strings.Contains(strings.ToLower(block.Name), nameLower) {

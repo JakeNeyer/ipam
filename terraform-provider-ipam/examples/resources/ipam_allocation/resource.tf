@@ -1,15 +1,23 @@
-# Create an environment, block, and allocations within the block.
+# Create an environment, blocks (IPv4 and IPv6), and allocations within them.
 resource "ipam_environment" "example" {
   name = "prod"
 }
 
+# IPv4 block
 resource "ipam_block" "example" {
   name           = "prod-vpc"
   cidr           = "10.0.0.0/8"
   environment_id = ipam_environment.example.id
 }
 
-# Explicit CIDR
+# IPv6 ULA block
+resource "ipam_block" "example_ula" {
+  name           = "prod-ula"
+  cidr           = "fd00::/48"
+  environment_id = ipam_environment.example.id
+}
+
+# Explicit CIDR (IPv4)
 resource "ipam_allocation" "example" {
   name       = "region-us-east-1"
   block_name = ipam_block.example.name
@@ -23,6 +31,13 @@ resource "ipam_allocation" "auto" {
   prefix_length  = 24
 }
 
+# IPv6 ULA allocation
+resource "ipam_allocation" "ula_subnet" {
+  name       = "prod-ula-subnet"
+  block_name = ipam_block.example_ula.name
+  cidr       = "fd00::/64"
+}
+
 output "allocation_id" {
   value = ipam_allocation.example.id
 }
@@ -33,4 +48,8 @@ output "allocation_cidr" {
 
 output "allocation_auto_cidr" {
   value = ipam_allocation.auto.cidr
+}
+
+output "allocation_ula_cidr" {
+  value = ipam_allocation.ula_subnet.cidr
 }

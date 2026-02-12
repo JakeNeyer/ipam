@@ -90,6 +90,17 @@ curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/blocks" -H "Content-
   -d '{"name":"orphan-block","cidr":"192.168.0.0/24"}' >/dev/null
 echo "  orphan-block (192.168.0.0/24) [no environment]"
 
+# IPv6 ULA blocks
+curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/blocks" -H "Content-Type: application/json" \
+  -d "{\"name\":\"prod-ula\",\"cidr\":\"fd00:0:0:1::/48\",\"environment_id\":\"${PROD_ID}\"}" >/dev/null
+echo "  prod-ula (fd00:0:0:1::/48) in Production"
+curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/blocks" -H "Content-Type: application/json" \
+  -d "{\"name\":\"staging-ula\",\"cidr\":\"fd00:0:0:2::/48\",\"environment_id\":\"${STAGING_ID}\"}" >/dev/null
+echo "  staging-ula (fd00:0:0:2::/48) in Staging"
+curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/blocks" -H "Content-Type: application/json" \
+  -d '{"name":"orphan-ula","cidr":"fd00:0:0:0::/48"}' >/dev/null
+echo "  orphan-ula (fd00:0:0:0::/48) [no environment]"
+
 # Full utilization: entire block allocated (100%)
 curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/blocks" -H "Content-Type: application/json" \
   -d "{\"name\":\"full-block\",\"cidr\":\"10.7.0.0/26\",\"environment_id\":\"${PROD_ID}\"}" >/dev/null
@@ -112,6 +123,13 @@ echo "  prod-db 10.0.2.0/24 in prod-vpc (gap 10.0.1.0/24 for bin-pack demo)"
 curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/allocations" -H "Content-Type: application/json" \
   -d '{"name":"staging-app","block_name":"staging-vpc","cidr":"10.1.0.0/24"}' >/dev/null
 echo "  staging-app 10.1.0.0/24 in staging-vpc"
+
+curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/allocations" -H "Content-Type: application/json" \
+  -d '{"name":"prod-ula-subnet","block_name":"prod-ula","cidr":"fd00:0:0:1::/64"}' >/dev/null
+echo "  prod-ula-subnet fd00:0:0:1::/64 in prod-ula"
+curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/allocations" -H "Content-Type: application/json" \
+  -d '{"name":"staging-ula-subnet","block_name":"staging-ula","cidr":"fd00:0:0:2::/64"}' >/dev/null
+echo "  staging-ula-subnet fd00:0:0:2::/64 in staging-ula"
 
 curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/allocations" -H "Content-Type: application/json" \
   -d '{"name":"orphan-subnet","block_name":"orphan-block","cidr":"192.168.0.0/26"}' >/dev/null
@@ -145,6 +163,10 @@ echo "  Prod gap 10.0.1.0/24 (Reserved gap in prod-vpc)"
 curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/reserved-blocks" -H "Content-Type: application/json" \
   -d '{"name":"DMZ","cidr":"172.16.0.0/24","reason":"DMZ reserve"}' >/dev/null
 echo "  DMZ 172.16.0.0/24 (DMZ reserve)"
+
+curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/reserved-blocks" -H "Content-Type: application/json" \
+  -d '{"name":"ULA reserve","cidr":"fd00:0:0:ff00::/56","reason":"Reserved IPv6 ULA range"}' >/dev/null
+echo "  ULA reserve fd00:0:0:ff00::/56 (Reserved IPv6 ULA range)"
 
 # Adversarial: attempt invalid requests and expect API to reject (4xx)
 echo "Verifying API rejects invalid data..."

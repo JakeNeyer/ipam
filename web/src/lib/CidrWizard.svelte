@@ -1,7 +1,8 @@
 <script>
   import { onMount } from 'svelte'
-  import { cidrRange } from './cidr.js'
+  import { cidrRange, ipVersion } from './cidr.js'
   import { suggestBlockCidr, suggestEnvironmentBlockCidr } from './api.js'
+  import { formatBlockCount } from './blockCount.js'
 
   /** @type {'block' | 'allocation'} */
   export let mode = 'block'
@@ -20,43 +21,71 @@
   let suggestedBlockCidrFromApi = ''
   let suggestedBlockLoading = false
 
-  const PREFIX_OPTIONS_BLOCK = [8, 12, 16, 20, 24, 25, 26, 27, 28, 29, 30]
-  const MAX_PREFIX = 30
+  const PREFIX_OPTIONS_BLOCK_IPV4 = [8, 12, 16, 20, 24, 25, 26, 27, 28, 29, 30]
+  const PREFIX_OPTIONS_BLOCK_IPV6 = [16, 32, 40, 48, 52, 56, 60, 64, 80, 96, 112, 128]
+  const MAX_PREFIX_IPV4 = 30
+  const MAX_PREFIX_IPV6 = 128
   const MIN_PREFIX_ALLOC = 1
 
+  let blockVersion = 4
   let octets = [10, 0, 0, 0]
+  let baseAddressIPv6 = '2001:db8::'
   let selectedPrefix = 24
 
   $: blockCidrComputed =
     mode === 'block'
-      ? `${octets[0]}.${octets[1]}.${octets[2]}.${octets[3]}/${selectedPrefix}`
+      ? blockVersion === 6
+        ? `${baseAddressIPv6.trim()}/${selectedPrefix}`
+        : `${octets[0]}.${octets[1]}.${octets[2]}.${octets[3]}/${selectedPrefix}`
       : ''
 
-  // Sync external value → octets (e.g. user typed in CIDR field). Depends only on value/mode to avoid cycle.
+  // Sync external value → octets / baseAddressIPv6 (e.g. user typed in CIDR field). Depends only on value/mode to avoid cycle.
   $: if (mode === 'block' && value) {
     const c = parseCidr(value)
     if (c) {
-      const parts = c.network.split('.')
-      if (parts.length === 4) {
-        octets = parts.map((p) => clampOctet(parseInt(p, 10)))
-        selectedPrefix = Math.min(MAX_PREFIX, Math.max(8, c.prefix))
+      if (c.version === 6) {
+        blockVersion = 6
+        baseAddressIPv6 = c.network
+        selectedPrefix = Math.min(MAX_PREFIX_IPV6, Math.max(16, c.prefix))
+      } else {
+        const parts = c.network.split('.')
+        if (parts.length === 4) {
+          blockVersion = 4
+          octets = parts.map((p) => clampOctet(parseInt(p, 10)))
+          selectedPrefix = Math.min(MAX_PREFIX_IPV4, Math.max(8, c.prefix))
+        }
       }
     }
   }
 
   $: if (mode === 'allocation' && parentCidr) {
     const c = parseCidr(parentCidr)
-    if (c && selectedPrefix <= c.prefix) selectedPrefix = Math.min(MAX_PREFIX, c.prefix + 1)
+    if (c && selectedPrefix <= c.prefix) {
+      const maxP = c.version === 6 ? MAX_PREFIX_IPV6 : MAX_PREFIX_IPV4
+      selectedPrefix = Math.min(maxP, c.prefix + 1)
+    }
   }
 
+  /** Parse CIDR; returns { network, prefix, version } for IPv4 and IPv6. */
   function parseCidr(cidr) {
     if (!cidr || typeof cidr !== 'string') return null
     const idx = cidr.indexOf('/')
     if (idx === -1) return null
     const network = cidr.slice(0, idx).trim()
     const prefix = parseInt(cidr.slice(idx + 1), 10)
-    if (isNaN(prefix) || prefix < 0 || prefix > 32) return null
-    return { network, prefix }
+    const v = ipVersion(cidr)
+    if (v === 6) {
+      if (isNaN(prefix) || prefix < 0 || prefix > 128) return null
+      if (!network.includes(':')) return null
+      return { network, prefix, version: 6 }
+    }
+    if (v === 4) {
+      if (isNaN(prefix) || prefix < 0 || prefix > 32) return null
+      const parts = network.split('.')
+      if (parts.length !== 4) return null
+      return { network, prefix, version: 4 }
+    }
+    return null
   }
 
   function clampOctet(n) {
@@ -64,21 +93,44 @@
     return Math.max(0, Math.min(255, n))
   }
 
-  /** IPv4: /p has 2^(32-p) addresses */
-  function ipCountForPrefix(p) {
+  /** IP count for prefix; version 4 or 6. For IPv6 large counts return string. */
+  function ipCountForPrefix(p, version = 4) {
+    if (version === 6) {
+      if (p < 0 || p > 128) return '0'
+      const count = 2 ** (128 - p)
+      return count > Number.MAX_SAFE_INTEGER ? String(count) : count
+    }
     if (p < 0 || p > 32) return 0
     return Math.pow(2, 32 - p)
   }
 
-  $: blockIpCount = mode === 'block' ? ipCountForPrefix(selectedPrefix) : 0
-  $: allocationIpCount = mode === 'allocation' ? ipCountForPrefix(selectedPrefix) : 0
+  function formatIpCount(v) {
+    if (v == null) return '0'
+    return typeof v === 'string' ? formatBlockCount(v) : formatBlockCount(v)
+  }
+
+  $: blockIpCount = mode === 'block' ? ipCountForPrefix(selectedPrefix, blockVersion) : 0
+  $: allocationIpCount =
+    mode === 'allocation' && parentParsed
+      ? ipCountForPrefix(selectedPrefix, parentParsed.version)
+      : 0
 
   $: parentParsed = mode === 'allocation' && parentCidr ? parseCidr(parentCidr) : null
-  $: allocationPrefixMin = parentParsed ? Math.min(MAX_PREFIX, parentParsed.prefix + 1) : MIN_PREFIX_ALLOC
+  $: allocationPrefixMax = parentParsed
+    ? parentParsed.version === 6
+      ? MAX_PREFIX_IPV6
+      : MAX_PREFIX_IPV4
+    : MAX_PREFIX_IPV4
+  $: allocationPrefixMin = parentParsed ? Math.min(allocationPrefixMax, parentParsed.prefix + 1) : MIN_PREFIX_ALLOC
   $: allocationPrefixOptions = Array.from(
-    { length: MAX_PREFIX - allocationPrefixMin + 1 },
+    { length: allocationPrefixMax - allocationPrefixMin + 1 },
     (_, i) => allocationPrefixMin + i
   )
+  $: blockPrefixOptions = blockVersion === 6 ? PREFIX_OPTIONS_BLOCK_IPV6 : PREFIX_OPTIONS_BLOCK_IPV4
+  $: blockPrefixMin = blockVersion === 6 ? 16 : 8
+  $: if (mode === 'block' && !blockPrefixOptions.includes(selectedPrefix)) {
+    selectedPrefix = blockVersion === 6 ? 64 : 24
+  }
 
   $: allocationCidrComputed =
     mode === 'allocation' && parentParsed
@@ -112,7 +164,7 @@
 
   // Fetch suggested block CIDR for environment (no overlap with existing blocks) when environmentId and prefix set
   $: suggestedBlockTrigger =
-    mode === 'block' && environmentId && selectedPrefix >= 9
+    mode === 'block' && environmentId && selectedPrefix >= blockPrefixMin
       ? [environmentId, selectedPrefix]
       : []
   $: if (suggestedBlockTrigger.length) {
@@ -149,6 +201,9 @@
   function syncBlockValue() {
     if (mode === 'block') value = blockCidrComputed
   }
+  function syncBlockValueIPv6() {
+    if (mode === 'block' && blockVersion === 6) value = blockCidrComputed
+  }
 
   onMount(() => {
     if (mode === 'block' && !value) value = blockCidrComputed
@@ -168,30 +223,51 @@
       </header>
       <div class="wizard-fields">
         <div class="wizard-field">
-          <span class="wizard-field-label">Base address (IPv4)</span>
-          <div class="octets">
-            {#each [0, 1, 2, 3] as i}
-              <input
-                type="number"
-                min="0"
-                max="255"
-                bind:value={octets[i]}
-                on:input={syncBlockValue}
-                disabled={disabled}
-                class="octet"
-              />
-            {/each}
-          </div>
+          <span class="wizard-field-label">IP version</span>
+          <select bind:value={blockVersion} on:change={syncBlockValue} disabled={disabled} class="prefix-select">
+            <option value={4}>IPv4</option>
+            <option value={6}>IPv6</option>
+          </select>
         </div>
+        {#if blockVersion === 6}
+          <div class="wizard-field wizard-field-ipv6">
+            <span class="wizard-field-label">Base address (IPv6)</span>
+            <input
+              type="text"
+              class="input-ipv6"
+              placeholder="e.g. 2001:db8::"
+              bind:value={baseAddressIPv6}
+              on:input={syncBlockValueIPv6}
+              disabled={disabled}
+            />
+          </div>
+        {:else}
+          <div class="wizard-field">
+            <span class="wizard-field-label">Base address (IPv4)</span>
+            <div class="octets">
+              {#each [0, 1, 2, 3] as i}
+                <input
+                  type="number"
+                  min="0"
+                  max="255"
+                  bind:value={octets[i]}
+                  on:input={syncBlockValue}
+                  disabled={disabled}
+                  class="octet"
+                />
+              {/each}
+            </div>
+          </div>
+        {/if}
         <div class="wizard-field">
           <span class="wizard-field-label">Prefix length</span>
           <div class="prefix-with-count">
             <select bind:value={selectedPrefix} on:change={syncBlockValue} disabled={disabled} class="prefix-select">
-              {#each PREFIX_OPTIONS_BLOCK as p}
+              {#each blockPrefixOptions as p}
                 <option value={p}>/{p}</option>
               {/each}
             </select>
-            <span class="ip-count">{blockIpCount.toLocaleString()} IPs</span>
+            <span class="ip-count">{formatIpCount(blockIpCount)} IPs</span>
           </div>
         </div>
       </div>
@@ -202,7 +278,7 @@
           {#if cidrRange(blockCidrComputed)}
             <span class="result-range">{cidrRange(blockCidrComputed).start} – {cidrRange(blockCidrComputed).end}</span>
           {/if}
-          <span class="ip-count">{blockIpCount.toLocaleString()} IPs</span>
+          <span class="ip-count">{formatIpCount(blockIpCount)} IPs</span>
           <button type="button" class="btn btn-primary btn-small" on:click={applyBlockCidr} disabled={disabled}>
             Use manual CIDR
           </button>
@@ -219,12 +295,12 @@
             {#if suggestedRange}
               <span class="result-range">{suggestedRange.start} – {suggestedRange.end}</span>
             {/if}
-            <span class="ip-count">{blockIpCount.toLocaleString()} IPs</span>
+            <span class="ip-count">{formatIpCount(blockIpCount)} IPs</span>
             <button type="button" class="btn btn-primary btn-small" on:click={applySuggestedBlockCidr} disabled={disabled || suggestedBlockLoading} title="Use suggested CIDR that does not overlap existing blocks in this environment">
               Use this CIDR
             </button>
-          {:else if selectedPrefix < 9}
-            <span class="wizard-hint wizard-hint-empty">Use prefix /9 or higher for a suggestion.</span>
+          {:else if selectedPrefix < blockPrefixMin}
+            <span class="wizard-hint wizard-hint-empty">Use prefix /{blockPrefixMin} or higher for a suggestion.</span>
           {:else}
             <span class="wizard-hint wizard-hint-empty">No suggestion available.</span>
           {/if}
@@ -255,7 +331,7 @@
                   <option value={p}>/{p}</option>
                 {/each}
               </select>
-              <span class="ip-count">{allocationIpCount.toLocaleString()} IPs</span>
+              <span class="ip-count">{formatIpCount(allocationIpCount)} IPs</span>
             </div>
           </div>
         </div>
@@ -270,7 +346,7 @@
               <span class="result-range">{allocRange.start} – {allocRange.end}</span>
             {/if}
           {/if}
-          <span class="ip-count">{allocationIpCount.toLocaleString()} IPs</span>
+          <span class="ip-count">{formatIpCount(allocationIpCount)} IPs</span>
           <button type="button" class="btn btn-primary btn-small" on:click={applyAllocationCidr} disabled={disabled || suggestedLoading} title={suggestedCidrFromApi ? 'Uses bin-packed suggestion from existing allocations' : ''}>
             Use this CIDR
           </button>
@@ -398,6 +474,28 @@
     background: rgba(0, 0, 0, 0.25);
     border: 1px solid var(--border);
     border-radius: var(--radius);
+  }
+  .wizard-field-ipv6 {
+    min-width: 200px;
+  }
+  .input-ipv6 {
+    width: 100%;
+    min-width: 180px;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.9rem;
+    font-family: var(--font-mono);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--text);
+  }
+  .input-ipv6:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .input-ipv6:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
   .parent-cidr-box .wizard-field-label {
     margin-bottom: 0.1rem;

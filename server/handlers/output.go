@@ -29,16 +29,17 @@ type environmentDetailOutput struct {
 	_      struct{}       `additionalProperties:"false"`
 }
 
-// Block Output Types
+// Block Output Types (total_ips, used_ips, available_ips are derived from CIDR; string supports IPv6 /64 etc.)
 type blockOutput struct {
-	ID            uuid.UUID `json:"id" format:"uuid"`
-	Name          string    `json:"name" minLength:"1" maxLength:"255"`
-	CIDR          string    `json:"cidr" minLength:"9" maxLength:"50"`
-	TotalIPs      int       `json:"total_ips" minimum:"0"`
-	UsedIPs       int       `json:"used_ips" minimum:"0"`
-	Available     int       `json:"available_ips" minimum:"0"`
-	EnvironmentID uuid.UUID `json:"environment_id,omitempty" format:"uuid"`
-	_             struct{}  `additionalProperties:"false"`
+	ID             uuid.UUID `json:"id" format:"uuid"`
+	Name           string    `json:"name" minLength:"1" maxLength:"255"`
+	CIDR           string    `json:"cidr" minLength:"9" maxLength:"50"`
+	TotalIPs      string    `json:"total_ips"`
+	UsedIPs       string    `json:"used_ips"`
+	Available     string    `json:"available_ips"`
+	EnvironmentID  uuid.UUID `json:"environment_id,omitempty" format:"uuid"`
+	OrganizationID uuid.UUID `json:"organization_id,omitempty" format:"uuid"` // for orphan blocks
+	_              struct{}  `additionalProperties:"false"`
 }
 
 type suggestBlockCIDROutput struct {
@@ -47,12 +48,12 @@ type suggestBlockCIDROutput struct {
 }
 
 type blockUsageOutput struct {
-	Name      string   `json:"name" minLength:"1" maxLength:"255"`
-	CIDR      string   `json:"cidr" minLength:"9" maxLength:"50"`
-	TotalIPs  int      `json:"total_ips" minimum:"0"`
-	UsedIPs   int      `json:"used_ips" minimum:"0"`
-	Available int      `json:"available_ips" minimum:"0"`
-	Utilized  float64  `json:"utilization_percent" minimum:"0" maximum:"100"`
+	Name      string  `json:"name" minLength:"1" maxLength:"255"`
+	CIDR      string  `json:"cidr" minLength:"9" maxLength:"50"`
+	TotalIPs  string  `json:"total_ips"`
+	UsedIPs   string  `json:"used_ips"`
+	Available string  `json:"available_ips"`
+	Utilized  float64 `json:"utilization_percent" minimum:"0" maximum:"100"`
 	_         struct{} `additionalProperties:"false"`
 }
 

@@ -65,10 +65,11 @@ type updateEnvironmentInput struct {
 
 // Block Input Types
 type createBlockInput struct {
-	Name          string    `json:"name" required:"true" minLength:"1" maxLength:"255"`
-	CIDR          string    `json:"cidr" required:"true" minLength:"9" maxLength:"18"`
-	EnvironmentID uuid.UUID `json:"environment_id,omitempty" format:"uuid"`
-	_             struct{}  `additionalProperties:"false"`
+	Name           string    `json:"name" required:"true" minLength:"1" maxLength:"255"`
+	CIDR           string    `json:"cidr" required:"true" minLength:"9" maxLength:"18"`
+	EnvironmentID  uuid.UUID `json:"environment_id,omitempty" format:"uuid"`
+	OrganizationID uuid.UUID `json:"organization_id,omitempty" format:"uuid"` // required for orphan blocks (no environment)
+	_              struct{}  `additionalProperties:"false"`
 }
 
 type getBlockInput struct {
@@ -83,10 +84,11 @@ type suggestBlockCIDRInput struct {
 }
 
 type updateBlockInput struct {
-	ID            uuid.UUID  `json:"id" path:"id" required:"true" format:"uuid"`
-	Name          string     `json:"name" required:"true" minLength:"1" maxLength:"255"`
-	EnvironmentID *uuid.UUID `json:"environment_id,omitempty" format:"uuid"`
-	_             struct{}   `additionalProperties:"false"`
+	ID             uuid.UUID  `json:"id" path:"id" required:"true" format:"uuid"`
+	Name           string     `json:"name" required:"true" minLength:"1" maxLength:"255"`
+	EnvironmentID  *uuid.UUID `json:"environment_id,omitempty" format:"uuid"`
+	OrganizationID *uuid.UUID `json:"organization_id,omitempty" format:"uuid"` // for orphan blocks
+	_              struct{}   `additionalProperties:"false"`
 }
 
 // Allocation Input Types

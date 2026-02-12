@@ -25,7 +25,7 @@ const loginPassword = process.env.LOGIN_PASSWORD || ''
 
 /** App pages to capture (user docs). Landing page is not in this list. */
 const captures = [
-  { url: `${baseUrl}/#`, name: 'Dashboard', base: 'dashboard' },
+  { url: `${baseUrl}/#dashboard`, name: 'Dashboard', base: 'dashboard' },
   { url: `${baseUrl}/#networks`, name: 'Networks', base: 'networks' },
   { url: `${baseUrl}/#environments`, name: 'Environments', base: 'environments' },
   { url: `${baseUrl}/#reserved-blocks`, name: 'Reserved blocks', base: 'reserved-blocks' },

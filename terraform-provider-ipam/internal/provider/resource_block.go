@@ -29,9 +29,9 @@ type BlockResourceModel struct {
 	Id            types.String `tfsdk:"id"`
 	Name          types.String `tfsdk:"name"`
 	Cidr          types.String `tfsdk:"cidr"`
-	TotalIps      types.Int64  `tfsdk:"total_ips"`
-	UsedIps       types.Int64  `tfsdk:"used_ips"`
-	AvailableIps  types.Int64  `tfsdk:"available_ips"`
+	TotalIps      types.String `tfsdk:"total_ips"`   // string: derive-only, supports IPv6 /64 etc.
+	UsedIps       types.String `tfsdk:"used_ips"`
+	AvailableIps  types.String `tfsdk:"available_ips"`
 	EnvironmentId types.String `tfsdk:"environment_id"`
 }
 
@@ -61,15 +61,15 @@ func (r *BlockResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				Optional:            true,
 				MarkdownDescription: "Environment UUID. Omit for orphaned blocks.",
 			},
-			"total_ips": schema.Int64Attribute{
+			"total_ips": schema.StringAttribute{
 				Computed:            true,
-				MarkdownDescription: "Total IP count in the block.",
+				MarkdownDescription: "Total IP count in the block (string; supports IPv6 /64 etc.).",
 			},
-			"used_ips": schema.Int64Attribute{
+			"used_ips": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "IPs used by allocations.",
 			},
-			"available_ips": schema.Int64Attribute{
+			"available_ips": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Available IPs.",
 			},
@@ -161,7 +161,7 @@ func (r *BlockResource) setModelFromAPI(m *BlockResourceModel, out *client.Block
 	m.Name = types.StringValue(out.Name)
 	m.Cidr = types.StringValue(out.CIDR)
 	m.EnvironmentId = types.StringValue(out.EnvironmentID)
-	m.TotalIps = types.Int64Value(int64(out.TotalIPs))
-	m.UsedIps = types.Int64Value(int64(out.UsedIPs))
-	m.AvailableIps = types.Int64Value(int64(out.Available))
+	m.TotalIps = types.StringValue(out.TotalIPs)
+	m.UsedIps = types.StringValue(out.UsedIPs)
+	m.AvailableIps = types.StringValue(out.Available)
 }

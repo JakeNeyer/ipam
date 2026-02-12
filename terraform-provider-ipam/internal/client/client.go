@@ -331,13 +331,14 @@ type EnvListResponse struct {
 }
 
 type BlockRef struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	CIDR          string `json:"cidr"`
-	TotalIPs      int    `json:"total_ips"`
-	UsedIPs       int    `json:"used_ips"`
-	Available     int    `json:"available_ips"`
-	EnvironmentID string `json:"environment_id,omitempty"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	CIDR           string `json:"cidr"`
+	TotalIPs       string `json:"total_ips"`   // derive-only; string supports IPv6 /64 etc.
+	UsedIPs        string `json:"used_ips"`
+	Available      string `json:"available_ips"`
+	EnvironmentID  string `json:"environment_id,omitempty"`
+	OrganizationID string `json:"organization_id,omitempty"` // for orphan blocks
 }
 
 type EnvDetailResponse struct {
@@ -352,13 +353,14 @@ type InitialBlock struct {
 }
 
 type BlockResponse struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	CIDR          string `json:"cidr"`
-	TotalIPs      int    `json:"total_ips"`
-	UsedIPs       int    `json:"used_ips"`
-	Available     int    `json:"available_ips"`
-	EnvironmentID string `json:"environment_id,omitempty"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	CIDR           string `json:"cidr"`
+	TotalIPs       string `json:"total_ips"`   // derive-only; string supports IPv6 /64 etc.
+	UsedIPs        string `json:"used_ips"`
+	Available      string `json:"available_ips"`
+	EnvironmentID  string `json:"environment_id,omitempty"`
+	OrganizationID string `json:"organization_id,omitempty"` // for orphan blocks
 }
 
 type BlockListResponse struct {

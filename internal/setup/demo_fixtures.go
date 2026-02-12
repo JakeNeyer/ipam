@@ -59,7 +59,7 @@ func EnsureDemoFixtures(st store.Storer) {
 	}
 	prodID, stagingID := prodEnv.Id, stagingEnv.Id
 
-	// Blocks (same CIDRs as hack/seed.sh)
+	// Blocks (same CIDRs as hack/seed.sh) + IPv6 ULA
 	blocks := []struct {
 		name        string
 		cidr        string
@@ -68,10 +68,13 @@ func EnsureDemoFixtures(st store.Storer) {
 		{"prod-vpc", "10.0.0.0/16", prodID},
 		{"prod-dmz", "10.2.0.0/16", prodID},
 		{"prod-data", "10.4.0.0/16", prodID},
+		{"prod-ula", "fd00:0:0:1::/48", prodID},
 		{"staging-vpc", "10.1.0.0/16", stagingID},
 		{"staging-test", "10.3.0.0/16", stagingID},
 		{"staging-dev", "10.5.0.0/16", stagingID},
+		{"staging-ula", "fd00:0:0:2::/48", stagingID},
 		{"orphan-block", "192.168.0.0/24", uuid.Nil},
+		{"orphan-ula", "fd00:0:0:0::/48", uuid.Nil},
 		{"full-block", "10.7.0.0/26", prodID},
 		{"nearly-full-block", "10.8.0.0/24", prodID},
 	}
@@ -82,13 +85,20 @@ func EnsureDemoFixtures(st store.Storer) {
 			EnvironmentID: b.environment,
 			Usage:         network.Usage{TotalIPs: 1 << 20, UsedIPs: 0, AvailableIPs: 1 << 20},
 		}
+		if b.environment == uuid.Nil {
+			block.OrganizationID = orgID
+		}
+		// IPv6 blocks: store uses CIDR to derive total_ips; API derives usage from CIDR
+		if strings.Contains(b.cidr, ":") {
+			block.Usage = network.Usage{TotalIPs: 0, UsedIPs: 0, AvailableIPs: 0}
+		}
 		if err := st.CreateBlock(block); err != nil {
 			logger.Error("demo fixtures: create block failed", slog.String("name", b.name), logger.ErrAttr(err))
 			return
 		}
 	}
 
-	// Allocations (same as seed.sh)
+	// Allocations (same as seed.sh) + IPv6
 	allocations := []struct {
 		name      string
 		blockName string
@@ -96,7 +106,9 @@ func EnsureDemoFixtures(st store.Storer) {
 	}{
 		{"prod-web", "prod-vpc", "10.0.0.0/24"},
 		{"prod-db", "prod-vpc", "10.0.2.0/24"},
+		{"prod-ula-subnet", "prod-ula", "fd00:0:0:1::/64"},
 		{"staging-app", "staging-vpc", "10.1.0.0/24"},
+		{"staging-ula-subnet", "staging-ula", "fd00:0:0:2::/64"},
 		{"orphan-subnet", "orphan-block", "192.168.0.0/26"},
 		{"full-alloc", "full-block", "10.7.0.0/26"},
 		{"nearly-a", "nearly-full-block", "10.8.0.0/25"},
@@ -116,7 +128,7 @@ func EnsureDemoFixtures(st store.Storer) {
 		}
 	}
 
-	// Reserved blocks (admin-only; same as seed.sh)
+	// Reserved blocks (admin-only; same as seed.sh) + IPv6 ULA
 	reserved := []struct {
 		name   string
 		cidr   string
@@ -125,6 +137,7 @@ func EnsureDemoFixtures(st store.Storer) {
 		{"Future use", "10.6.0.0/16", "Reserved for future use"},
 		{"Prod gap", "10.0.1.0/24", "Reserved gap in prod-vpc"},
 		{"DMZ", "172.16.0.0/24", "DMZ reserve"},
+		{"ULA reserve", "fd00:0:0:ff00::/56", "Reserved IPv6 ULA range"},
 	}
 	for _, r := range reserved {
 		rb := &store.ReservedBlock{

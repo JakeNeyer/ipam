@@ -1,27 +1,38 @@
 <script>
-  import { getSubnetInfo, divideSubnets, getParentSubnet, getSiblingCidr } from '../lib/cidr.js'
+  import { getSubnetInfo, divideSubnets, getParentSubnet, getSiblingCidr, ipVersion } from '../lib/cidr.js'
+  import { formatBlockCount } from '../lib/blockCount.js'
 
-  const PREFIX_OPTIONS = [8, 12, 16, 20, 24, 25, 26, 27, 28, 29, 30, 31, 32]
+  const PREFIX_OPTIONS_IPV4 = [8, 12, 16, 20, 24, 25, 26, 27, 28, 29, 30, 31, 32]
+  const PREFIX_OPTIONS_IPV6 = [16, 32, 40, 48, 52, 56, 60, 64, 80, 96, 112, 128]
 
+  let ipVersionChoice = 4
   let networkInput = '10.0.0.0'
   let selectedPrefix = 24
   let rows = []
-  let lastBase = { network: '', prefix: -1 }
+  let lastBase = { network: '', prefix: -1, version: 4 }
 
   $: prefixNum = typeof selectedPrefix === 'number' ? selectedPrefix : parseInt(selectedPrefix, 10)
+  $: prefixOptions = ipVersionChoice === 6 ? PREFIX_OPTIONS_IPV6 : PREFIX_OPTIONS_IPV4
+  $: maxPrefix = ipVersionChoice === 6 ? 128 : 32
 
   $: currentInfo = (() => {
-    if (!networkInput.trim() || isNaN(prefixNum) || prefixNum < 0 || prefixNum > 32) return null
-    return getSubnetInfo(networkInput.trim(), prefixNum)
+    if (!networkInput.trim()) return null
+    if (ipVersionChoice === 6) {
+      if (isNaN(prefixNum) || prefixNum < 0 || prefixNum > 128) return null
+      return getSubnetInfo(networkInput.trim(), prefixNum, 6)
+    }
+    if (isNaN(prefixNum) || prefixNum < 0 || prefixNum > 32) return null
+    return getSubnetInfo(networkInput.trim(), prefixNum, 4)
   })()
 
   $: if (currentInfo) {
     if (
       rows.length === 0 ||
       networkInput.trim() !== lastBase.network ||
-      prefixNum !== lastBase.prefix
+      prefixNum !== lastBase.prefix ||
+      ipVersionChoice !== lastBase.version
     ) {
-      lastBase = { network: networkInput.trim(), prefix: prefixNum }
+      lastBase = { network: networkInput.trim(), prefix: prefixNum, version: ipVersionChoice }
       rows = [currentInfo]
     }
   } else {
@@ -30,8 +41,8 @@
 
   $: error = (() => {
     if (!networkInput.trim()) return ''
-    const info = getSubnetInfo(networkInput.trim(), prefixNum)
-    if (!info) return 'Invalid network address (e.g. 10.0.0.0)'
+    const info = getSubnetInfo(networkInput.trim(), prefixNum, ipVersionChoice)
+    if (!info) return ipVersionChoice === 6 ? 'Invalid IPv6 address (e.g. 2001:db8::)' : 'Invalid network address (e.g. 10.0.0.0)'
     return ''
   })()
 
@@ -44,7 +55,7 @@
     const row = rows[index]
     if (!row || row.cidr == null) return
     const p = prefixFromCidr(row.cidr)
-    if (p == null || p >= 32) return
+    if (p == null || p >= maxPrefix) return
     const halves = divideSubnets(row.cidr, p + 1)
     if (!halves || halves.length !== 2) return
     rows = [...rows.slice(0, index), halves[0], halves[1], ...rows.slice(index + 1)]
@@ -66,8 +77,24 @@
     return sibling != null && rows[index + 1]?.cidr === sibling
   }
 
+  function formatCount(v) {
+    if (v == null) return '0'
+    return formatBlockCount(typeof v === 'number' ? v : String(v))
+  }
+
   function resetTable() {
-    lastBase = { network: '', prefix: -1 }
+    lastBase = { network: '', prefix: -1, version: ipVersionChoice }
+  }
+
+  function onVersionChange() {
+    if (ipVersionChoice === 6) {
+      if (!networkInput.includes(':')) networkInput = '2001:db8::'
+      if (prefixNum > 128 || !PREFIX_OPTIONS_IPV6.includes(prefixNum)) selectedPrefix = 64
+    } else {
+      if (networkInput.includes(':')) networkInput = '10.0.0.0'
+      if (prefixNum > 32 || !PREFIX_OPTIONS_IPV4.includes(prefixNum)) selectedPrefix = 24
+    }
+    rows = []
   }
 </script>
 
@@ -82,25 +109,38 @@
   <div class="subnet-form-card card">
     <form class="subnet-form" on:submit|preventDefault>
       <div class="form-row">
+        <label for="subnet-version">IP version</label>
+        <select
+          id="subnet-version"
+          class="input select"
+          bind:value={ipVersionChoice}
+          on:change={onVersionChange}
+          aria-label="IPv4 or IPv6"
+        >
+          <option value={4}>IPv4</option>
+          <option value={6}>IPv6</option>
+        </select>
+      </div>
+      <div class="form-row">
         <label for="subnet-network">Network address</label>
         <input
           id="subnet-network"
           type="text"
           class="input"
-          placeholder="e.g. 10.0.0.0"
+          placeholder={ipVersionChoice === 6 ? 'e.g. 2001:db8::' : 'e.g. 10.0.0.0'}
           bind:value={networkInput}
           aria-invalid={networkInput.trim() && !currentInfo}
         />
       </div>
       <div class="form-row">
-        <label for="subnet-mask">Mask bits /</label>
+        <label for="subnet-mask">Prefix length /</label>
         <select
           id="subnet-mask"
           class="input select"
           bind:value={selectedPrefix}
-          aria-label="Network mask prefix length"
+          aria-label="Prefix length"
         >
-          {#each PREFIX_OPTIONS as p}
+          {#each prefixOptions as p}
             <option value={p}>/{p}</option>
           {/each}
         </select>
@@ -137,10 +177,10 @@
             <tr>
               <td><code class="subnet-code">{row.cidr}</code></td>
               <td class="subnet-range">{row.first} – {row.last}</td>
-              <td>{row.usable.toLocaleString()}</td>
-              <td>{row.usable.toLocaleString()}</td>
+              <td>{formatCount(row.usable)}</td>
+              <td>{formatCount(row.usable)}</td>
               <td>
-                {#if p != null && p < 32}
+                {#if p != null && p < maxPrefix}
                   <button
                     type="button"
                     class="subnet-link"

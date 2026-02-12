@@ -43,15 +43,15 @@ func NewCreateEnvironmentUseCase(s store.Storer) usecase.Interactor {
 			if valid := network.ValidateCIDR(input.InitialBlock.CIDR); !valid {
 				return status.Wrap(errors.New("invalid initial block CIDR format"), status.InvalidArgument)
 			}
-			totalIPs := calculateTotalIPs(input.InitialBlock.CIDR)
+			totalStored := int(network.CIDRAddressCountInt64(input.InitialBlock.CIDR))
 			block := &network.Block{
 				Name:          input.InitialBlock.Name,
 				CIDR:          input.InitialBlock.CIDR,
 				EnvironmentID: env.Id,
 				Usage: network.Usage{
-					TotalIPs:     totalIPs,
+					TotalIPs:     totalStored,
 					UsedIPs:      0,
-					AvailableIPs: totalIPs,
+					AvailableIPs: totalStored,
 				},
 				Children: []network.Block{},
 			}
@@ -132,19 +132,20 @@ func NewGetEnvironmentUseCase(s store.Storer) usecase.Interactor {
 		envOrgID := &env.OrganizationID
 		output.Blocks = make([]*blockOutput, len(blocks))
 		for i, b := range blocks {
-			used := computeUsedIPsForBlock(s, b.Name, envOrgID)
-			avail := b.Usage.TotalIPs - used
-			if avail < 0 {
-				avail = 0
+			totalStr, usedStr, availStr, _ := derivedBlockUsage(s, b.Name, b.CIDR, envOrgID)
+			blockOrgID := b.OrganizationID
+			if blockOrgID == uuid.Nil {
+				blockOrgID = env.OrganizationID
 			}
 			output.Blocks[i] = &blockOutput{
-				ID:            b.ID,
-				Name:          b.Name,
-				CIDR:          b.CIDR,
-				TotalIPs:      b.Usage.TotalIPs,
-				UsedIPs:       used,
-				Available:     avail,
-				EnvironmentID: b.EnvironmentID,
+				ID:             b.ID,
+				Name:           b.Name,
+				CIDR:           b.CIDR,
+				TotalIPs:       totalStr,
+				UsedIPs:        usedStr,
+				Available:      availStr,
+				EnvironmentID:  b.EnvironmentID,
+				OrganizationID: blockOrgID,
 			}
 		}
 		return nil

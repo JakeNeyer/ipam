@@ -1,10 +1,27 @@
 /**
+ * Detect IP version from a CIDR string.
+ * @param {string} cidr - e.g. "10.0.0.0/24" or "2001:db8::/32"
+ * @returns {4 | 6 | null}
+ */
+export function ipVersion(cidr) {
+  if (!cidr || typeof cidr !== 'string') return null
+  const idx = cidr.indexOf('/')
+  const network = (idx === -1 ? cidr : cidr.slice(0, idx)).trim()
+  if (network.includes(':')) return 6
+  const parts = network.split('.')
+  if (parts.length === 4 && parts.every((p) => /^\d+$/.test(p))) return 4
+  return null
+}
+
+/**
  * Returns the first and last IPv4 address of a CIDR range, or null if invalid.
  * @param {string} cidr - e.g. "10.0.0.0/24"
  * @returns {{ start: string, end: string } | null}
  */
 export function cidrRange(cidr) {
   if (!cidr || typeof cidr !== 'string') return null
+  const v = ipVersion(cidr)
+  if (v === 6) return cidrRangeIPv6(cidr)
   const idx = cidr.indexOf('/')
   if (idx === -1) return null
   const network = cidr.slice(0, idx).trim()
@@ -24,6 +41,110 @@ export function cidrRange(cidr) {
   return {
     start: intToDotted(int),
     end: intToDotted(lastInt),
+  }
+}
+
+/** Expand IPv6 string to 8 hextets (16-bit each). Returns null if invalid. */
+function parseIPv6ToHextets(str) {
+  if (!str || typeof str !== 'string') return null
+  const s = str.trim().toLowerCase()
+  if (s.includes('.')) return null
+  const parts = s.split(':')
+  if (parts.length < 3 || parts.length > 8) return null
+  const emptyIdx = parts.indexOf('')
+  let expanded
+  if (emptyIdx === -1) {
+    if (parts.length !== 8) return null
+    expanded = parts
+  } else {
+    const before = parts.slice(0, emptyIdx)
+    const after = parts.slice(emptyIdx + 1).filter((p) => p !== '')
+    const total = before.length + after.length
+    if (total > 7) return null
+    const zeros = 8 - total
+    expanded = [...before, ...Array(zeros).fill('0'), ...after]
+  }
+  const hextets = expanded.map((p) => (p === '' ? 0 : parseInt(p, 16)))
+  if (hextets.length !== 8 || hextets.some((h) => isNaN(h) || h < 0 || h > 0xffff)) return null
+  return hextets
+}
+
+function hextetsToBigInt(hextets) {
+  let n = 0n
+  for (let i = 0; i < 8; i++) n = (n << 16n) | BigInt(hextets[i])
+  return n
+}
+
+function bigIntToHextets(n) {
+  const out = []
+  let x = n
+  for (let i = 0; i < 8; i++) {
+    out.unshift(Number(x & 0xffffn))
+    x = x >> 16n
+  }
+  return out
+}
+
+/** Format a BigInt as IPv4 or IPv6 address string. For IPv4, n is low 32 bits. */
+export function formatAddressFromBigInt(n, version) {
+  if (version === 6) return formatIPv6(bigIntToHextets(n))
+  const i = Number(n & 0xffffffffn) >>> 0
+  return intToDotted(i)
+}
+
+/** Align value up to next multiple of blockSize (BigInt). */
+export function alignUpBigInt(value, blockSize) {
+  const remainder = value % blockSize
+  return remainder === 0n ? value : value + (blockSize - remainder)
+}
+
+/** Format 8 hextets to IPv6 string (compress longest run of zeros to ::). */
+export function formatIPv6(hextets) {
+  if (!hextets || hextets.length !== 8) return ''
+  const str = hextets.map((h) => h.toString(16)).join(':')
+  let bestStart = -1
+  let bestLen = 0
+  for (let i = 0; i < 8; i++) {
+    let j = i
+    while (j < 8 && hextets[j] === 0) j++
+    if (j - i > bestLen) {
+      bestLen = j - i
+      bestStart = i
+    }
+  }
+  if (bestLen <= 1) return str
+  const left = hextets.slice(0, bestStart).map((h) => h.toString(16)).join(':')
+  const right = hextets.slice(bestStart + bestLen).map((h) => h.toString(16)).join(':')
+  if (!left && !right) return '::'
+  if (!left) return '::' + right
+  if (!right) return left + '::'
+  return left + '::' + right
+}
+
+/**
+ * Returns the first and last IPv6 address of a CIDR range, or null if invalid.
+ * @param {string} cidr - e.g. "2001:db8::/32"
+ * @returns {{ start: string, end: string } | null}
+ */
+export function cidrRangeIPv6(cidr) {
+  if (!cidr || typeof cidr !== 'string') return null
+  const idx = cidr.indexOf('/')
+  if (idx === -1) return null
+  const network = cidr.slice(0, idx).trim()
+  const prefix = parseInt(cidr.slice(idx + 1), 10)
+  if (isNaN(prefix) || prefix < 0 || prefix > 128) return null
+  const hextets = parseIPv6ToHextets(network)
+  if (!hextets) return null
+  let base = hextetsToBigInt(hextets)
+  const hostBits = 128 - prefix
+  const mask = (1n << BigInt(hostBits)) - 1n
+  base = (base >> BigInt(hostBits)) << BigInt(hostBits)
+  const count = 1n << BigInt(hostBits)
+  const last = base + count - 1n
+  if (last > (1n << 128n) - 1n) return null
+  return {
+    start: formatIPv6(bigIntToHextets(base)),
+    end: formatIPv6(bigIntToHextets(last)),
   }
 }
 
@@ -56,11 +177,15 @@ export function parseAddress(address) {
 
 /**
  * Get subnet info for a network address and prefix. Normalizes the address to the network base.
- * @param {string} networkAddress - e.g. "10.0.0.0" or "10.0.0.5"
- * @param {number} prefix - 0..32
- * @returns {{ cidr: string, netmask: string, first: string, last: string, usable: number, total: number } | null}
+ * Supports IPv4 and IPv6; for IPv6, total/usable may be string when > Number.MAX_SAFE_INTEGER.
+ * @param {string} networkAddress - e.g. "10.0.0.0" or "2001:db8::"
+ * @param {number} prefix - 0..32 (IPv4) or 0..128 (IPv6)
+ * @param {4|6} [version] - optional; if omitted, detected from networkAddress
+ * @returns {{ cidr: string, netmask?: string, first: string, last: string, usable: number|string, total: number|string } | null}
  */
-export function getSubnetInfo(networkAddress, prefix) {
+export function getSubnetInfo(networkAddress, prefix, version) {
+  const v = version ?? (networkAddress && networkAddress.includes(':') ? 6 : 4)
+  if (v === 6) return getSubnetInfoIPv6(networkAddress, prefix)
   const addrInt = parseAddress(networkAddress)
   if (addrInt === null || prefix < 0 || prefix > 32) return null
   const size = Math.pow(2, 32 - prefix)
@@ -80,12 +205,39 @@ export function getSubnetInfo(networkAddress, prefix) {
 }
 
 /**
- * Parse CIDR string to base address (as 32-bit int) and prefix length.
+ * Get subnet info for IPv6. total/usable are string when > Number.MAX_SAFE_INTEGER.
+ * IPv6 has no reserved network/broadcast; usable === total.
+ */
+export function getSubnetInfoIPv6(networkAddress, prefix) {
+  if (prefix < 0 || prefix > 128) return null
+  const hextets = parseIPv6ToHextets(networkAddress)
+  if (!hextets) return null
+  let base = hextetsToBigInt(hextets)
+  const hostBits = 128 - prefix
+  base = (base >> BigInt(hostBits)) << BigInt(hostBits)
+  const count = 1n << BigInt(hostBits)
+  const last = base + count - 1n
+  if (last > (1n << 128n) - 1n) return null
+  const totalNum = count <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(count) : count.toString()
+  const usable = totalNum
+  return {
+    cidr: `${formatIPv6(bigIntToHextets(base))}/${prefix}`,
+    first: formatIPv6(bigIntToHextets(base)),
+    last: formatIPv6(bigIntToHextets(last)),
+    usable,
+    total: totalNum,
+  }
+}
+
+/**
+ * Parse CIDR string to base address (as 32-bit int) and prefix length. IPv4 only.
  * @param {string} cidr - e.g. "10.0.0.0/24"
  * @returns {{ baseInt: number, prefix: number } | null}
  */
 export function parseCidrToInt(cidr) {
   if (!cidr || typeof cidr !== 'string') return null
+  const v = ipVersion(cidr)
+  if (v === 6) return null
   const idx = cidr.indexOf('/')
   if (idx === -1) return null
   const network = cidr.slice(0, idx).trim()
@@ -103,6 +255,75 @@ export function parseCidrToInt(cidr) {
 }
 
 /**
+ * Return start/end of CIDR as BigInt and normalized CIDR. For range math (overlap, find next).
+ * @param {string} cidr - e.g. "10.0.0.0/24" or "2001:db8::/32"
+ * @returns {{ start: bigint, end: bigint, prefix: number, version: 4|6, cidr: string } | null}
+ */
+export function cidrRangeToBigInt(cidr) {
+  if (!cidr || typeof cidr !== 'string') return null
+  const idx = cidr.indexOf('/')
+  if (idx === -1) return null
+  const network = cidr.slice(0, idx).trim()
+  const prefix = parseInt(cidr.slice(idx + 1), 10)
+  const v = ipVersion(cidr)
+  if (v === 6) {
+    if (isNaN(prefix) || prefix < 0 || prefix > 128) return null
+    const hextets = parseIPv6ToHextets(network)
+    if (!hextets) return null
+    let base = hextetsToBigInt(hextets)
+    const hostBits = 128 - prefix
+    base = (base >> BigInt(hostBits)) << BigInt(hostBits)
+    const count = 1n << BigInt(hostBits)
+    const end = base + count - 1n
+    const info = getSubnetInfoIPv6(network, prefix)
+    return { start: base, end, prefix, version: 6, cidr: info?.cidr ?? cidr }
+  }
+  if (v === 4) {
+    if (isNaN(prefix) || prefix < 0 || prefix > 32) return null
+    const parsed = parseCidrToInt(cidr)
+    if (!parsed) return null
+    const hostBits = 32 - prefix
+    const count = 1n << BigInt(hostBits)
+    const start = BigInt(parsed.baseInt >>> 0)
+    const end = start + count - 1n
+    const info = getSubnetInfo(network, prefix, 4)
+    return { start, end, prefix, version: 4, cidr: info?.cidr ?? cidr }
+  }
+  return null
+}
+
+/**
+ * Parse CIDR string to base (BigInt), prefix, and version. Works for IPv4 and IPv6.
+ * For IPv4, baseBigInt is 0n..(2^32-1)n; for IPv6 full 128-bit.
+ * @param {string} cidr - e.g. "10.0.0.0/24" or "2001:db8::/32"
+ * @returns {{ baseBigInt: bigint, prefix: number, version: 4|6 } | null}
+ */
+export function parseCidrToBigInt(cidr) {
+  if (!cidr || typeof cidr !== 'string') return null
+  const idx = cidr.indexOf('/')
+  if (idx === -1) return null
+  const network = cidr.slice(0, idx).trim()
+  const prefix = parseInt(cidr.slice(idx + 1), 10)
+  const v = ipVersion(cidr)
+  if (v === 6) {
+    if (isNaN(prefix) || prefix < 0 || prefix > 128) return null
+    const hextets = parseIPv6ToHextets(network)
+    if (!hextets) return null
+    let base = hextetsToBigInt(hextets)
+    const hostBits = 128 - prefix
+    base = (base >> BigInt(hostBits)) << BigInt(hostBits)
+    return { baseBigInt: base, prefix, version: 6 }
+  }
+  if (v === 4) {
+    if (isNaN(prefix) || prefix < 0 || prefix > 32) return null
+    const parsed = parseCidrToInt(cidr)
+    if (!parsed) return null
+    return { baseBigInt: BigInt(parsed.baseInt), prefix, version: 4 }
+  }
+  return null
+}
+
+/**
  * Netmask string for a given prefix length (e.g. 24 -> "255.255.255.0").
  * @param {number} prefix - 0..32
  * @returns {string}
@@ -115,12 +336,14 @@ export function netmaskFromPrefix(prefix) {
 }
 
 /**
- * Divide a CIDR into subnets of a given (larger) prefix length.
- * @param {string} cidr - e.g. "10.0.0.0/24"
- * @param {number} newPrefix - must be >= current prefix, <= 32 (e.g. 26 for /26 subnets)
- * @returns {{ cidr: string, netmask: string, first: string, last: string, usable: number, total: number }[] | null}
+ * Divide a CIDR into subnets of a given (larger) prefix length. Supports IPv4 and IPv6.
+ * @param {string} cidr - e.g. "10.0.0.0/24" or "2001:db8::/48"
+ * @param {number} newPrefix - must be >= current prefix, <= 32 (IPv4) or <= 128 (IPv6)
+ * @returns {{ cidr: string, netmask?: string, first: string, last: string, usable: number|string, total: number|string }[] | null}
  */
 export function divideSubnets(cidr, newPrefix) {
+  const v = ipVersion(cidr)
+  if (v === 6) return divideSubnetsIPv6(cidr, newPrefix)
   const parsed = parseCidrToInt(cidr)
   if (!parsed) return null
   const { baseInt, prefix } = parsed
@@ -147,28 +370,63 @@ export function divideSubnets(cidr, newPrefix) {
   return subnets
 }
 
-/**
- * Get the parent subnet (one prefix larger) that contains this CIDR.
- * @param {string} cidr - e.g. "10.0.0.0/24"
- * @returns {{ cidr: string, netmask: string, first: string, last: string, usable: number, total: number } | null}
- */
-export function getParentSubnet(cidr) {
-  const parsed = parseCidrToInt(cidr)
-  if (!parsed || parsed.prefix <= 0) return null
-  return getSubnetInfo(cidr.slice(0, cidr.indexOf('/')), parsed.prefix - 1)
+/** Divide IPv6 CIDR into subnets of newPrefix. */
+function divideSubnetsIPv6(cidr, newPrefix) {
+  const parsed = parseCidrToBigInt(cidr)
+  if (!parsed || parsed.version !== 6) return null
+  const { baseBigInt, prefix } = parsed
+  if (newPrefix < prefix || newPrefix > 128) return null
+  const subnetSize = 1n << BigInt(128 - newPrefix)
+  const count = 1n << BigInt(newPrefix - prefix)
+  const subnets = []
+  for (let i = 0n; i < count; i++) {
+    const start = baseBigInt + i * subnetSize
+    const end = start + subnetSize - 1n
+    if (end > (1n << 128n) - 1n) break
+    const totalNum = subnetSize <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(subnetSize) : subnetSize.toString()
+    subnets.push({
+      cidr: `${formatIPv6(bigIntToHextets(start))}/${newPrefix}`,
+      first: formatIPv6(bigIntToHextets(start)),
+      last: formatIPv6(bigIntToHextets(end)),
+      usable: totalNum,
+      total: totalNum,
+    })
+  }
+  return subnets
 }
 
 /**
- * Get the sibling subnet (other half of the same parent).
- * @param {string} cidr - e.g. "10.0.0.0/24"
+ * Get the parent subnet (one prefix larger) that contains this CIDR. Supports IPv4 and IPv6.
+ * @param {string} cidr - e.g. "10.0.0.0/24" or "2001:db8:0:1::/64"
+ * @returns {{ cidr: string, netmask?: string, first: string, last: string, usable: number|string, total: number|string } | null}
+ */
+export function getParentSubnet(cidr) {
+  const v = ipVersion(cidr)
+  if (!v) return null
+  const idx = cidr.indexOf('/')
+  if (idx === -1) return null
+  const network = cidr.slice(0, idx).trim()
+  const prefix = parseInt(cidr.slice(idx + 1), 10)
+  if (isNaN(prefix) || prefix <= 0) return null
+  if (v === 6) return getSubnetInfoIPv6(network, prefix - 1)
+  return getSubnetInfo(network, prefix - 1, 4)
+}
+
+/**
+ * Get the sibling subnet (other half of the same parent). Supports IPv4 and IPv6.
+ * @param {string} cidr - e.g. "10.0.0.0/24" or "2001:db8:0:1::/64"
  * @returns {string | null} sibling CIDR or null
  */
 export function getSiblingCidr(cidr) {
-  const parsed = parseCidrToInt(cidr)
-  if (!parsed || parsed.prefix <= 0 || parsed.prefix > 32) return null
+  const v = ipVersion(cidr)
+  if (!v) return null
+  const idx = cidr.indexOf('/')
+  if (idx === -1) return null
+  const prefix = parseInt(cidr.slice(idx + 1), 10)
+  if (isNaN(prefix) || prefix <= 0 || (v === 4 && prefix > 32) || (v === 6 && prefix > 128)) return null
   const parent = getParentSubnet(cidr)
   if (!parent) return null
-  const halves = divideSubnets(parent.cidr, parsed.prefix)
+  const halves = divideSubnets(parent.cidr, prefix)
   if (!halves || halves.length !== 2) return null
   return halves[0].cidr === cidr ? halves[1].cidr : halves[0].cidr
 }

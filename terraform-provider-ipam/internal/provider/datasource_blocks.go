@@ -31,9 +31,9 @@ type BlockRefModel struct {
 	Id            types.String `tfsdk:"id"`
 	Name          types.String `tfsdk:"name"`
 	Cidr          types.String `tfsdk:"cidr"`
-	TotalIps      types.Int64  `tfsdk:"total_ips"`
-	UsedIps       types.Int64  `tfsdk:"used_ips"`
-	AvailableIps  types.Int64  `tfsdk:"available_ips"`
+	TotalIps      types.String `tfsdk:"total_ips"`
+	UsedIps       types.String `tfsdk:"used_ips"`
+	AvailableIps  types.String `tfsdk:"available_ips"`
 	EnvironmentId types.String `tfsdk:"environment_id"`
 }
 
@@ -65,15 +65,15 @@ func (d *BlocksDataSource) Schema(ctx context.Context, req datasource.SchemaRequ
 							Computed:            true,
 							MarkdownDescription: "CIDR range.",
 						},
-						"total_ips": schema.Int64Attribute{
+						"total_ips": schema.StringAttribute{
 							Computed:            true,
-							MarkdownDescription: "Total IP count in the block.",
+							MarkdownDescription: "Total IP count in the block (string; supports IPv6 /64 etc.).",
 						},
-						"used_ips": schema.Int64Attribute{
+						"used_ips": schema.StringAttribute{
 							Computed:            true,
 							MarkdownDescription: "IPs used by allocations.",
 						},
-						"available_ips": schema.Int64Attribute{
+						"available_ips": schema.StringAttribute{
 							Computed:            true,
 							MarkdownDescription: "Available IPs.",
 						},
@@ -119,9 +119,9 @@ func (d *BlocksDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 			Id:            types.StringValue(b.ID),
 			Name:          types.StringValue(b.Name),
 			Cidr:          types.StringValue(b.CIDR),
-			TotalIps:      types.Int64Value(int64(b.TotalIPs)),
-			UsedIps:       types.Int64Value(int64(b.UsedIPs)),
-			AvailableIps:  types.Int64Value(int64(b.Available)),
+			TotalIps:      types.StringValue(b.TotalIPs),
+			UsedIps:       types.StringValue(b.UsedIPs),
+			AvailableIps:  types.StringValue(b.Available),
 			EnvironmentId: types.StringValue(b.EnvironmentID),
 		}
 	}

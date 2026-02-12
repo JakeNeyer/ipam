@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
+	"math/big"
 	"strings"
 
 	"github.com/JakeNeyer/ipam/network"
@@ -15,45 +15,55 @@ import (
 	"github.com/swaggest/usecase/status"
 )
 
-// Helper function to calculate total IPs in a CIDR
-func calculateTotalIPs(cidr string) int {
-	_, ipnet, err := net.ParseCIDR(cidr)
-	if err != nil {
-		return 0
-	}
-	ones, bits := ipnet.Mask.Size()
-	n := bits - ones
-	if n < 0 || n > 64 {
-		return 0
-	}
-	return 1 << uint(n)
-}
-
 // blockNamesMatch compares block names for usage attribution (case-insensitive, trimmed).
 func blockNamesMatch(a, b string) bool {
 	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
 }
 
-// computeUsedIPsForBlock returns the sum of IPs allocated from this block (allocations with matching block name).
-// When orgID is non-nil, only allocations in blocks belonging to that org are counted (org-scoped).
-func computeUsedIPsForBlock(s store.Storer, blockName string, orgID *uuid.UUID) int {
-	var allocs []*network.Allocation
-	var err error
-	if orgID != nil {
-		allocs, _, err = s.ListAllocationsFiltered("", blockName, uuid.Nil, orgID, 0, 0)
-	} else {
-		allocs, err = s.ListAllocations()
-	}
+// derivedBlockUsage returns total, used, available (as strings) and utilization percent for a block.
+// All values are derived from CIDR; used is the sum of allocation sizes for this block.
+func derivedBlockUsage(s store.Storer, blockName string, blockCIDR string, orgID *uuid.UUID) (totalStr, usedStr, availableStr string, utilPercent float64) {
+	totalStr = network.CIDRAddressCountString(blockCIDR)
+	total, err := network.CIDRAddressCount(blockCIDR)
 	if err != nil {
-		return 0
+		return totalStr, "0", totalStr, 0
 	}
-	var sum int
+	var allocs []*network.Allocation
+	var listErr error
+	if orgID != nil {
+		allocs, _, listErr = s.ListAllocationsFiltered("", blockName, uuid.Nil, orgID, 0, 0)
+	} else {
+		allocs, listErr = s.ListAllocations()
+	}
+	if listErr != nil {
+		return totalStr, "0", totalStr, 0
+	}
+	used := new(big.Int)
 	for _, a := range allocs {
-		if blockNamesMatch(a.Block.Name, blockName) {
-			sum += calculateTotalIPs(a.Block.CIDR)
+		if !blockNamesMatch(a.Block.Name, blockName) {
+			continue
+		}
+		c, err := network.CIDRAddressCount(a.Block.CIDR)
+		if err != nil {
+			continue
+		}
+		used.Add(used, c)
+	}
+	usedStr = used.String()
+	available := new(big.Int).Sub(total, used)
+	if available.Sign() < 0 {
+		available.SetInt64(0)
+	}
+	availableStr = available.String()
+	if total.Sign() > 0 {
+		// utilization: used/total * 100 (approximate for huge numbers via float)
+		tf, _ := new(big.Float).SetInt(total).Float64()
+		uf, _ := new(big.Float).SetInt(used).Float64()
+		if tf > 0 {
+			utilPercent = (uf / tf) * 100.0
 		}
 	}
-	return sum
+	return totalStr, usedStr, availableStr, utilPercent
 }
 
 // CreateBlock handler
@@ -68,6 +78,7 @@ func NewCreateBlockUseCase(s store.Storer) usecase.Interactor {
 		}
 
 		user := auth.UserFromContext(ctx)
+		orgID := auth.ResolveOrgID(ctx, user, uuid.Nil)
 		if user != nil && input.EnvironmentID != uuid.Nil {
 			env, err := s.GetEnvironment(input.EnvironmentID)
 			if err != nil {
@@ -78,20 +89,39 @@ func NewCreateBlockUseCase(s store.Storer) usecase.Interactor {
 			}
 		}
 
-		totalIPs := calculateTotalIPs(input.CIDR)
+		// Orphan blocks (no environment) must be scoped to an organization
+		blockOrgID := input.OrganizationID
+		if input.EnvironmentID == uuid.Nil {
+			if blockOrgID == uuid.Nil && orgID != nil {
+				blockOrgID = *orgID
+			}
+			if blockOrgID == uuid.Nil {
+				return status.Wrap(errors.New("organization is required for orphan blocks (blocks without an environment)"), status.InvalidArgument)
+			}
+		}
+
+		// Derive-only: total_ips stored only when it fits in BIGINT; API always derives from CIDR
+		totalStored := int(network.CIDRAddressCountInt64(input.CIDR))
 		block := &network.Block{
-			Name:          input.Name,
-			CIDR:          input.CIDR,
-			EnvironmentID: input.EnvironmentID,
+			Name:           input.Name,
+			CIDR:           input.CIDR,
+			EnvironmentID:  input.EnvironmentID,
+			OrganizationID: blockOrgID,
 			Usage: network.Usage{
-				TotalIPs:     totalIPs,
+				TotalIPs:     totalStored,
 				UsedIPs:      0,
-				AvailableIPs: totalIPs,
+				AvailableIPs: totalStored,
 			},
 			Children: []network.Block{},
 		}
 
-		existing, err := s.ListBlocksByEnvironment(block.EnvironmentID)
+		var existing []*network.Block
+		var err error
+		if block.EnvironmentID != uuid.Nil {
+			existing, err = s.ListBlocksByEnvironment(block.EnvironmentID)
+		} else {
+			existing, _, err = s.ListBlocksFiltered("", nil, &block.OrganizationID, true, 0, 0)
+		}
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -111,7 +141,7 @@ func NewCreateBlockUseCase(s store.Storer) usecase.Interactor {
 				)
 			}
 		}
-		var reservedOrgID *uuid.UUID
+		reservedOrgID := &block.OrganizationID
 		if block.EnvironmentID != uuid.Nil {
 			if env, err := s.GetEnvironment(block.EnvironmentID); err == nil {
 				reservedOrgID = &env.OrganizationID
@@ -130,13 +160,15 @@ func NewCreateBlockUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(err, status.Internal)
 		}
 
+		totalStr, usedStr, availStr, _ := derivedBlockUsage(s, block.Name, block.CIDR, orgID)
 		output.ID = block.ID
 		output.Name = block.Name
 		output.CIDR = block.CIDR
-		output.TotalIPs = block.Usage.TotalIPs
-		output.UsedIPs = block.Usage.UsedIPs
-		output.Available = block.Usage.AvailableIPs
+		output.TotalIPs = totalStr
+		output.UsedIPs = usedStr
+		output.Available = availStr
 		output.EnvironmentID = block.EnvironmentID
+		output.OrganizationID = block.OrganizationID
 		return nil
 	})
 
@@ -182,19 +214,16 @@ func NewListBlocksUseCase(s store.Storer) usecase.Interactor {
 		output.Total = total
 		output.Blocks = make([]*blockOutput, len(blocks))
 		for i, block := range blocks {
-			used := computeUsedIPsForBlock(s, block.Name, orgID)
-			avail := block.Usage.TotalIPs - used
-			if avail < 0 {
-				avail = 0
-			}
+			totalStr, usedStr, availStr, _ := derivedBlockUsage(s, block.Name, block.CIDR, orgID)
 			output.Blocks[i] = &blockOutput{
-				ID:            block.ID,
-				Name:          block.Name,
-				CIDR:          block.CIDR,
-				TotalIPs:      block.Usage.TotalIPs,
-				UsedIPs:       used,
-				Available:     avail,
-				EnvironmentID: block.EnvironmentID,
+				ID:             block.ID,
+				Name:           block.Name,
+				CIDR:           block.CIDR,
+				TotalIPs:       totalStr,
+				UsedIPs:        usedStr,
+				Available:      availStr,
+				EnvironmentID:  block.EnvironmentID,
+				OrganizationID: block.OrganizationID,
 			}
 		}
 		return nil
@@ -225,19 +254,15 @@ func NewGetBlockUseCase(s store.Storer) usecase.Interactor {
 		}
 
 		orgID := auth.ResolveOrgID(ctx, user, uuid.Nil)
-		used := computeUsedIPsForBlock(s, block.Name, orgID)
-		avail := block.Usage.TotalIPs - used
-		if avail < 0 {
-			avail = 0
-		}
-
+		totalStr, usedStr, availStr, _ := derivedBlockUsage(s, block.Name, block.CIDR, orgID)
 		output.ID = block.ID
 		output.Name = block.Name
 		output.CIDR = block.CIDR
-		output.TotalIPs = block.Usage.TotalIPs
-		output.UsedIPs = used
-		output.Available = avail
+		output.TotalIPs = totalStr
+		output.UsedIPs = usedStr
+		output.Available = availStr
 		output.EnvironmentID = block.EnvironmentID
+		output.OrganizationID = block.OrganizationID
 		return nil
 	})
 
@@ -269,7 +294,19 @@ func NewUpdateBlockUseCase(s store.Storer) usecase.Interactor {
 		if input.EnvironmentID != nil {
 			block.EnvironmentID = *input.EnvironmentID
 		}
-		existing, err := s.ListBlocksByEnvironment(block.EnvironmentID)
+		if input.OrganizationID != nil {
+			block.OrganizationID = *input.OrganizationID
+		}
+		orgID := auth.ResolveOrgID(ctx, user, uuid.Nil)
+		if block.EnvironmentID == uuid.Nil && block.OrganizationID == uuid.Nil && orgID != nil {
+			block.OrganizationID = *orgID
+		}
+		var existing []*network.Block
+		if block.EnvironmentID != uuid.Nil {
+			existing, err = s.ListBlocksByEnvironment(block.EnvironmentID)
+		} else {
+			existing, _, err = s.ListBlocksFiltered("", nil, &block.OrganizationID, true, 0, 0)
+		}
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -292,7 +329,7 @@ func NewUpdateBlockUseCase(s store.Storer) usecase.Interactor {
 				)
 			}
 		}
-		var reservedOrgID *uuid.UUID
+		reservedOrgID := &block.OrganizationID
 		if block.EnvironmentID != uuid.Nil {
 			if env, err := s.GetEnvironment(block.EnvironmentID); err == nil {
 				reservedOrgID = &env.OrganizationID
@@ -310,25 +347,21 @@ func NewUpdateBlockUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(err, status.Internal)
 		}
 
-		var outOrgID *uuid.UUID
+		outOrgID := &block.OrganizationID
 		if block.EnvironmentID != uuid.Nil {
 			if env, err := s.GetEnvironment(block.EnvironmentID); err == nil {
 				outOrgID = &env.OrganizationID
 			}
 		}
-		used := computeUsedIPsForBlock(s, block.Name, outOrgID)
-		avail := block.Usage.TotalIPs - used
-		if avail < 0 {
-			avail = 0
-		}
-
+		totalStr, usedStr, availStr, _ := derivedBlockUsage(s, block.Name, block.CIDR, outOrgID)
 		output.ID = block.ID
 		output.Name = block.Name
 		output.CIDR = block.CIDR
-		output.TotalIPs = block.Usage.TotalIPs
-		output.UsedIPs = used
-		output.Available = avail
+		output.TotalIPs = totalStr
+		output.UsedIPs = usedStr
+		output.Available = availStr
 		output.EnvironmentID = block.EnvironmentID
+		output.OrganizationID = block.OrganizationID
 		return nil
 	})
 
@@ -395,22 +428,12 @@ func NewGetBlockUsageUseCase(s store.Storer) usecase.Interactor {
 		}
 
 		orgID := auth.ResolveOrgID(ctx, user, uuid.Nil)
-		used := computeUsedIPsForBlock(s, block.Name, orgID)
-		avail := block.Usage.TotalIPs - used
-		if avail < 0 {
-			avail = 0
-		}
-
-		utilPercent := 0.0
-		if block.Usage.TotalIPs > 0 {
-			utilPercent = (float64(used) / float64(block.Usage.TotalIPs)) * 100.0
-		}
-
+		totalStr, usedStr, availStr, utilPercent := derivedBlockUsage(s, block.Name, block.CIDR, orgID)
 		output.Name = block.Name
 		output.CIDR = block.CIDR
-		output.TotalIPs = block.Usage.TotalIPs
-		output.UsedIPs = used
-		output.Available = avail
+		output.TotalIPs = totalStr
+		output.UsedIPs = usedStr
+		output.Available = availStr
 		output.Utilized = utilPercent
 		return nil
 	})

@@ -3,6 +3,7 @@ package network
 import (
 	"bytes"
 	"fmt"
+	"math/big"
 	"net"
 	"sort"
 )
@@ -267,6 +268,56 @@ func IsCIDRAvailable(supernet string, cidr string) (bool, error) {
 func ValidateCIDR(cidr string) bool {
 	_, _, err := net.ParseCIDR(cidr)
 	return err == nil
+}
+
+// CIDRAddressCount returns the number of addresses in the CIDR (2^(bits-prefix))
+// for both IPv4 and IPv6. Caller can use the result for display or comparison.
+func CIDRAddressCount(cidr string) (*big.Int, error) {
+	_, n, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return nil, err
+	}
+	ones, bits := n.Mask.Size()
+	if bits < ones {
+		return nil, fmt.Errorf("invalid mask for CIDR %s", cidr)
+	}
+	hostBits := uint(bits - ones)
+	// 2^hostBits
+	count := new(big.Int).Lsh(big.NewInt(1), hostBits)
+	return count, nil
+}
+
+// CIDRAddressCountString returns the address count as a decimal string for API/display.
+// Returns "0" on parse error so callers can still display something safe.
+func CIDRAddressCountString(cidr string) string {
+	count, err := CIDRAddressCount(cidr)
+	if err != nil {
+		return "0"
+	}
+	return count.String()
+}
+
+// CIDRAddressCountFitsInt64 reports whether the CIDR's address count fits in int64.
+func CIDRAddressCountFitsInt64(cidr string) bool {
+	count, err := CIDRAddressCount(cidr)
+	if err != nil {
+		return false
+	}
+	max := new(big.Int).SetInt64(1<<63 - 1)
+	return count.Cmp(max) <= 0
+}
+
+// CIDRAddressCountInt64 returns the address count as int64 when it fits; otherwise 0.
+// Used for backward-compat storage (total_ips) when value fits in BIGINT.
+func CIDRAddressCountInt64(cidr string) int64 {
+	count, err := CIDRAddressCount(cidr)
+	if err != nil {
+		return 0
+	}
+	if !count.IsInt64() {
+		return 0
+	}
+	return count.Int64()
 }
 
 // Overlaps checks if two CIDR blocks overlap.
