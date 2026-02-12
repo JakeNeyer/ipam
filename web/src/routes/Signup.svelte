@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte'
+  import Icon from '@iconify/svelte'
   import { theme } from '../lib/theme.js'
   import { getAuthConfig, validateSignupInvite, registerWithInvite } from '../lib/api.js'
   import { user } from '../lib/auth.js'
@@ -98,7 +99,8 @@
       {#if error}
         <div class="signup-error" role="alert">{error}</div>
       {/if}
-      <button type="button" class="btn btn-primary signup-github" on:click={signUpWithGitHub} disabled={submitting}>
+      <button type="button" class="signup-github" on:click={signUpWithGitHub} disabled={submitting}>
+        <Icon icon="simple-icons:github" width="1.25rem" height="1.25rem" aria-hidden="true" />
         Sign up with GitHub
       </button>
     {:else}
@@ -249,13 +251,27 @@
     margin-top: 0.5rem;
   }
   .signup-github {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
     width: 100%;
     margin-bottom: 0.5rem;
+    padding: 0.6rem 1rem;
+    background: #000;
+    color: #fff;
+    border: none;
+    border-radius: var(--radius);
+    font-size: 1rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.15s, background 0.15s;
   }
-  .signup-divider {
-    margin: 0 0 1rem 0;
-    font-size: 0.85rem;
-    color: var(--text-muted);
-    text-align: center;
+  .signup-github:hover:not(:disabled) {
+    background: #1a1a1a;
+  }
+  .signup-github:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
   }
 </style>

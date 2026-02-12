@@ -28,7 +28,7 @@ func NewServer(s store.Storer, cfg *config.Config) *web.Service {
 	getSetupStatusUC := handlers.NewGetSetupStatusUseCase(s)
 	svc.Get("/api/setup/status", getSetupStatusUC)
 
-	postSetupUC := handlers.NewPostSetupUseCase(s)
+	postSetupUC := handlers.NewPostSetupUseCase(s, cfg)
 	svc.Post("/api/setup", postSetupUC)
 	svc.Post("/api/setup/status", postSetupUC)
 

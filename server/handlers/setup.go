@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/JakeNeyer/ipam/internal/logger"
+	"github.com/JakeNeyer/ipam/server/config"
 	"github.com/JakeNeyer/ipam/server/validation"
 	"github.com/JakeNeyer/ipam/store"
 	"github.com/google/uuid"
@@ -49,7 +50,9 @@ type postSetupOutput struct {
 }
 
 // NewPostSetupUseCase returns a use case for POST /api/setup. Creates the first admin only when no users exist.
-func NewPostSetupUseCase(s store.Storer) usecase.Interactor {
+// When OAuth is enabled, password is optional; the admin will sign in via OAuth after setup.
+func NewPostSetupUseCase(s store.Storer, cfg *config.Config) usecase.Interactor {
+	oauthEnabled := cfg != nil && len(cfg.EnabledOAuthProviders()) > 0
 	u := usecase.NewInteractor(func(ctx context.Context, input postSetupInput, output *postSetupOutput) error {
 		logger.Info("setup request", logger.KeyOperation, "post_setup", logger.KeyEmail, input.Email)
 		users, err := s.ListUsers(nil)
@@ -65,18 +68,25 @@ func NewPostSetupUseCase(s store.Storer) usecase.Interactor {
 			logger.Info(logger.MsgSetupMissingCreds, logger.KeyOperation, "post_setup")
 			return status.Wrap(errors.New("valid email required"), status.InvalidArgument)
 		}
-		if !validation.ValidatePassword(input.Password) {
+		var passwordHash string
+		if input.Password != "" {
+			if !validation.ValidatePassword(input.Password) {
+				logger.Info(logger.MsgSetupMissingCreds, logger.KeyOperation, "post_setup")
+				return status.Wrap(errors.New("password must be at least 8 characters"), status.InvalidArgument)
+			}
+			hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
+			if err != nil {
+				logger.Error(logger.MsgSetupPasswordFailed, logger.KeyOperation, "post_setup", logger.ErrAttr(err))
+				return status.Wrap(errors.New("password setup failed, please try again"), status.InvalidArgument)
+			}
+			passwordHash = string(hash)
+		} else if !oauthEnabled {
 			logger.Info(logger.MsgSetupMissingCreds, logger.KeyOperation, "post_setup")
-			return status.Wrap(errors.New("password must be at least 8 characters"), status.InvalidArgument)
-		}
-		hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
-		if err != nil {
-			logger.Error(logger.MsgSetupPasswordFailed, logger.KeyOperation, "post_setup", logger.ErrAttr(err))
-			return status.Wrap(errors.New("password setup failed, please try again"), status.InvalidArgument)
+			return status.Wrap(errors.New("password required when OAuth is not configured"), status.InvalidArgument)
 		}
 		admin := &store.User{
 			Email:          strings.TrimSpace(strings.ToLower(input.Email)),
-			PasswordHash:   string(hash),
+			PasswordHash:   passwordHash,
 			Role:           store.RoleAdmin,
 			OrganizationID: uuid.Nil,
 		}

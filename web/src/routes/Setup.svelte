@@ -1,6 +1,7 @@
 <script>
+  import { onMount } from 'svelte'
   import { theme } from '../lib/theme.js'
-  import { setup as apiSetup, login } from '../lib/api.js'
+  import { getAuthConfig, setup as apiSetup, login } from '../lib/api.js'
   import { user, setupRequired } from '../lib/auth.js'
 
   let email = ''
@@ -8,48 +9,57 @@
   let confirmPassword = ''
   let error = ''
   let submitting = false
+  let oauthSetup = false
+
+  onMount(() => {
+    getAuthConfig()
+      .then((c) => {
+        oauthSetup = c?.githubOAuthEnabled === true || (Array.isArray(c?.oauthProviders) && c.oauthProviders.length > 0)
+      })
+      .catch(() => {})
+  })
 
   async function handleSubmit(e) {
     e.preventDefault()
     error = ''
-    if (!email.trim() || !password || !confirmPassword) {
-      error = 'All fields are required.'
+    const trimmedEmail = email.trim()
+    if (!trimmedEmail) {
+      error = 'Email is required.'
       return
     }
-    if (password !== confirmPassword) {
-      error = 'Passwords do not match.'
-      return
-    }
-    if (password.length < 6) {
-      error = 'Password must be at least 6 characters.'
-      return
+    if (!oauthSetup) {
+      if (!password || !confirmPassword) {
+        error = 'All fields are required.'
+        return
+      }
+      if (password !== confirmPassword) {
+        error = 'Passwords do not match.'
+        return
+      }
+      if (password.length < 8) {
+        error = 'Password must be at least 8 characters.'
+        return
+      }
     }
     submitting = true
-    const trimmedEmail = email.trim()
     try {
-      // Step 1: create initial admin (POST /api/setup)
-      await apiSetup(trimmedEmail, password)
-      console.debug('[setup] account created, logging in…')
-    } catch (err) {
-      console.error('[setup] create account failed:', err?.message ?? err, err)
-      error = err?.message ? `Could not create account: ${err.message}` : 'Could not create account.'
-      submitting = false
-      return
-    }
-    try {
-      // Step 2: log in to get session (POST /api/auth/login)
+      await apiSetup(trimmedEmail, oauthSetup ? '' : password)
+      console.debug('[setup] account created')
+      setupRequired.set(false)
+      if (oauthSetup) {
+        window.location.hash = 'login'
+        return
+      }
       const u = await login(trimmedEmail, password)
       if (u) {
         user.set(u)
-        setupRequired.set(false)
         console.debug('[setup] logged in successfully')
       } else {
-        console.warn('[setup] login returned no user; check Network tab for POST /api/auth/login response')
         error = 'Account created. Please sign in with your email and password.'
       }
     } catch (err) {
-      console.error('[setup] login after setup failed:', err?.message ?? err, err)
-      error = err?.message ? `Account created but sign-in failed: ${err.message}` : 'Account created. Please sign in with your email and password.'
+      console.error('[setup] create account failed:', err?.message ?? err, err)
+      error = err?.message ? `Could not create account: ${err.message}` : 'Could not create account.'
     } finally {
       submitting = false
     }
@@ -60,7 +70,13 @@
   <div class="setup-card">
     <img src={$theme === 'light' ? '/images/logo-light.svg' : '/images/logo.svg'} alt="IPAM" class="setup-logo" />
     <h1 class="setup-title">Setup</h1>
-    <p class="setup-subtitle">Create the initial admin account to get started.</p>
+    <p class="setup-subtitle">
+      {#if oauthSetup}
+        Create the initial admin account. You will sign in with your OAuth provider after.
+      {:else}
+        Create the initial admin account to get started.
+      {/if}
+    </p>
     <form class="setup-form" on:submit={handleSubmit}>
       {#if error}
         <div class="setup-error" role="alert">{error}</div>
@@ -69,14 +85,16 @@
         <span>Admin email</span>
         <input type="email" bind:value={email} placeholder="admin@example.com" autocomplete="email" disabled={submitting} />
       </label>
-      <label class="setup-label">
-        <span>Password</span>
-        <input type="password" bind:value={password} placeholder="At least 6 characters" autocomplete="new-password" disabled={submitting} />
-      </label>
-      <label class="setup-label">
-        <span>Confirm password</span>
-        <input type="password" bind:value={confirmPassword} placeholder="Confirm password" autocomplete="new-password" disabled={submitting} />
-      </label>
+      {#if !oauthSetup}
+        <label class="setup-label">
+          <span>Password</span>
+          <input type="password" bind:value={password} placeholder="At least 8 characters" autocomplete="new-password" disabled={submitting} />
+        </label>
+        <label class="setup-label">
+          <span>Confirm password</span>
+          <input type="password" bind:value={confirmPassword} placeholder="Confirm password" autocomplete="new-password" disabled={submitting} />
+        </label>
+      {/if}
       <button type="submit" class="btn btn-primary setup-submit" disabled={submitting}>
         {submitting ? 'Creating account…' : 'Create admin account'}
       </button>

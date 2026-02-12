@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte'
+  import Icon from '@iconify/svelte'
   import { theme } from '../lib/theme.js'
   import { getAuthConfig, login } from '../lib/api.js'
   import { user } from '../lib/auth.js'
@@ -81,7 +82,6 @@
 <div class="login-page">
   <div class="login-card">
     <img src={$theme === 'light' ? '/images/logo-light.svg' : '/images/logo.svg'} alt="IPAM" class="login-logo" />
-    <p class="login-subtitle">Sign in to continue</p>
     <form class="login-form" on:submit={handleSubmit}>
       {#if error}
         <div class="login-error" role="alert">{error}</div>
@@ -89,7 +89,8 @@
       {#if !configLoaded}
         <p class="login-muted">Loading…</p>
       {:else if githubOAuthEnabled || hasOAuthRedirectError}
-        <button type="button" class="btn btn-primary login-github" on:click={signInWithGitHub} disabled={submitting}>
+        <button type="button" class="login-github" on:click={signInWithGitHub} disabled={submitting}>
+          <Icon icon="simple-icons:github" width="1.25rem" height="1.25rem" aria-hidden="true" />
           Sign in with GitHub
         </button>
       {:else}
@@ -152,11 +153,6 @@
     margin: 0 auto 1rem;
     object-fit: contain;
   }
-  .login-subtitle {
-    margin: 0 0 1.5rem 0;
-    font-size: 0.9rem;
-    color: var(--text-muted);
-  }
   .login-form {
     display: flex;
     flex-direction: column;
@@ -197,13 +193,26 @@
     color: var(--text-muted);
   }
   .login-github {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
     width: 100%;
-    border: 1px solid var(--border);
+    padding: 0.6rem 1rem;
+    background: #000;
+    color: #fff;
+    border: none;
+    border-radius: var(--radius);
+    font-size: 1rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.15s, background 0.15s;
   }
-  .login-divider {
-    margin: 0;
-    font-size: 0.85rem;
-    color: var(--text-muted);
-    text-align: center;
+  .login-github:hover:not(:disabled) {
+    background: #1a1a1a;
+  }
+  .login-github:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
   }
 </style>
