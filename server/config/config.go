@@ -1,5 +1,10 @@
 package config
 
+import (
+	"os"
+	"strings"
+)
+
 // Config holds optional server configuration (e.g. OAuth, app origin).
 type Config struct {
 	// OAuth holds OAuth provider configs. Key is provider ID (e.g. "github"). When present and valid, that provider is enabled.
@@ -49,4 +54,30 @@ func (c *Config) OAuthProvider(providerID string) *OAuthProviderConfig {
 // IsGitHubOAuthEnabled returns true if GitHub OAuth is configured (for backward compatibility with frontend).
 func (c *Config) IsGitHubOAuthEnabled() bool {
 	return c.OAuthProvider("github") != nil
+}
+
+// LoadFromEnv returns Config from environment variables.
+// ENABLE_GITHUB_OAUTH (true/1), GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET enable GitHub OAuth.
+// APP_ORIGIN sets the public app URL (OAuth redirects, signup links).
+func LoadFromEnv() *Config {
+	enabled := strings.ToLower(strings.TrimSpace(os.Getenv("ENABLE_GITHUB_OAUTH"))) == "true" ||
+		strings.TrimSpace(os.Getenv("ENABLE_GITHUB_OAUTH")) == "1"
+	clientID := strings.TrimSpace(os.Getenv("GITHUB_CLIENT_ID"))
+	clientSecret := strings.TrimSpace(os.Getenv("GITHUB_CLIENT_SECRET"))
+	var cfg Config
+	if enabled && clientID != "" && clientSecret != "" {
+		cfg.OAuth = OAuthConfig{
+			Providers: map[string]OAuthProviderConfig{
+				"github": {
+					ClientID:     clientID,
+					ClientSecret: clientSecret,
+					Scopes:       []string{"user:email"},
+				},
+			},
+		}
+	}
+	if origin := strings.TrimSpace(os.Getenv("APP_ORIGIN")); origin != "" {
+		cfg.AppOrigin = origin
+	}
+	return &cfg
 }

@@ -5,78 +5,21 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/JakeNeyer/ipam/internal/logger"
+	"github.com/JakeNeyer/ipam/internal/setup"
 	"github.com/JakeNeyer/ipam/internal/telemetry"
 	"github.com/JakeNeyer/ipam/server"
 	"github.com/JakeNeyer/ipam/server/config"
+	"github.com/JakeNeyer/ipam/server/handlers"
 	"github.com/JakeNeyer/ipam/server/middleware"
-	"github.com/JakeNeyer/ipam/server/validation"
-	"github.com/JakeNeyer/ipam/store"
-	"github.com/google/uuid"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	"golang.org/x/crypto/bcrypt"
 )
 
 func otelEnabled() bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv("ENABLE_OTEL")))
 	return v == "true" || v == "1"
-}
-
-func serverOAuthConfig() *config.Config {
-	enabled := strings.ToLower(strings.TrimSpace(os.Getenv("ENABLE_GITHUB_OAUTH"))) == "true" || strings.TrimSpace(os.Getenv("ENABLE_GITHUB_OAUTH")) == "1"
-	clientID := strings.TrimSpace(os.Getenv("GITHUB_CLIENT_ID"))
-	clientSecret := strings.TrimSpace(os.Getenv("GITHUB_CLIENT_SECRET"))
-	if !enabled || clientID == "" || clientSecret == "" {
-		return nil
-	}
-	return &config.Config{
-		OAuth: config.OAuthConfig{
-			Providers: map[string]config.OAuthProviderConfig{
-				"github": {
-					ClientID:     clientID,
-					ClientSecret: clientSecret,
-					Scopes:       []string{"user:email"},
-				},
-			},
-		},
-	}
-}
-
-// ensureInitialAdmin creates the first admin user when INITIAL_ADMIN_EMAIL and
-// INITIAL_ADMIN_PASSWORD are set and no users exist (e.g. for Fly.io deploy without setup UI).
-func ensureInitialAdmin(st store.Storer) {
-	email := strings.TrimSpace(os.Getenv("INITIAL_ADMIN_EMAIL"))
-	password := os.Getenv("INITIAL_ADMIN_PASSWORD")
-	if email == "" || password == "" {
-		return
-	}
-	users, err := st.ListUsers(nil)
-	if err != nil || len(users) > 0 {
-		return
-	}
-	if !validation.ValidateEmail(email) || !validation.ValidatePassword(password) {
-		logger.Info("initial admin skipped: invalid email or password (email format, password 8–72 chars)")
-		return
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		logger.Error("initial admin password hash failed", logger.ErrAttr(err))
-		return
-	}
-	admin := &store.User{
-		Email:          strings.TrimSpace(strings.ToLower(email)),
-		PasswordHash:   string(hash),
-		Role:           store.RoleAdmin,
-		OrganizationID: uuid.Nil,
-	}
-	if err := st.CreateUser(admin); err != nil {
-		logger.Error("initial admin create failed", logger.ErrAttr(err))
-		return
-	}
-	logger.Info("initial admin created", slog.String("email", admin.Email))
 }
 
 func main() {
@@ -92,30 +35,17 @@ func main() {
 		logger.Info("opentelemetry enabled (stdout traces)")
 	}
 
-	var st store.Storer
-	if dsn := os.Getenv("DATABASE_URL"); dsn != "" {
-		var err error
-		st, err = store.NewPostgresStore(ctx, dsn)
-		if err != nil {
-			logger.Error("postgres store failed", logger.ErrAttr(err))
-			os.Exit(1)
-		}
-		if c, ok := st.(*store.PostgresStore); ok {
-			defer c.Close()
-		}
-		logger.Info("store", slog.String("type", "postgres"))
-	} else {
-		st = store.NewStore()
-		logger.Info("store", slog.String("type", "in_memory"))
+	st, closeStore, err := setup.NewStore(ctx)
+	if err != nil {
+		logger.Error("store failed", logger.ErrAttr(err))
+		os.Exit(1)
 	}
-	ensureInitialAdmin(st)
-	serverCfg := serverOAuthConfig()
-	if serverCfg == nil {
-		serverCfg = &config.Config{}
-	}
-	if appOrigin := strings.TrimSpace(os.Getenv("APP_ORIGIN")); appOrigin != "" {
-		serverCfg.AppOrigin = appOrigin
-	}
+	defer closeStore()
+
+	serverCfg := config.LoadFromEnv()
+	oauthEnabled := len(serverCfg.EnabledOAuthProviders()) > 0
+	setup.EnsureInitialAdmin(st, oauthEnabled)
+
 	s := server.NewServer(st, serverCfg)
 
 	handler := middleware.SecurityHeaders(s)
@@ -130,12 +60,12 @@ func main() {
 
 	appOrigin := serverCfg.AppOrigin
 	if appOrigin != "" {
-		handler = unauthorizedHandler(appOrigin, handler)
+		handler = handlers.Unauthorized(appOrigin, handler)
 		logger.Info("app origin set; non-API requests return 401", slog.String("app_origin", appOrigin))
 	} else {
-		staticDir := resolveStaticDir()
+		staticDir := handlers.ResolveStaticDir()
 		if staticDir != "" {
-			handler = staticHandler(staticDir, handler)
+			handler = handlers.Static(staticDir, handler)
 			logger.Info("serving static files", slog.String("dir", staticDir))
 		}
 	}
@@ -151,80 +81,4 @@ func main() {
 		logger.Error("server failed", logger.ErrAttr(err))
 		os.Exit(1)
 	}
-}
-
-// resolveStaticDir returns a directory containing index.html for the SPA, or "" if none found.
-// Tries STATIC_DIR, then web/dist relative to CWD or executable, so signup links (GET /) work.
-func resolveStaticDir() string {
-	if d := os.Getenv("STATIC_DIR"); d != "" {
-		if abs, err := filepath.Abs(d); err == nil && staticDirHasIndex(abs) {
-			return abs
-		}
-		return d
-	}
-	cwd, _ := os.Getwd()
-	for _, rel := range []string{"web/dist", "dist", "./web/dist", "./dist"} {
-		dir := filepath.Join(cwd, rel)
-		if dir = filepath.Clean(dir); staticDirHasIndex(dir) {
-			return dir
-		}
-	}
-	for _, rel := range []string{"web/dist", "dist"} {
-		if staticDirHasIndex(rel) {
-			if abs, err := filepath.Abs(rel); err == nil {
-				return abs
-			}
-			return rel
-		}
-	}
-	if execPath, err := os.Executable(); err == nil {
-		base := filepath.Dir(execPath)
-		for _, rel := range []string{"web/dist", "dist"} {
-			dir := filepath.Join(base, rel)
-			if staticDirHasIndex(dir) {
-				return dir
-			}
-		}
-	}
-	return ""
-}
-
-func staticDirHasIndex(dir string) bool {
-	f, err := os.Stat(filepath.Join(dir, "index.html"))
-	return err == nil && f != nil && !f.IsDir()
-}
-
-// unauthorizedHandler returns 401 Unauthorized with a simple HTML body for non-API, non-docs requests (used when APP_ORIGIN is set so the app is served from another origin).
-func unauthorizedHandler(appOrigin string, next http.Handler) http.Handler {
-	origin := strings.TrimSuffix(appOrigin, "/")
-	body := "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Unauthorized</title></head><body><h1>Unauthorized</h1><p>This is the API server. Use the app at <a href=\"" + origin + "\">" + origin + "</a>.</p></body></html>"
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api") || strings.HasPrefix(r.URL.Path, "/docs") {
-			next.ServeHTTP(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(body))
-	})
-}
-
-// staticHandler serves API/docs from next, everything else from dir (SPA fallback to index.html).
-func staticHandler(dir string, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api") || strings.HasPrefix(r.URL.Path, "/docs") {
-			next.ServeHTTP(w, r)
-			return
-		}
-		p := filepath.Join(dir, filepath.Clean(strings.TrimPrefix(r.URL.Path, "/")))
-		if rel, err := filepath.Rel(dir, p); err != nil || strings.HasPrefix(rel, "..") {
-			http.ServeFile(w, r, filepath.Join(dir, "index.html"))
-			return
-		}
-		if f, err := os.Stat(p); err == nil && !f.IsDir() {
-			http.ServeFile(w, r, p)
-			return
-		}
-		http.ServeFile(w, r, filepath.Join(dir, "index.html"))
-	})
 }
