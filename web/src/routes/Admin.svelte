@@ -3,7 +3,7 @@
   import Icon from '@iconify/svelte'
   import '../lib/theme.js'
   import { listUsers, listTokens, deleteToken, listSignupInvites, revokeSignupInvite, updateUserRole, updateUserOrganization, deleteUser, listOrganizations, createOrganization, updateOrganization, deleteOrganization } from '../lib/api.js'
-  import { user } from '../lib/auth.js'
+  import { user, oauthEnabled } from '../lib/auth.js'
   import ApiTokensModal from '../lib/ApiTokensModal.svelte'
   import AddUserModal from '../lib/AddUserModal.svelte'
   import SignupInviteModal from '../lib/SignupInviteModal.svelte'
@@ -366,7 +366,7 @@
     <h1 class="page-title">Admin</h1>
   </header>
 
-  <AddUserModal open={showAddUserModal} isGlobalAdmin={isGlobalAdmin} organizations={organizations} on:close={() => (showAddUserModal = false)} on:created={load} />
+  <AddUserModal open={showAddUserModal} oauthEnabled={$oauthEnabled} isGlobalAdmin={isGlobalAdmin} organizations={organizations} on:close={() => (showAddUserModal = false)} on:created={load} />
   <ApiTokensModal
     open={showApiTokensModal}
     isGlobalAdmin={isGlobalAdmin}

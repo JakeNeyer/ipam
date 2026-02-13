@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store'
-import { getMe, logout as apiLogout, getSetupStatus } from './api.js'
+import { getMe, logout as apiLogout, getSetupStatus, getAuthConfig } from './api.js'
 
 /** @type {import('svelte/store').Writable<{ id: string, email: string, role: string } | null>} */
 export const user = writable(null)
@@ -9,6 +9,9 @@ export const authChecked = writable(false)
 
 /** @type {import('svelte/store').Writable<boolean | null>} true = setup required, false = not required, null = not yet checked */
 export const setupRequired = writable(null)
+
+/** @type {import('svelte/store').Writable<boolean>} true when at least one OAuth provider is configured */
+export const oauthEnabled = writable(false)
 
 const SELECTED_ORG_STORAGE_KEY = 'ipam-global-admin-selected-org'
 
@@ -65,8 +68,17 @@ export function setSelectedOrgForGlobalAdmin(id, name) {
  */
 export async function checkAuth() {
   try {
-    const u = await getMe()
+    const [u, authCfg] = await Promise.all([
+      getMe(),
+      getAuthConfig().catch(() => null),
+    ])
     user.set(u)
+    if (authCfg) {
+      oauthEnabled.set(
+        (Array.isArray(authCfg.oauthProviders) && authCfg.oauthProviders.length > 0) ||
+        authCfg.githubOAuthEnabled === true
+      )
+    }
     if (u && isGlobalAdmin(u)) {
       const persisted = getPersistedSelectedOrg()
       if (persisted) {

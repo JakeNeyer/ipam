@@ -62,7 +62,7 @@ func NewServer(s store.Storer, cfg *config.Config) *web.Service {
 	deleteTokenUC := handlers.NewDeleteTokenUseCase(s)
 	svc.Delete("/api/auth/me/tokens/{id}", deleteTokenUC)
 
-	svc.Handle("/api/admin/users", handlers.AdminUsersHandler(s))
+	svc.Handle("/api/admin/users", handlers.AdminUsersHandler(s, cfg))
 	svc.Handle("/api/admin/users/{id}/role", handlers.UpdateUserRoleHandler(s))
 	svc.Handle("/api/admin/users/{id}/organization", handlers.UpdateUserOrganizationHandler(s))
 	svc.Handle("/api/admin/users/{id}", handlers.DeleteUserHandler(s))

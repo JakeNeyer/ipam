@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/JakeNeyer/ipam/server/auth"
+	"github.com/JakeNeyer/ipam/server/config"
 	"github.com/JakeNeyer/ipam/server/validation"
 	"github.com/JakeNeyer/ipam/store"
 	"github.com/google/uuid"
@@ -31,7 +32,8 @@ type UpdateUserOrganizationRequest struct {
 }
 
 // AdminUsersHandler handles GET (list) and POST (create) /api/admin/users. Admin only.
-func AdminUsersHandler(s store.Storer) http.HandlerFunc {
+func AdminUsersHandler(s store.Storer, cfg *config.Config) http.HandlerFunc {
+	oauthEnabled := cfg != nil && len(cfg.EnabledOAuthProviders()) > 0
 	return func(w http.ResponseWriter, r *http.Request) {
 		user := auth.UserFromContext(r.Context())
 		if user == nil || user.Role != store.RoleAdmin {
@@ -42,7 +44,7 @@ func AdminUsersHandler(s store.Storer) http.HandlerFunc {
 		case http.MethodGet:
 			listUsers(s, w, r)
 		case http.MethodPost:
-			createUser(s, w, r)
+			createUser(s, oauthEnabled, w, r)
 		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
@@ -68,7 +70,7 @@ func listUsers(s store.Storer, w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"users": out})
 }
 
-func createUser(s store.Storer, w http.ResponseWriter, r *http.Request) {
+func createUser(s store.Storer, oauthEnabled bool, w http.ResponseWriter, r *http.Request) {
 	var req CreateUserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -78,8 +80,21 @@ func createUser(s store.Storer, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "valid email required", http.StatusBadRequest)
 		return
 	}
-	if !validation.ValidatePassword(req.Password) {
-		http.Error(w, "password must be at least 8 characters", http.StatusBadRequest)
+	// Password is optional when OAuth is enabled; the user will sign in via OAuth.
+	var passwordHash string
+	if req.Password != "" {
+		if !validation.ValidatePassword(req.Password) {
+			http.Error(w, "password must be at least 8 characters", http.StatusBadRequest)
+			return
+		}
+		hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		if err != nil {
+			http.Error(w, "failed to hash password", http.StatusInternalServerError)
+			return
+		}
+		passwordHash = string(hash)
+	} else if !oauthEnabled {
+		http.Error(w, "password required when OAuth is not configured", http.StatusBadRequest)
 		return
 	}
 	role := store.RoleUser
@@ -99,14 +114,9 @@ func createUser(s store.Storer, w http.ResponseWriter, r *http.Request) {
 		auth.WriteJSONError(w, err.Error(), http.StatusForbidden)
 		return
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-	if err != nil {
-		http.Error(w, "failed to hash password", http.StatusInternalServerError)
-		return
-	}
 	newUser := &store.User{
 		Email:          strings.TrimSpace(strings.ToLower(req.Email)),
-		PasswordHash:   string(hash),
+		PasswordHash:   passwordHash,
 		Role:           role,
 		OrganizationID: orgID,
 	}

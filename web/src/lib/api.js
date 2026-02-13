@@ -457,13 +457,15 @@ export async function deleteOrganization(id) {
 
 /**
  * Create a user. Global admin can pass organizationId; org admin creates in their org.
+ * When OAuth is enabled, password may be omitted (the user will sign in via OAuth).
  * @param {string} email
- * @param {string} password
+ * @param {string} [password='']
  * @param {string} [role='user']
  * @param {string|null} [organizationId=null] - Required when global admin; ignored for org admin
  */
-export async function createUser(email, password, role = 'user', organizationId = null) {
-  const body = { email, password, role }
+export async function createUser(email, password = '', role = 'user', organizationId = null) {
+  const body = { email, role }
+  if (password) body.password = password
   if (organizationId != null && organizationId !== '') {
     body.organization_id = organizationId
   }

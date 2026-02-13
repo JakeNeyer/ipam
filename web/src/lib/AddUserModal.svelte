@@ -1,14 +1,34 @@
 <script>
   import { createEventDispatcher } from 'svelte'
-  import { createUser } from './api.js'
+  import { createUser, getAuthConfig } from './api.js'
 
   export let open = false
   /** When true, show organization dropdown (global admin). */
   export let isGlobalAdmin = false
   /** List of { id, name } for organization dropdown. Used when isGlobalAdmin. */
   export let organizations = []
+  /** When true, password is optional (user will sign in via OAuth). Fallback from parent; modal also fetches when opened. */
+  export let oauthEnabled = false
 
   const dispatch = createEventDispatcher()
+
+  /** Resolved when modal opens so we always show correct password field for current server config. */
+  let oauthEnabledResolved = false
+  let fetchedForOpen = false
+  $: if (open) {
+    if (!fetchedForOpen) {
+      fetchedForOpen = true
+      oauthEnabledResolved = oauthEnabled
+      getAuthConfig()
+        .then((cfg) => {
+          oauthEnabledResolved =
+            (Array.isArray(cfg?.oauthProviders) && cfg.oauthProviders.length > 0) || cfg?.githubOAuthEnabled === true
+        })
+        .catch(() => {})
+    }
+  } else {
+    fetchedForOpen = false
+  }
 
   let error = ''
   let email = ''
@@ -21,8 +41,12 @@
   async function handleSubmit(e) {
     e.preventDefault()
     error = ''
-    if (!email.trim() || !password) {
-      error = 'Email and password are required.'
+    if (!email.trim()) {
+      error = 'Email is required.'
+      return
+    }
+    if (!oauthEnabledResolved && !password) {
+      error = 'Password is required.'
       return
     }
     submitting = true
@@ -76,10 +100,12 @@
           <span>Email</span>
           <input type="email" bind:value={email} placeholder="user@example.com" disabled={submitting} />
         </label>
+        {#if !oauthEnabledResolved}
         <label class="modal-label">
           <span>Password</span>
           <input type="password" bind:value={password} placeholder="Password" disabled={submitting} />
         </label>
+        {/if}
         <label class="modal-label">
           <span>Role</span>
           <select bind:value={role} disabled={submitting}>

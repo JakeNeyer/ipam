@@ -92,7 +92,7 @@ func TestGlobalAdmin_OrgAdminCannotAssignUserToGlobalAdmin(t *testing.T) {
 // TestGlobalAdmin_OrgAdminCannotCreateUserAsGlobalAdmin proves an org admin sending organization_id Nil still creates the user in their org (body is ignored; no global admin created).
 func TestGlobalAdmin_OrgAdminCannotCreateUserAsGlobalAdmin(t *testing.T) {
 	s, _, org, orgAdmin := setupGlobalAdminTest(t)
-	handler := AdminUsersHandler(s)
+	handler := AdminUsersHandler(s, nil)
 
 	body := map[string]interface{}{
 		"email":           "newuser@example.com",
