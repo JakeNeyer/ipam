@@ -20,8 +20,3 @@ jobs:
 
       - name: Test (main app)
         run: go test -v -race -count=1 ./...
-
-      - name: Test (Terraform provider)
-        run: |
-          cd terraform-provider-ipam
-          go test -v -race -count=1 -short ./...

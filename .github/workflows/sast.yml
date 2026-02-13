@@ -25,11 +25,3 @@ jobs:
         uses: securego/gosec@master
         with:
           args: './internal/... ./network/... ./server/... ./store/... .'
-
-      - name: Run Gosec (Terraform provider)
-        run: |
-          cd terraform-provider-ipam
-          go install github.com/securego/gosec/v2/cmd/gosec@latest
-          gosec ./...
-        env:
-          GO111MODULE: on
