@@ -95,7 +95,7 @@
 
   <section id="features" class="section features">
     <h2 class="section-title">Core features</h2>
-    <p class="section-desc">Environments, blocks, allocations, reserved blocks, a CIDR wizard, subnet calculator, network advisor, and diagram export.</p>
+    <p class="section-desc">Environments, pools, blocks, allocations, reserved blocks, a CIDR wizard, subnet calculator, network advisor, and diagram export.</p>
     <div class="features-grid">
       <div class="feature-card">
         <div class="feature-icon-wrap">
@@ -106,6 +106,16 @@
         </div>
         <h3 class="feature-title">Environments</h3>
         <p class="feature-desc">Group network blocks by environment (e.g. staging, production).</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon-wrap">
+          <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0L12 2.69z" />
+            <path d="M12 2.69v4.95" />
+          </svg>
+        </div>
+        <h3 class="feature-title">Pools</h3>
+        <p class="feature-desc">CIDR ranges per environment that blocks draw from; non-overlapping within an org.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon-wrap">
@@ -245,7 +255,7 @@
             <!-- Search bar -->
             <rect x="40" y="32" width="320" height="40" rx="8" fill="var(--bg)" stroke="var(--border)" stroke-width="1" />
             <text x="56" y="57" fill="var(--text-muted)" font-size="12" font-family="system-ui, sans-serif">⌘</text>
-            <text x="76" y="57" fill="var(--text-muted)" font-size="12" font-family="system-ui, sans-serif">Search environments, blocks, allocations...</text>
+            <text x="76" y="57" fill="var(--text-muted)" font-size="12" font-family="system-ui, sans-serif">Search environments, pools, blocks, allocations...</text>
             <!-- Command list -->
             <rect x="40" y="88" width="320" height="32" rx="6" fill="var(--accent-dim)" stroke="var(--accent)" stroke-width="1" opacity="0.9" />
             <text x="56" y="108" fill="var(--accent)" font-size="12" font-weight="600" font-family="system-ui, sans-serif">Go to Dashboard</text>
@@ -290,14 +300,16 @@
           <text x="200" y="75" text-anchor="middle" fill="var(--text)" font-size="11" font-weight="600">API</text>
           <text x="200" y="92" text-anchor="middle" fill="var(--text-muted)" font-size="9">JSON</text>
           <path d="M250 80 L285 80" stroke="var(--accent)" stroke-width="2" />
-          <rect x="290" y="12" width="120" height="32" rx="4" fill="url(#apiClientGrad)" stroke="var(--accent)" stroke-width="1" />
-          <text x="350" y="28" text-anchor="middle" fill="var(--text)" font-size="8" font-weight="600">Environments</text>
-          <rect x="290" y="48" width="120" height="32" rx="4" fill="url(#apiClientGrad)" stroke="var(--accent)" stroke-width="1" />
-          <text x="350" y="64" text-anchor="middle" fill="var(--text)" font-size="8" font-weight="600">Network Blocks</text>
-          <rect x="290" y="84" width="120" height="32" rx="4" fill="url(#apiClientGrad)" stroke="var(--accent)" stroke-width="1" />
-          <text x="350" y="100" text-anchor="middle" fill="var(--text)" font-size="8" font-weight="600">Allocations</text>
-          <rect x="290" y="120" width="120" height="32" rx="4" fill="url(#apiClientGrad)" stroke="var(--accent)" stroke-width="1" />
-          <text x="350" y="136" text-anchor="middle" fill="var(--text)" font-size="8" font-weight="600">Reserved Blocks</text>
+          <rect x="290" y="8" width="120" height="26" rx="4" fill="url(#apiClientGrad)" stroke="var(--accent)" stroke-width="1" />
+          <text x="350" y="24" text-anchor="middle" fill="var(--text)" font-size="8" font-weight="600">Environments</text>
+          <rect x="290" y="38" width="120" height="26" rx="4" fill="url(#apiClientGrad)" stroke="var(--accent)" stroke-width="1" />
+          <text x="350" y="54" text-anchor="middle" fill="var(--text)" font-size="8" font-weight="600">Pools</text>
+          <rect x="290" y="68" width="120" height="26" rx="4" fill="url(#apiClientGrad)" stroke="var(--accent)" stroke-width="1" />
+          <text x="350" y="84" text-anchor="middle" fill="var(--text)" font-size="8" font-weight="600">Network Blocks</text>
+          <rect x="290" y="98" width="120" height="26" rx="4" fill="url(#apiClientGrad)" stroke="var(--accent)" stroke-width="1" />
+          <text x="350" y="114" text-anchor="middle" fill="var(--text)" font-size="8" font-weight="600">Allocations</text>
+          <rect x="290" y="128" width="120" height="26" rx="4" fill="url(#apiClientGrad)" stroke="var(--accent)" stroke-width="1" />
+          <text x="350" y="144" text-anchor="middle" fill="var(--text)" font-size="8" font-weight="600">Reserved Blocks</text>
         </svg>
       </div>
     </div>
@@ -315,6 +327,7 @@
           <h3 class="terraform-card-title">Resources</h3>
           <ul class="terraform-list">
             <li><code>ipam_environment</code></li>
+            <li><code>ipam_pool</code></li>
             <li><code>ipam_block</code></li>
             <li><code>ipam_allocation</code></li>
             <li><code>ipam_reserved_block</code></li>
@@ -324,6 +337,7 @@
           <h3 class="terraform-card-title">Data sources</h3>
           <ul class="terraform-list">
             <li><code>ipam_environment</code> / <code>ipam_environments</code></li>
+            <li><code>ipam_pool</code> / <code>ipam_pools</code></li>
             <li><code>ipam_block</code> / <code>ipam_blocks</code></li>
             <li><code>ipam_allocation</code> / <code>ipam_allocations</code></li>
             <li><code>ipam_reserved_block</code> / <code>ipam_reserved_blocks</code></li>
@@ -380,18 +394,23 @@
 
 resource "ipam_environment" "prod" {'{'}
   name = "production"
+  pools = [
+    {'{'} name = "prod-pool", cidr = "10.0.0.0/8" {'}'}
+  ]
 {'}'}
 
 resource "ipam_block" "main" {'{'}
   name           = "main-vpc"
   cidr           = "10.0.0.0/16"
   environment_id = ipam_environment.prod.id
+  pool_id        = ipam_environment.prod.pool_ids[0]
 {'}'}
 
+# Auto-allocate: next available /24 in the block
 resource "ipam_allocation" "app" {'{'}
-  name       = "app-subnet"
-  block_name = ipam_block.main.name
-  cidr       = "10.0.1.0/24"
+  name           = "app-subnet"
+  block_name     = ipam_block.main.name
+  prefix_length  = 24
 {'}'}
 
 # Use IPAM block CIDR for VPC, allocation for subnet
@@ -401,8 +420,8 @@ resource "aws_vpc" "main" {'{'}
 {'}'}
 
 resource "aws_subnet" "app" {'{'}
-  vpc_id     = aws_vpc.main.id
-  cidr_block = ipam_allocation.app.cidr
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = ipam_allocation.app.cidr
   availability_zone = "us-east-1a"
 {'}'}</code></pre></div>
         {:else if terraformTab === 'azure'}
@@ -413,18 +432,23 @@ resource "aws_subnet" "app" {'{'}
 
 resource "ipam_environment" "prod" {'{'}
   name = "production"
+  pools = [
+    {'{'} name = "prod-pool", cidr = "10.0.0.0/8" {'}'}
+  ]
 {'}'}
 
 resource "ipam_block" "main" {'{'}
   name           = "main-vnet"
   cidr           = "10.0.0.0/16"
   environment_id = ipam_environment.prod.id
+  pool_id        = ipam_environment.prod.pool_ids[0]
 {'}'}
 
+# Auto-allocate: next available /24 in the block
 resource "ipam_allocation" "app" {'{'}
-  name       = "app-subnet"
-  block_name = ipam_block.main.name
-  cidr       = "10.0.1.0/24"
+  name           = "app-subnet"
+  block_name     = ipam_block.main.name
+  prefix_length  = 24
 {'}'}
 
 # Use IPAM block for VNet address space, allocation for subnet
@@ -449,18 +473,23 @@ resource "azurerm_subnet" "app" {'{'}
 
 resource "ipam_environment" "prod" {'{'}
   name = "production"
+  pools = [
+    {'{'} name = "prod-pool", cidr = "10.0.0.0/8" {'}'}
+  ]
 {'}'}
 
 resource "ipam_block" "main" {'{'}
   name           = "main-network"
   cidr           = "10.0.0.0/16"
   environment_id = ipam_environment.prod.id
+  pool_id        = ipam_environment.prod.pool_ids[0]
 {'}'}
 
+# Auto-allocate: next available /24 in the block
 resource "ipam_allocation" "app" {'{'}
-  name       = "app-subnet"
-  block_name = ipam_block.main.name
-  cidr       = "10.0.1.0/24"
+  name           = "app-subnet"
+  block_name     = ipam_block.main.name
+  prefix_length  = 24
 {'}'}
 
 # Use IPAM allocation CIDRs for GCP subnets (custom mode)

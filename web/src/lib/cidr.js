@@ -396,6 +396,118 @@ function divideSubnetsIPv6(cidr, newPrefix) {
 }
 
 /**
+ * Smallest power of 2 >= n (BigInt). Used for pool sizing so each pool is a valid CIDR.
+ * @param {bigint} n - required IP count (>= 0)
+ * @returns {bigint}
+ */
+export function nextPowerOf2BigInt(n) {
+  if (n <= 1n) return n <= 0n ? 1n : 1n
+  let p = 1n
+  while (p < n) p *= 2n
+  return p
+}
+
+/** Largest power of 2 <= n (BigInt). */
+function floorPowerOf2BigInt(n) {
+  if (n <= 0n) return 0n
+  let p = 1n
+  while (p * 2n <= n) p *= 2n
+  return p
+}
+
+/**
+ * Prefix length for a pool of the given size (power of 2). size = 2^(bits - prefix) => prefix = bits - log2(size).
+ * @param {bigint} size - power-of-2 size (e.g. 256n for /24)
+ * @param {4|6} version
+ * @returns {number}
+ */
+function prefixFromPoolSizeBigInt(size, version) {
+  const bits = version === 6 ? 128 : 32
+  if (size <= 1n) return bits
+  let exp = 0n
+  let s = size
+  while (s > 1n) {
+    s >>= 1n
+    exp += 1n
+  }
+  return bits - Number(exp)
+}
+
+/**
+ * Split a base range into variable-sized pool subnets to optimize IP usage.
+ * Each pool is sized to the smallest power-of-2 that fits that environment's required IPs (not evenly sized).
+ * If the sum of requested sizes would exceed the base, pools are capped (larger mask = smaller size) so the total never overruns.
+ * @param {{ start: bigint, end: bigint, prefix: number, version: 4|6, cidr?: string }} baseRange - from cidrRangeToBigInt
+ * @param {bigint[]} requiredSizes - required IP count per pool (one per environment); each is rounded up to next power-of-2
+ * @returns {{ start: bigint, end: bigint, prefix: number, version: 4|6, cidr: string }[]} - one per required size; sizes adjusted so sum <= base
+ */
+export function splitBaseIntoPoolRangesOptimized(baseRange, requiredSizes) {
+  if (!baseRange || !requiredSizes?.length) return []
+  const { start, end, version } = baseRange
+  const baseSize = end - start + 1n
+  let nextStart = start
+  const out = []
+  const n = requiredSizes.length
+  for (let i = 0; i < n; i++) {
+    const remaining = end - nextStart + 1n
+    const poolsLeft = n - i
+    const maxForThis = remaining - BigInt(poolsLeft - 1)
+    if (maxForThis < 1n) break
+    const required = requiredSizes[i] != null ? requiredSizes[i] : 1n
+    const idealSize = nextPowerOf2BigInt(required <= 0n ? 1n : required)
+    const poolSize = idealSize <= maxForThis ? idealSize : floorPowerOf2BigInt(maxForThis)
+    if (poolSize < 1n) break
+    const subEnd = nextStart + poolSize - 1n
+    if (subEnd > end) break
+    const poolPrefix = prefixFromPoolSizeBigInt(poolSize, version)
+    const addrStr =
+      version === 6 ? formatIPv6(bigIntToHextets(nextStart)) : intToDotted(Number(nextStart & 0xffffffffn))
+    const cidr = `${addrStr}/${poolPrefix}`
+    out.push({ start: nextStart, end: subEnd, prefix: poolPrefix, version, cidr })
+    nextStart = subEnd + 1n
+  }
+  return out
+}
+
+/**
+ * Divide a base range into n contiguous pool subnets (one per environment).
+ * Each pool is a valid power-of-2 CIDR but sizes can differ — first pools may be larger so the base is simply divided, not evenly split.
+ * @param {{ start: bigint, end: bigint, prefix: number, version: 4|6, cidr?: string }} baseRange - from cidrRangeToBigInt
+ * @param {number} n - number of pools (environments)
+ * @returns {{ start: bigint, end: bigint, prefix: number, version: 4|6, cidr: string }[]} - n pool ranges
+ */
+export function divideBaseIntoPoolRanges(baseRange, n) {
+  if (!baseRange || n < 1) return []
+  const { start, end, version } = baseRange
+  const baseSize = end - start + 1n
+  if (baseSize < BigInt(n)) return []
+  let nextStart = start
+  let remaining = baseSize
+  let prevPoolSize = baseSize // so first pool can use any size <= baseSize
+  const out = []
+  for (let i = 0; i < n; i++) {
+    const poolsLeft = n - i
+    const targetSize = remaining / BigInt(poolsLeft)
+    const maxPoolSize = remaining - BigInt(poolsLeft - 1)
+    let poolSize = nextPowerOf2BigInt(targetSize)
+    if (poolSize > maxPoolSize) poolSize = floorPowerOf2BigInt(maxPoolSize)
+    if (poolSize > prevPoolSize) poolSize = prevPoolSize
+    if (poolSize <= 0n) break
+    const subEnd = nextStart + poolSize - 1n
+    if (subEnd > end) break
+    const poolPrefix = prefixFromPoolSizeBigInt(poolSize, version)
+    const addrStr =
+      version === 6 ? formatIPv6(bigIntToHextets(nextStart)) : intToDotted(Number(nextStart & 0xffffffffn))
+    const cidr = `${addrStr}/${poolPrefix}`
+    out.push({ start: nextStart, end: subEnd, prefix: poolPrefix, version, cidr })
+    nextStart = subEnd + 1n
+    remaining -= poolSize
+    prevPoolSize = poolSize
+  }
+  return out
+}
+
+/**
  * Get the parent subnet (one prefix larger) that contains this CIDR. Supports IPv4 and IPv6.
  * @param {string} cidr - e.g. "10.0.0.0/24" or "2001:db8:0:1::/64"
  * @returns {{ cidr: string, netmask?: string, first: string, last: string, usable: number|string, total: number|string } | null}

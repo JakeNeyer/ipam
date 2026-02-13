@@ -194,6 +194,10 @@
     border-radius: var(--radius);
     border: 1px solid var(--border);
   }
+  .docs-viewer :global(.docs-data-model) {
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  }
   .docs-viewer :global(.screenshot-light) {
     display: block;
   }

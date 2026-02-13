@@ -3,10 +3,10 @@
   import { get } from 'svelte/store'
   import Icon from '@iconify/svelte'
   import ErrorModal from '../lib/ErrorModal.svelte'
-  import { cidrRange } from '../lib/cidr.js'
+  import { cidrRange, parseCidrToBigInt } from '../lib/cidr.js'
   import { formatBlockCount, compareBlockCount, utilizationPercent as utilPct, sumCounts } from '../lib/blockCount.js'
   import { user, selectedOrgForGlobalAdmin, isGlobalAdmin } from '../lib/auth.js'
-  import { listEnvironments, listBlocks, listAllocations, listReservedBlocks, exportCSV } from '../lib/api.js'
+  import { listEnvironments, listBlocks, listAllocations, listReservedBlocks, listPools, listPoolsByOrganization, exportCSV } from '../lib/api.js'
 
   const GRAPH_ICON_SIZE = 12
   const GRAPH_ICON_LEFT = 6
@@ -23,6 +23,7 @@
   let blocks = []
   let allocations = []
   let reservedBlocks = []
+  let pools = []
 
   $: totalIPs = sumCounts(blocks.map((b) => b.total_ips))
   $: usedIPs = sumCounts(blocks.map((b) => b.used_ips))
@@ -61,6 +62,42 @@
 
   $: blocksForChart = [...blocks].sort((a, b) => compareBlockCount(b.used_ips, a.used_ips)).slice(0, 12)
 
+  /** Total IP count for a CIDR string (for pool size). Returns string for blockCount compatibility. */
+  function totalIPsForCidr(cidr) {
+    const p = parseCidrToBigInt(cidr)
+    if (!p) return '0'
+    const bits = p.version === 6 ? 128 : 32
+    const total = 1n << BigInt(bits - p.prefix)
+    return total.toString()
+  }
+
+  function getEnvironmentName(envId) {
+    if (envId == null || envId === '') return null
+    const env = environments.find((e) => envIdsMatch(e.id, envId))
+    return env?.name ?? null
+  }
+
+  /** Per-pool: total IPs in pool (from CIDR), IPs used by blocks in pool (sum of block total_ips), and usage % */
+  $: poolUtilization = pools.map((pool) => {
+    const poolTotal = totalIPsForCidr(pool.cidr || '')
+    const poolBlocks = blocks.filter((b) => b.pool_id && String(b.pool_id).toLowerCase() === String(pool.id).toLowerCase())
+    const blockIPs = sumCounts(poolBlocks.map((b) => b.total_ips))
+    const pct = utilPct(poolTotal, blockIPs)
+    const pctDisplay =
+      compareBlockCount(poolTotal, '0') <= 0
+        ? 0
+        : pct < 1 && compareBlockCount(blockIPs, '0') > 0
+          ? '<1'
+          : Math.round(pct)
+    return {
+      pool,
+      poolTotal,
+      blockIPs,
+      pct: typeof pctDisplay === 'string' ? pctDisplay : pct,
+      blockCount: poolBlocks.length,
+    }
+  })
+
   function envIdsMatch(a, b) {
     if (a == null || b == null) return false
     return String(a).toLowerCase() === String(b).toLowerCase()
@@ -76,10 +113,11 @@
     window.dispatchEvent(new HashChangeEvent('hashchange'))
   }
 
-  function goToEnvironmentBlocks(environmentId) {
+  function goToEnvironmentBlocks(environmentId, poolId = null) {
     if (!environmentId) return
     const params = new URLSearchParams()
     params.set('environment', String(environmentId))
+    if (poolId && String(poolId).indexOf('no-pool-') !== 0) params.set('pool', String(poolId))
     navigateToHash('networks?' + params.toString())
   }
 
@@ -116,7 +154,7 @@
   }
   const GRAPH_TEXT_CENTER_X_OFFSET = GRAPH_ICON_LEFT + GRAPH_ICON_SIZE + (GRAPH.nodeWidth - GRAPH_ICON_LEFT - GRAPH_ICON_SIZE) / 2
   const rowPitch = GRAPH.nodeHeight + GRAPH.rowGap
-  let graphHovered = null // { type: 'env'|'block'|'alloc', id: string } | null
+  let graphHovered = null // { type: 'env'|'pool'|'block'|'alloc', id: string } | null
   $: graphData = (() => {
     const envList = [...environments].sort((a, b) => (a.name || '').localeCompare(b.name || ''))
     const hasOrphaned = blocks.some(isOrphanedBlock)
@@ -134,10 +172,29 @@
       list.push(b)
     })
     blocksByEnv.forEach((list) => list.sort((a, b) => (a.name || '').localeCompare(b.name || '')))
-    let blockOrder = []
+
+    const poolOrder = []
     envRows.forEach((env) => {
       const key = env.id === 'orphaned' ? 'orphaned' : String(env.id).toLowerCase()
-      ;(blocksByEnv.get(key) || []).forEach((b) => blockOrder.push({ block: b, envId: env.id }))
+      const envBlocks = blocksByEnv.get(key) || []
+      if (env.id === 'orphaned' || env.id === 'reserved') {
+        poolOrder.push({ pool: { id: `no-pool-${env.id}`, name: '—', environment_id: env.id }, envId: env.id })
+      } else {
+        const envPools = pools.filter((p) => envIdsMatch(p.environment_id, env.id))
+        envPools.forEach((p) => poolOrder.push({ pool: p, envId: env.id }))
+        const hasBlocksWithoutPool = envBlocks.some((b) => !b.pool_id)
+        if (hasBlocksWithoutPool) poolOrder.push({ pool: { id: `no-pool-${env.id}`, name: '— No pool —', environment_id: env.id }, envId: env.id })
+      }
+    })
+
+    let blockOrder = []
+    poolOrder.forEach(({ pool, envId }) => {
+      const key = envId === 'orphaned' ? 'orphaned' : String(envId).toLowerCase()
+      const envBlocks = blocksByEnv.get(key) || []
+      const inThisPool = (pool.id || '').toString().startsWith('no-pool-')
+        ? envBlocks.filter((b) => !b.pool_id)
+        : envBlocks.filter((b) => b.pool_id && String(b.pool_id).toLowerCase() === String(pool.id).toLowerCase())
+      inThisPool.forEach((b) => blockOrder.push({ block: b, poolId: pool.id, envId }))
     })
 
     const allocsByBlock = new Map()
@@ -157,6 +214,7 @@
         name: item.block.name,
         cidr: item.block.cidr || '',
         environmentId: item.envId,
+        poolId: item.poolId,
         y: GRAPH.padding + i * rowPitch,
         isUnused: allocCount === 0,
       }
@@ -184,9 +242,8 @@
     })
     const envKey = (id) => (id === 'orphaned' ? 'orphaned' : String(id).toLowerCase())
     const newBlockOrder = []
-    envRows.forEach((env) => {
-      const key = envKey(env.id)
-      const items = blockOrder.filter((item) => envKey(item.envId) === key)
+    poolOrder.forEach(({ pool, envId }) => {
+      const items = blockOrder.filter((item) => item.poolId === pool.id && envKey(item.envId) === envKey(envId))
       items.sort((a, b) => (blockAllocCenter.get((a.block.name || '').toLowerCase()) ?? 0) - (blockAllocCenter.get((b.block.name || '').toLowerCase()) ?? 0))
       items.forEach((item) => newBlockOrder.push(item))
     })
@@ -199,6 +256,7 @@
         name: item.block.name,
         cidr: item.block.cidr || '',
         environmentId: item.envId,
+        poolId: item.poolId,
         y: GRAPH.padding + i * rowPitch,
         isUnused: allocCount === 0,
       }
@@ -218,11 +276,16 @@
       blockEnvironmentId: item.blockEnvironmentId,
     }))
 
+    const poolRows = poolOrder.map(({ pool, envId }) => {
+      const poolBlocks = blockRows.filter((br) => br.poolId === pool.id && envKey(br.environmentId) === envKey(envId))
+      const y = poolBlocks.length > 0 ? (Math.min(...poolBlocks.map((b) => b.y)) + Math.max(...poolBlocks.map((b) => b.y))) / 2 : GRAPH.padding
+      return { id: pool.id, name: pool.name || pool.id || '—', cidr: pool.cidr || '', environmentId: envId, y }
+    })
     envRows.forEach((env) => {
-      const envBlocks = blockRows.filter((br) => String(br.environmentId).toLowerCase() === String(env.id).toLowerCase())
-      if (envBlocks.length > 0) {
-        const minY = Math.min(...envBlocks.map((b) => b.y))
-        const maxY = Math.max(...envBlocks.map((b) => b.y))
+      const envPools = poolRows.filter((pr) => envKey(pr.environmentId) === envKey(env.id))
+      if (envPools.length > 0) {
+        const minY = Math.min(...envPools.map((p) => p.y))
+        const maxY = Math.max(...envPools.map((p) => p.y))
         env.y = (minY + maxY) / 2
       }
     })
@@ -232,6 +295,14 @@
       .forEach((env, i) => {
         env.y = GRAPH.padding + i * rowPitch
       })
+    poolRows.forEach((pr) => {
+      const poolBlocks = blockRows.filter((br) => br.poolId === pr.id)
+      if (poolBlocks.length > 0) {
+        const minY = Math.min(...poolBlocks.map((b) => b.y))
+        const maxY = Math.max(...poolBlocks.map((b) => b.y))
+        pr.y = (minY + maxY) / 2
+      }
+    })
 
     allocRows.forEach((ar) => {
       const br = blockRows.find((b) => (b.name || '').toLowerCase() === (ar.blockName || '').toLowerCase())
@@ -242,36 +313,46 @@
     const col1X = GRAPH.padding
     const col2X = GRAPH.padding + GRAPH.nodeWidth + GRAPH.colGap
     const col3X = col2X + GRAPH.nodeWidth + GRAPH.colGap
+    const col4X = col3X + GRAPH.nodeWidth + GRAPH.colGap
     envRows.forEach((r) => { r.x = col1X })
-    blockRows.forEach((r) => { r.x = col2X })
-    allocRows.forEach((r) => { r.x = col3X })
+    poolRows.forEach((r) => { r.x = col2X })
+    blockRows.forEach((r) => { r.x = col3X })
+    allocRows.forEach((r) => { r.x = col4X })
 
     const edges = []
-    blockRows.forEach((br) => {
-      const env = envRows.find((e) => e.id === br.environmentId)
+    poolRows.forEach((pr) => {
+      const env = envRows.find((e) => envKey(e.id) === envKey(pr.environmentId))
       if (env) {
         const edgeType = env.id === 'orphaned' ? 'orphaned' : env.id === 'reserved' ? 'reserved' : null
-        edges.push({ from: { x: col1X + GRAPH.nodeWidth, y: env.y + GRAPH.nodeHeight / 2 }, to: { x: col2X, y: br.y + GRAPH.nodeHeight / 2 }, envId: env.id, blockId: br.id, allocId: null, edgeType })
+        edges.push({ from: { x: col1X + GRAPH.nodeWidth, y: env.y + GRAPH.nodeHeight / 2 }, to: { x: col2X, y: pr.y + GRAPH.nodeHeight / 2 }, envId: env.id, poolId: pr.id, blockId: null, allocId: null, edgeType })
+      }
+    })
+    blockRows.forEach((br) => {
+      const pool = poolRows.find((p) => p.id === br.poolId)
+      if (pool) {
+        const edgeType = br.environmentId === 'orphaned' ? 'orphaned' : br.environmentId === 'reserved' ? 'reserved' : null
+        edges.push({ from: { x: col2X + GRAPH.nodeWidth, y: pool.y + GRAPH.nodeHeight / 2 }, to: { x: col3X, y: br.y + GRAPH.nodeHeight / 2 }, envId: null, poolId: pool.id, blockId: br.id, allocId: null, edgeType })
       }
     })
     allocRows.forEach((ar) => {
       const br = blockRows.find((b) => (b.name || '').toLowerCase() === (ar.blockName || '').toLowerCase())
       if (br) {
         const edgeType = br.environmentId === 'orphaned' ? 'orphaned' : br.environmentId === 'reserved' ? 'reserved' : null
-        edges.push({ from: { x: col2X + GRAPH.nodeWidth, y: br.y + GRAPH.nodeHeight / 2 }, to: { x: col3X, y: ar.y + GRAPH.nodeHeight / 2 }, envId: null, blockId: br.id, allocId: ar.id, edgeType })
+        edges.push({ from: { x: col3X + GRAPH.nodeWidth, y: br.y + GRAPH.nodeHeight / 2 }, to: { x: col4X, y: ar.y + GRAPH.nodeHeight / 2 }, envId: null, poolId: null, blockId: br.id, allocId: ar.id, edgeType })
       }
     })
 
-    const width = col3X + GRAPH.nodeWidth + GRAPH.paddingRight
+    const width = col4X + GRAPH.nodeWidth + GRAPH.paddingRight
     const maxY = (rows) => (rows.length ? Math.max(...rows.map((r) => r.y)) + GRAPH.nodeHeight + GRAPH.padding : GRAPH.padding * 2)
-    const height = Math.max(maxY(envRows), maxY(blockRows), maxY(allocRows))
-    return { envRows, blockRows, allocRows, edges, width, height }
+    const height = Math.max(maxY(envRows), maxY(poolRows), maxY(blockRows), maxY(allocRows))
+    return { envRows, poolRows, blockRows, allocRows, edges, width, height }
   })()
 
   function isEdgeHighlighted(edge) {
     if (!graphHovered) return false
     const id = (x) => (x != null ? String(x).toLowerCase() : '')
     if (graphHovered.type === 'env') return id(edge.envId) === id(graphHovered.id)
+    if (graphHovered.type === 'pool') return id(edge.poolId) === id(graphHovered.id)
     if (graphHovered.type === 'block') return id(edge.blockId) === id(graphHovered.id)
     if (graphHovered.type === 'alloc') return id(edge.allocId) === id(graphHovered.id)
     return false
@@ -337,15 +418,23 @@
     const iconKey =
       kind === 'env'
         ? (id === 'reserved' ? 'ban' : 'layers')
-        : kind === 'block'
-          ? (id === 'reserved' ? 'ban' : 'network')
-          : 'dashboard'
+        : kind === 'pool'
+          ? (String(id).startsWith('no-pool-') ? (id === 'no-pool-orphaned' ? 'ban' : 'ban') : 'layers')
+          : kind === 'block'
+            ? (id === 'reserved' ? 'ban' : 'network')
+            : 'dashboard'
     const withLogo = `shape=label;image=${getDrawioIconDataURI(iconKey)};imageWidth=22;imageHeight=22;imageAlign=left;imageVerticalAlign=middle;spacingLeft=34;labelPosition=center;verticalLabelPosition=middle;`
     if (kind === 'env') {
       if (id === 'orphaned') {
         return `${withLogo}rounded=0;whiteSpace=wrap;html=1;fillColor=#cfcfcf;strokeColor=#b7b7b7;fontColor=#ffffff;fontStyle=1;align=left;verticalAlign=middle;shadow=0;spacing=8;spacingTop=8;spacingBottom=8;fontSize=16;`
       }
       return `${withLogo}rounded=0;whiteSpace=wrap;html=1;fillColor=#de8f3a;strokeColor=#de8f3a;fontColor=#ffffff;fontStyle=1;align=left;verticalAlign=middle;shadow=0;spacing=8;spacingTop=8;spacingBottom=8;fontSize=16;`
+    }
+    if (kind === 'pool') {
+      if (String(id).startsWith('no-pool-')) {
+        return `${withLogo}rounded=0;whiteSpace=wrap;html=1;fillColor=#cfcfcf;strokeColor=#b7b7b7;fontColor=#ffffff;fontStyle=1;align=left;verticalAlign=middle;shadow=0;spacing=8;spacingTop=8;spacingBottom=8;fontSize=15;`
+      }
+      return `${withLogo}rounded=0;whiteSpace=wrap;html=1;fillColor=#22c55e;strokeColor=#22c55e;fontColor=#ffffff;fontStyle=1;align=left;verticalAlign=middle;shadow=0;spacing=8;spacingTop=8;spacingBottom=8;fontSize=15;`
     }
     if (kind === 'block') {
       if (id === 'reserved') {
@@ -382,7 +471,8 @@
     const allocGap = 120
     const levelGap = 220
     const envY = yPad
-    const blockY = envY + vertexHeight + levelGap
+    const poolY = envY + vertexHeight + levelGap
+    const blockY = poolY + vertexHeight + levelGap
     const allocY = blockY + vertexHeight + levelGap
     const cells = [
       '<mxCell id="0"/>',
@@ -405,36 +495,55 @@
       list.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
     }
 
+    const envKey = (id) => (id === 'orphaned' ? 'orphaned' : String(id).toLowerCase())
     const envTrees = envRows.map((env) => {
       let envBlocks = []
       if (env.id === 'orphaned') {
-        envBlocks = orphanedBlocks.map((b) => ({ id: String(b.id), name: b.name, cidr: b.cidr, envID: 'orphaned' }))
+        envBlocks = orphanedBlocks.map((b) => ({ id: String(b.id), name: b.name, cidr: b.cidr, envID: 'orphaned', pool_id: null }))
       } else if (env.id === 'reserved') {
         envBlocks = (reservedBlocks || [])
-          .map((r) => ({ id: String(r.id), name: (r.name && String(r.name).trim()) || 'Reserved', cidr: r.cidr || '', envID: 'reserved' }))
+          .map((r) => ({ id: String(r.id), name: (r.name && String(r.name).trim()) || 'Reserved', cidr: r.cidr || '', envID: 'reserved', pool_id: null }))
           .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
       } else {
         envBlocks = blocks
           .filter((b) => envIdsMatch(b.environment_id, env.id))
-          .map((b) => ({ id: String(b.id), name: b.name, cidr: b.cidr, envID: env.id }))
+          .map((b) => ({ id: String(b.id), name: b.name, cidr: b.cidr, envID: env.id, pool_id: b.pool_id }))
           .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
       }
-      const blockTrees = envBlocks.map((b) => {
-        const allocs = env.id === 'reserved'
-          ? []
-          : (allocsByBlockName.get((b.name || '').trim().toLowerCase()) || [])
-              .map((a) => ({ id: String(a.id), name: a.name, cidr: a.cidr, blockID: b.id }))
-        const allocCount = allocs.length
-        const allocSpan = allocCount > 0 ? allocCount * vertexWidth + (allocCount - 1) * allocGap : 0
-        const blockWidth = Math.max(vertexWidth, allocSpan)
-        return { ...b, allocs, blockWidth }
+      const poolList = []
+      if (env.id === 'orphaned' || env.id === 'reserved') {
+        poolList.push({ id: `no-pool-${env.id}`, name: '—', cidr: '', envID: env.id, blocks: envBlocks })
+      } else {
+        const envPools = pools.filter((p) => envIdsMatch(p.environment_id, env.id))
+        envPools.forEach((p) => {
+          const poolBlocks = envBlocks.filter((b) => b.pool_id && String(b.pool_id).toLowerCase() === String(p.id).toLowerCase())
+          poolList.push({ id: String(p.id), name: p.name || p.id, cidr: p.cidr || '', envID: env.id, blocks: poolBlocks })
+        })
+        const noPoolBlocks = envBlocks.filter((b) => !b.pool_id)
+        if (noPoolBlocks.length > 0) {
+          poolList.push({ id: `no-pool-${env.id}`, name: '— No pool —', cidr: '', envID: env.id, blocks: noPoolBlocks })
+        }
+      }
+      const blockTrees = []
+      const blockTreesByPool = poolList.map((pool) => {
+        return pool.blocks.map((b) => {
+          const allocs = env.id === 'reserved'
+            ? []
+            : (allocsByBlockName.get((b.name || '').trim().toLowerCase()) || [])
+                .map((a) => ({ id: String(a.id), name: a.name, cidr: a.cidr, blockID: b.id }))
+          const allocCount = allocs.length
+          const allocSpan = allocCount > 0 ? allocCount * vertexWidth + (allocCount - 1) * allocGap : 0
+          const blockWidth = Math.max(vertexWidth, allocSpan)
+          blockTrees.push({ ...b, allocs, blockWidth })
+          return { ...b, allocs, blockWidth }
+        })
       })
       const totalBlockWidth = blockTrees.reduce((sum, b) => sum + b.blockWidth, 0)
       const spanWidth =
         blockTrees.length > 0
           ? Math.max(vertexWidth, totalBlockWidth + (blockTrees.length - 1) * blockGap)
           : vertexWidth
-      return { ...env, blocks: blockTrees, spanWidth }
+      return { ...env, pools: poolList, blockTreesByPool, blocks: blockTrees, spanWidth }
     })
 
     const totalSpan = envTrees.reduce((sum, e) => sum + e.spanWidth, 0)
@@ -454,37 +563,53 @@
       )
 
       let blockCursorX = cursorX
-      for (let bi = 0; bi < env.blocks.length; bi += 1) {
-        const block = env.blocks[bi]
-        const blockCenterX = blockCursorX + block.blockWidth / 2
-        const blockNodeID = `block-${block.id}`
+      let poolIndex = 0
+      for (const pool of env.pools) {
+        const poolBlocks = env.blockTreesByPool[poolIndex] || []
+        const poolBlockWidth = poolBlocks.reduce((sum, b) => sum + b.blockWidth + blockGap, -blockGap) || 0
+        const poolCenterX = poolBlockWidth > 0 ? blockCursorX + poolBlockWidth / 2 : blockCursorX + vertexWidth / 2
+        const poolNodeID = `pool-${pool.id}`
         cells.push(
-          `<mxCell id="${xmlEscape(blockNodeID)}" value="${xmlEscape(drawioLabel(block.name, block.cidr))}" style="${drawioVertexStyle('block', block.envID)}" vertex="1" parent="1"><mxGeometry x="${Math.round(blockCenterX - vertexWidth / 2)}" y="${blockY}" width="${vertexWidth}" height="${vertexHeight}" as="geometry"/></mxCell>`,
+          `<mxCell id="${xmlEscape(poolNodeID)}" value="${xmlEscape(drawioLabel(pool.name, pool.cidr))}" style="${drawioVertexStyle('pool', pool.id)}" vertex="1" parent="1"><mxGeometry x="${Math.round(poolCenterX - vertexWidth / 2)}" y="${poolY}" width="${vertexWidth}" height="${vertexHeight}" as="geometry"/></mxCell>`,
+        )
+        const envExitX = env.pools.length <= 1 ? 0.5 : (poolIndex + 1) / (env.pools.length + 1)
+        cells.push(
+          `<mxCell id="${xmlEscape(`edge-env-${env.id}-pool-${pool.id}`)}" style="${drawioEdgeStyle(env.id === 'orphaned' ? 'orphaned' : env.id === 'reserved' ? 'reserved' : null, envExitX, 0.5)}" edge="1" parent="1" source="${xmlEscape(envNodeID)}" target="${xmlEscape(poolNodeID)}"><mxGeometry relative="1" as="geometry"/></mxCell>`,
         )
 
-        const envExitX = env.blocks.length <= 1 ? 0.5 : (bi + 1) / (env.blocks.length + 1)
-        cells.push(
-          `<mxCell id="${xmlEscape(`edge-env-${env.id}-${block.id}`)}" style="${drawioEdgeStyle(env.id === 'orphaned' ? 'orphaned' : env.id === 'reserved' ? 'reserved' : null, envExitX, 0.5)}" edge="1" parent="1" source="${xmlEscape(envNodeID)}" target="${xmlEscape(blockNodeID)}"><mxGeometry relative="1" as="geometry"/></mxCell>`,
-        )
+        for (let bi = 0; bi < poolBlocks.length; bi += 1) {
+          const block = poolBlocks[bi]
+          const blockCenterX = blockCursorX + block.blockWidth / 2
+          const blockNodeID = `block-${block.id}`
+          cells.push(
+            `<mxCell id="${xmlEscape(blockNodeID)}" value="${xmlEscape(drawioLabel(block.name, block.cidr))}" style="${drawioVertexStyle('block', block.envID)}" vertex="1" parent="1"><mxGeometry x="${Math.round(blockCenterX - vertexWidth / 2)}" y="${blockY}" width="${vertexWidth}" height="${vertexHeight}" as="geometry"/></mxCell>`,
+          )
+          const poolExitX = poolBlocks.length <= 1 ? 0.5 : (bi + 1) / (poolBlocks.length + 1)
+          cells.push(
+            `<mxCell id="${xmlEscape(`edge-pool-${pool.id}-${block.id}`)}" style="${drawioEdgeStyle(block.envID === 'orphaned' ? 'orphaned' : block.envID === 'reserved' ? 'reserved' : null, poolExitX, 0.5)}" edge="1" parent="1" source="${xmlEscape(poolNodeID)}" target="${xmlEscape(blockNodeID)}"><mxGeometry relative="1" as="geometry"/></mxCell>`,
+          )
 
-        if (block.allocs.length > 0) {
-          let allocCursorX = blockCursorX
-          for (let ai = 0; ai < block.allocs.length; ai += 1) {
-            const alloc = block.allocs[ai]
-            const allocCenterX = allocCursorX + vertexWidth / 2
-            const allocNodeID = `alloc-${alloc.id}`
-            cells.push(
-              `<mxCell id="${xmlEscape(allocNodeID)}" value="${xmlEscape(drawioLabel(alloc.name, alloc.cidr))}" style="${drawioVertexStyle('alloc', block.envID)}" vertex="1" parent="1"><mxGeometry x="${Math.round(allocCenterX - vertexWidth / 2)}" y="${allocY}" width="${vertexWidth}" height="${vertexHeight}" as="geometry"/></mxCell>`,
-            )
-            const blockExitX = block.allocs.length <= 1 ? 0.5 : (ai + 1) / (block.allocs.length + 1)
-            cells.push(
-              `<mxCell id="${xmlEscape(`edge-block-${block.id}-${alloc.id}`)}" style="${drawioEdgeStyle(block.envID === 'orphaned' ? 'orphaned' : block.envID === 'reserved' ? 'reserved' : null, blockExitX, 0.5)}" edge="1" parent="1" source="${xmlEscape(blockNodeID)}" target="${xmlEscape(allocNodeID)}"><mxGeometry relative="1" as="geometry"/></mxCell>`,
-            )
-            allocCursorX += vertexWidth + allocGap
+          if (block.allocs.length > 0) {
+            let allocCursorX = blockCursorX
+            for (let ai = 0; ai < block.allocs.length; ai += 1) {
+              const alloc = block.allocs[ai]
+              const allocCenterX = allocCursorX + vertexWidth / 2
+              const allocNodeID = `alloc-${alloc.id}`
+              cells.push(
+                `<mxCell id="${xmlEscape(allocNodeID)}" value="${xmlEscape(drawioLabel(alloc.name, alloc.cidr))}" style="${drawioVertexStyle('alloc', block.envID)}" vertex="1" parent="1"><mxGeometry x="${Math.round(allocCenterX - vertexWidth / 2)}" y="${allocY}" width="${vertexWidth}" height="${vertexHeight}" as="geometry"/></mxCell>`,
+              )
+              const blockExitX = block.allocs.length <= 1 ? 0.5 : (ai + 1) / (block.allocs.length + 1)
+              cells.push(
+                `<mxCell id="${xmlEscape(`edge-block-${block.id}-${alloc.id}`)}" style="${drawioEdgeStyle(block.envID === 'orphaned' ? 'orphaned' : block.envID === 'reserved' ? 'reserved' : null, blockExitX, 0.5)}" edge="1" parent="1" source="${xmlEscape(blockNodeID)}" target="${xmlEscape(allocNodeID)}"><mxGeometry relative="1" as="geometry"/></mxCell>`,
+              )
+              allocCursorX += vertexWidth + allocGap
+            }
           }
-        }
 
-        blockCursorX += block.blockWidth + blockGap
+          blockCursorX += block.blockWidth + blockGap
+        }
+        if (poolBlocks.length === 0) blockCursorX += vertexWidth + blockGap
+        poolIndex += 1
       }
       cursorX += env.spanWidth + envGap
     }
@@ -538,9 +663,41 @@
         listBlocks(opts),
         listAllocations(opts),
       ])
-      environments = envsRes.environments
-      blocks = blksRes.blocks
-      allocations = allocsRes.allocations
+      environments = envsRes.environments ?? envsRes.Environments ?? []
+      blocks = blksRes.blocks ?? []
+      allocations = allocsRes.allocations ?? []
+      pools = []
+      const nilUuid = '00000000-0000-0000-0000-000000000000'
+      const orgId = isGlobalAdmin(u) ? get(selectedOrgForGlobalAdmin) : (u?.organization_id ?? '')
+      if (orgId && String(orgId).trim() !== '' && String(orgId).toLowerCase() !== nilUuid) {
+        try {
+          const poolsRes = await listPoolsByOrganization(orgId)
+          pools = (poolsRes.pools ?? []).map((p) => ({
+            ...p,
+            environment_id: p.environment_id ?? p.EnvironmentID,
+          }))
+        } catch (_) {
+          // fall back to per-env fetch below
+        }
+      }
+      if (pools.length === 0) {
+        const envIdsToFetch = new Set(
+          environments
+            .map((e) => e.id ?? e.Id)
+            .filter((id) => id != null && String(id).trim() !== '' && String(id).toLowerCase() !== nilUuid)
+        )
+        const envIdsFromBlocks = (blksRes.blocks ?? [])
+          .map((b) => b.environment_id ?? b.EnvironmentID)
+          .filter((id) => id != null && String(id).trim() !== '' && String(id).toLowerCase() !== nilUuid)
+        envIdsFromBlocks.forEach((id) => envIdsToFetch.add(id))
+        if (envIdsToFetch.size > 0) {
+          const poolResults = await Promise.all([...envIdsToFetch].map((envId) => listPools(envId)))
+          poolResults.forEach((res, i) => {
+            const envId = [...envIdsToFetch][i]
+            ;(res.pools ?? []).forEach((p) => pools.push({ ...p, environment_id: envId }))
+          })
+        }
+      }
       if (u?.role === 'admin') {
         try {
           const r = await listReservedBlocks(opts)
@@ -583,6 +740,10 @@
           <span class="stat-value">{allocations.length}</span>
           <span class="stat-label">Allocations</span>
         </a>
+        <a href="#networks" class="stat-card stat-card-link">
+          <span class="stat-value">{pools.length}</span>
+          <span class="stat-label">Pools</span>
+        </a>
         <a href="#networks" class="stat-card stat-card-link" title="Total IPs: {formatBlockCount(totalIPs)}">
           <span class="stat-value">{formatBlockCount(totalIPs)}</span>
           <span class="stat-label">Total IPs</span>
@@ -591,10 +752,12 @@
           <span class="stat-value">{formatBlockCount(usedIPs)}</span>
           <span class="stat-label">Allocated IPs</span>
         </a>
-        <a href="#networks" class="stat-card stat-card-accent stat-card-link">
-          <span class="stat-value">{overallUtilizationDisplay}%</span>
-          <span class="stat-label">Utilization</span>
-        </a>
+        {#if environments.length > 0}
+          <a href="#block-utilization" class="stat-card stat-card-accent stat-card-link" title="Block utilization: used IPs / total IPs across all blocks">
+            <span class="stat-value">{overallUtilizationDisplay}%</span>
+            <span class="stat-label">Block utilization</span>
+          </a>
+        {/if}
         {#if $user?.role === 'admin'}
           <a href="#reserved-blocks" class="stat-card stat-card-link">
             <span class="stat-value">{reservedBlocks.length}</span>
@@ -624,29 +787,87 @@
       </div>
     {/if}
 
-    {#if blocks.length > 0}
-      <section class="chart-section">
+    {#if environments.length > 0}
+      <section id="block-utilization" class="chart-section">
         <h2 class="section-title">Block utilization</h2>
-        <div class="chart">
-          {#each blocksForChart as block}
-            <div class="chart-row">
-              <span class="chart-label" title={block.name}>
-                {block.name.length > 20 ? block.name.slice(0, 17) + '…' : block.name}
-              </span>
-              <div class="chart-bar-wrap">
-                <div
-                  class="chart-bar"
-                  class:high={blockUtilization(block) >= 80}
-                  class:mid={blockUtilization(block) >= 50 && blockUtilization(block) < 80}
-                  style="width: {blockUtilization(block)}%"
-                  role="presentation"
-                ></div>
+        {#if blocks.length > 0}
+          <div class="chart">
+            {#each blocksForChart as block}
+              <div class="chart-row">
+                <span class="chart-label" title={block.name}>
+                  {block.name.length > 20 ? block.name.slice(0, 17) + '…' : block.name}
+                </span>
+                <div class="chart-bar-wrap">
+                  <div
+                    class="chart-bar"
+                    class:high={blockUtilization(block) >= 80}
+                    class:mid={blockUtilization(block) >= 50 && blockUtilization(block) < 80}
+                    style="width: {blockUtilization(block)}%"
+                    role="presentation"
+                  ></div>
+                </div>
+                <span class="chart-pct">
+                  {utilizationLabel(block)}
+                  <span class="chart-pct-detail" title="Used IPs / total IPs">
+                    ({formatBlockCount(block.used_ips)} / {formatBlockCount(block.total_ips)})
+                  </span>
+                </span>
               </div>
-              <span class="chart-pct">{utilizationLabel(block)}</span>
-            </div>
-          {/each}
-        </div>
+            {/each}
+          </div>
+        {:else}
+          <p class="muted">No blocks yet. Block utilization will appear here when you add network blocks from the <a href="#networks">Networks</a> page or <a href="#network-advisor">Network Advisor</a>.</p>
+        {/if}
       </section>
+
+      <section id="pool-utilization" class="chart-section">
+        <h2 class="section-title">Pool utilization</h2>
+        {#if poolUtilization.length > 0}
+          <div class="chart">
+            {#each poolUtilization as item}
+              {@const pctNum = typeof item.pct === 'string' ? (item.pct === '<1' ? 0.5 : 0) : item.pct}
+              <div class="chart-row">
+                <span class="chart-label" title="{item.pool.name || item.pool.id} ({item.pool.cidr})">
+                  <span class="pool-name">{item.pool.name || item.pool.id || '—'}</span>
+                </span>
+                <div class="chart-bar-wrap">
+                  <div
+                    class="chart-bar"
+                    class:high={pctNum >= 80}
+                    class:mid={pctNum >= 50 && pctNum < 80}
+                    style="width: {Math.min(100, pctNum)}%"
+                    role="presentation"
+                  ></div>
+                </div>
+                <span class="chart-pct">
+                  {item.pct}%
+                  <span class="chart-pct-detail" title="Block IPs / pool total">
+                    ({formatBlockCount(item.blockIPs)} / {formatBlockCount(item.poolTotal)})
+                  </span>
+                </span>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <p class="muted">No pools yet. Pool utilization will appear here when you add environments with pools from the <a href="#networks">Networks</a> page or <a href="#network-advisor">Network Advisor</a>.</p>
+        {/if}
+      </section>
+    {:else}
+      <div class="dashboard-empty">
+        <div class="dashboard-empty-card">
+          <div class="dashboard-empty-icon">
+            <Icon icon="lucide:layers" width="2.5rem" height="2.5rem" />
+          </div>
+          <h2 class="dashboard-empty-title">No environments yet</h2>
+          <p class="dashboard-empty-message">
+            Start with the <a href="#network-advisor">Network Advisor</a> to generate a plan and create resources, or create one from the <a href="#environments">Environments</a> page.
+          </p>
+          <div class="dashboard-empty-actions">
+            <a href="#network-advisor" class="btn btn-primary">Network Advisor</a>
+            <a href="#environments" class="btn btn-outline">Environments</a>
+          </div>
+        </div>
+      </div>
     {/if}
 
     {#if environments.length > 0}
@@ -676,10 +897,6 @@
             </tbody>
           </table>
         </div>
-      </section>
-    {:else}
-      <section class="empty-hint">
-        <p>No environments yet. Start with the <a href="#network-advisor">Network Advisor</a> to generate a plan and create resources, or create one from the <a href="#environments">Environments</a> page.</p>
       </section>
     {/if}
 
@@ -750,6 +967,38 @@
                   </div>
                 </foreignObject>
                 <text x={node.x + GRAPH_TEXT_CENTER_X_OFFSET} y={node.y + GRAPH.nodeHeight / 2 + 1} class="graph-label" text-anchor="middle">{node.name}</text>
+              </g>
+            {/each}
+            <!-- pool nodes -->
+            {#each graphData.poolRows as node}
+              <g
+                class="graph-node-wrap"
+                class:graph-node-orphaned-pool={node.environmentId === 'orphaned'}
+                class:graph-node-reserved-pool={node.environmentId === 'reserved'}
+                role="button"
+                tabindex="0"
+                on:mouseenter={() => (graphHovered = { type: 'pool', id: node.id })}
+                on:mouseleave={() => (graphHovered = null)}
+                on:click={() => node.environmentId !== 'orphaned' && node.environmentId !== 'reserved' && goToEnvironmentBlocks(node.environmentId, node.id)}
+                on:keydown={(e) => e.key === 'Enter' && node.environmentId !== 'orphaned' && node.environmentId !== 'reserved' && goToEnvironmentBlocks(node.environmentId, node.id)}
+              >
+                <rect
+                  class="graph-node graph-node-pool"
+                  class:graph-node-orphaned-pool-rect={node.environmentId === 'orphaned'}
+                  class:graph-node-reserved-pool-rect={node.environmentId === 'reserved'}
+                  x={node.x}
+                  y={node.y}
+                  width={GRAPH.nodeWidth}
+                  height={GRAPH.nodeHeight}
+                  rx="4"
+                />
+                <foreignObject x={node.x + GRAPH_ICON_LEFT} y={node.y + (GRAPH.nodeHeight - GRAPH_ICON_SIZE) / 2} width={GRAPH_ICON_SIZE} height={GRAPH_ICON_SIZE}>
+                  <div xmlns="http://www.w3.org/1999/xhtml" class="graph-node-icon" class:graph-node-icon-orphaned-pool={node.environmentId === 'orphaned'} class:graph-node-icon-reserved-pool={node.environmentId === 'reserved'}>
+                    <Icon icon={node.environmentId === 'orphaned' ? 'lucide:alert-triangle' : node.environmentId === 'reserved' ? 'lucide:shield-off' : 'lucide:droplets'} width={GRAPH_ICON_SIZE} height={GRAPH_ICON_SIZE} />
+                  </div>
+                </foreignObject>
+                <text x={node.x + GRAPH_TEXT_CENTER_X_OFFSET} y={node.y + (11 * GRAPH.nodeHeight) / 34} class="graph-label" text-anchor="middle">{node.name}</text>
+                <text x={node.x + GRAPH_TEXT_CENTER_X_OFFSET} y={node.y + (24 * GRAPH.nodeHeight) / 34} class="graph-label graph-label-cidr" text-anchor="middle">{node.cidr || '—'}</text>
               </g>
             {/each}
             <!-- block nodes (name + cidr) -->
@@ -835,7 +1084,7 @@
 <style>
   .dashboard {
     padding: 1.5rem 0 2rem;
-    max-width: 72rem;
+    max-width: 100%;
   }
   .loading {
     color: var(--text-muted);
@@ -1078,7 +1327,8 @@
     cursor: pointer;
   }
   .graph-node-wrap[role='button']:hover .graph-node-block:not(.graph-node-orphaned-block-rect):not(.graph-node-reserved-block-rect):not(.graph-node-unused-block-rect),
-  .graph-node-wrap[role='button']:hover .graph-node-env:not(.graph-node-orphaned):not(.graph-node-reserved) {
+  .graph-node-wrap[role='button']:hover .graph-node-env:not(.graph-node-orphaned):not(.graph-node-reserved),
+  .graph-node-wrap[role='button']:hover .graph-node-pool:not(.graph-node-orphaned-pool-rect):not(.graph-node-reserved-pool-rect) {
     fill: var(--accent-dim);
     stroke: var(--accent);
   }
@@ -1107,6 +1357,32 @@
   .graph-node-wrap[role='button']:hover .graph-node-orphaned-block-rect {
     fill: rgba(210, 153, 34, 0.2);
     stroke: var(--warn);
+  }
+  .graph-node-pool:not(.graph-node-orphaned-pool-rect):not(.graph-node-reserved-pool-rect) {
+    fill: rgba(34, 197, 94, 0.1);
+    stroke: var(--success, #22c55e);
+  }
+  .graph-node-orphaned-pool-rect {
+    fill: rgba(210, 153, 34, 0.08);
+    stroke: var(--warn);
+  }
+  .graph-node-wrap[role='button']:hover .graph-node-orphaned-pool-rect {
+    fill: rgba(210, 153, 34, 0.2);
+    stroke: var(--warn);
+  }
+  .graph-node-reserved-pool-rect {
+    fill: rgba(239, 68, 68, 0.08);
+    stroke: var(--danger);
+  }
+  .graph-node-wrap[role='button']:hover .graph-node-reserved-pool-rect {
+    fill: rgba(239, 68, 68, 0.2);
+    stroke: var(--danger);
+  }
+  .graph-node-icon-orphaned-pool {
+    color: var(--warn);
+  }
+  .graph-node-icon-reserved-pool {
+    color: var(--danger);
   }
   .graph-node-reserved {
     fill: rgba(239, 68, 68, 0.12);
@@ -1245,6 +1521,15 @@
     text-align: right;
     min-width: 2.5rem;
   }
+  .chart-pct-detail {
+    font-size: 0.7rem;
+    font-weight: 400;
+    opacity: 0.85;
+    margin-left: 0.25rem;
+  }
+  .chart-label .pool-name {
+    font-weight: 500;
+  }
   .env-section {
     margin-bottom: 0;
   }
@@ -1303,17 +1588,60 @@
   .btn-link:hover {
     text-decoration: underline;
   }
-  .empty-hint {
-    margin-top: 2rem;
-    padding: 1.5rem 0;
-    color: var(--text-muted);
-    font-size: 0.875rem;
+
+  .dashboard-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 28rem;
+    padding: 2rem 1rem;
   }
-  .empty-hint a {
+  .dashboard-empty-card {
+    text-align: center;
+    max-width: 26rem;
+    padding: 2.5rem 2rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+  }
+  .dashboard-empty-icon {
+    color: var(--text-muted);
+    opacity: 0.7;
+    margin-bottom: 1.25rem;
+  }
+  .dashboard-empty-title {
+    margin: 0 0 0.5rem;
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .dashboard-empty-message {
+    margin: 0 0 1.5rem;
+    font-size: 0.9375rem;
+    line-height: 1.5;
+    color: var(--text-muted);
+  }
+  .dashboard-empty-message a {
     color: var(--accent);
     text-decoration: none;
   }
-  .empty-hint a:hover {
+  .dashboard-empty-message a:hover {
     text-decoration: underline;
+  }
+  .dashboard-empty-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    justify-content: center;
+  }
+  .dashboard-empty-actions .btn-outline {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+  .dashboard-empty-actions .btn-outline:hover {
+    background: var(--bg);
+    border-color: var(--text-muted);
   }
 </style>

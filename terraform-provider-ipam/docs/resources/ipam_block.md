@@ -1,18 +1,23 @@
 # ipam_block
 
-Manages an IPAM network block. A block is a CIDR range assigned to an environment; allocations are subnets within a block.
+Manages an IPAM network block. A block is a CIDR range assigned to an environment (optionally to a **pool**); allocations are subnets within a block. Block CIDR must be contained in the pool's CIDR when `pool_id` is set.
 
 ## Example Usage
 
 ```hcl
 resource "ipam_environment" "example" {
   name = "prod"
+  pools = [
+    { name = "prod-pool", cidr = "10.0.0.0/8" }
+  ]
 }
 
+# Use ipam_environment.example.pool_ids[0] for the first pool, or omit pool_id
 resource "ipam_block" "example" {
   name           = "prod-vpc"
-  cidr           = "10.0.0.0/8"
+  cidr           = "10.0.0.0/16"
   environment_id = ipam_environment.example.id
+  pool_id        = ipam_environment.example.pool_ids[0] # optional; block CIDR must be contained in pool
 }
 
 output "block_id" {
@@ -34,6 +39,7 @@ output "total_ips" {
 ### Optional
 
 - `environment_id` (String) Environment UUID. Omit for orphaned blocks.
+- `pool_id` (String) Pool UUID. When set, block CIDR must be contained in the pool's CIDR.
 - `id` (String) Block UUID. Set by the provider; use for import.
 
 ### Read-Only

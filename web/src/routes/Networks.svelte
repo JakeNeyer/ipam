@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   import { createEventDispatcher } from 'svelte'
   import { onMount } from 'svelte'
   import { tick } from 'svelte'
@@ -10,22 +10,29 @@
   import { cidrRange, parseCidrToInt } from '../lib/cidr.js'
   import { formatBlockCount, compareBlockCount, utilizationPercent as utilPct } from '../lib/blockCount.js'
   import { user, selectedOrgForGlobalAdmin, isGlobalAdmin } from '../lib/auth.js'
-  import { listEnvironments, listBlocks, listAllocations, createBlock, createAllocation, updateBlock, updateAllocation, deleteBlock, deleteAllocation } from '../lib/api.js'
+  import { listEnvironments, listPools, listPoolsByOrganization, listBlocks, listAllocations, createPool, createBlock, createAllocation, getPool, updatePool, updateBlock, updateAllocation, deletePool, deleteBlock, deleteAllocation } from '../lib/api.js'
+  import { get } from 'svelte/store'
 
   export let environmentId = null
   export let orphanedOnly = false
   export let unusedOnly = false
   export let blockNameFilter = null
   export let allocationFilter = null
+  export let poolIdFilter = null
   export let openCreateBlockFromQuery = false
   export let openCreateAllocationFromQuery = false
   const dispatch = createEventDispatcher()
+
+  const POOL_FILTER_NONE = '__none__' // value for "No pool" (blocks without pool_id)
+  const POOL_FILTER_ENV_PREFIX = 'env:' // value prefix for "Environment: X" (filter blocks by environment)
 
   let loading = true
   let error = ''
   let blocks = []
   let allocations = []
   let environments = []
+  let allPools = [] // all pools across environments (for Pools table and getPoolName)
+  let pools = [] // pools for current env when env filter is set (for Create pool form and pool filter)
   let envFilterName = null
 
   let openedCreateBlockFromQuery = false
@@ -48,13 +55,15 @@
   let showCreateBlock = false
   let blockName = ''
   let blockCidr = ''
-  let blockEnvironmentId = ''
+  let blockPoolId = ''
   let blockSubmitting = false
   let blockError = ''
 
   let editingBlockId = null
   let editBlockName = ''
   let editBlockEnvironmentId = ''
+  let editBlockPoolId = ''
+  let editBlockPools = [] // pools for the block's environment (loaded when editing)
   let editBlockSubmitting = false
   let editBlockError = ''
 
@@ -70,6 +79,22 @@
   let editAllocName = ''
   let editAllocSubmitting = false
   let editAllocError = ''
+
+  let showCreatePool = false
+  let poolName = ''
+  let poolCidr = ''
+  let createPoolEnvId = ''
+  let poolSubmitting = false
+  let poolError = ''
+  let editingPoolId = null
+  let editPoolName = ''
+  let editPoolCidr = ''
+  let editPoolSubmitting = false
+  let editPoolError = ''
+  let deletePoolId = null
+  let deletePoolName = ''
+  let deletePoolSubmitting = false
+  let deletePoolError = ''
 
   let deleteBlockId = null
   let deleteBlockName = ''
@@ -97,10 +122,12 @@
 
   let openBlockMenuId = null
   let openAllocMenuId = null
+  let openPoolMenuId = null
   let blockMenuTriggerEl = null
   let blockDropdownStyle = { left: 0, top: 0 }
   let allocMenuTriggerEl = null
   let allocDropdownStyle = { left: 0, top: 0 }
+  let poolDropdownStyle = { left: 0, top: 0 }
 
   function allocationCountForBlock(blockName) {
     if (!blockName) return 0
@@ -114,47 +141,67 @@
     return o
   }
 
+  const nilUuid = '00000000-0000-0000-0000-000000000000'
   async function load() {
     loading = true
     error = ''
     try {
+      const u = get(user)
+      const orgId = isGlobalAdmin(u) ? get(selectedOrgForGlobalAdmin) : (u?.organization_id ?? '')
+      const envsRes = await listEnvironments(listOpts())
+      environments = envsRes.environments || []
+      const poolPromises = environments.map((e) => listPools(e.id))
       const isUnused = effectiveFilter === 'unused'
       const blockLimit = isUnused ? 500 : blockPageSize
       const blockOffset = isUnused ? 0 : blockPage * blockPageSize
+      const isPoolFilterEnv = poolIdFilter != null && String(poolIdFilter).startsWith(POOL_FILTER_ENV_PREFIX)
+      const poolIdForApi = poolIdFilter != null && poolIdFilter !== '' && poolIdFilter !== POOL_FILTER_NONE && !isPoolFilterEnv ? String(poolIdFilter).trim() : null
       const blockOpts = listOpts({ limit: blockLimit, offset: blockOffset })
       if (blockNameFilter && String(blockNameFilter).trim() !== '') blockOpts.name = String(blockNameFilter).trim()
       if (effectiveFilter === 'orphaned') blockOpts.orphaned_only = true
-      else if (effectiveFilter !== 'all' && !isUnused) blockOpts.environment_id = effectiveFilter
+      else if (envIdForApi) blockOpts.environment_id = envIdForApi
+      if (poolIdForApi) blockOpts.pool_id = poolIdForApi
       const blockFilterOpts = listOpts({ limit: 500, offset: 0 })
       if (effectiveFilter === 'orphaned') blockFilterOpts.orphaned_only = true
-      else if (effectiveFilter !== 'all' && !isUnused) blockFilterOpts.environment_id = effectiveFilter
+      else if (envIdForApi) blockFilterOpts.environment_id = envIdForApi
+      if (poolIdForApi) blockFilterOpts.pool_id = poolIdForApi
       const allocOpts = listOpts({ limit: allocPageSize, offset: allocPage * allocPageSize })
       if (blockNameFilter && String(blockNameFilter).trim() !== '') allocOpts.block_name = String(blockNameFilter).trim()
       if (allocationFilter && String(allocationFilter).trim() !== '') allocOpts.name = String(allocationFilter).trim()
-      if (effectiveFilter !== 'all' && effectiveFilter !== 'orphaned' && effectiveFilter !== 'unused') allocOpts.environment_id = effectiveFilter
+      if (envIdForApi) allocOpts.environment_id = envIdForApi
       const allocOptionsOpts = listOpts({ limit: 500, offset: 0 })
       if (blockNameFilter && String(blockNameFilter).trim() !== '') allocOptionsOpts.block_name = String(blockNameFilter).trim()
-      if (effectiveFilter !== 'all' && effectiveFilter !== 'orphaned' && effectiveFilter !== 'unused') allocOptionsOpts.environment_id = effectiveFilter
+      if (envIdForApi) allocOptionsOpts.environment_id = envIdForApi
       const promises = [
-        listEnvironments(listOpts()),
         listBlocks(blockOpts),
         listAllocations(allocOpts),
         listBlocks(blockFilterOpts),
         listAllocations(allocOptionsOpts),
+        ...poolPromises,
       ]
       if (allocationFilter && String(allocationFilter).trim() !== '') {
         const allocByNameOpts = listOpts({ limit: 500, name: String(allocationFilter).trim() })
-        if (effectiveFilter !== 'all' && effectiveFilter !== 'orphaned') allocByNameOpts.environment_id = effectiveFilter
+        if (envIdForApi) allocByNameOpts.environment_id = envIdForApi
         promises.push(listAllocations(allocByNameOpts))
       }
+      const hasOrgPoolsFetch = !!(orgId && String(orgId).trim() !== '' && String(orgId).toLowerCase() !== nilUuid)
+      if (hasOrgPoolsFetch) promises.push(listPoolsByOrganization(orgId))
       const results = await Promise.all(promises)
-      const envsRes = results[0]
-      const blksRes = results[1]
-      const allocsRes = results[2]
-      const blockNamesRes = results[3]
-      const allocOptionsRes = results[4]
-      const allocBlockNamesRes = results.length > 5 ? results[5] : null
-      environments = envsRes.environments
+      let idx = 0
+      const blksRes = results[idx++]
+      const allocsRes = results[idx++]
+      const blockNamesRes = results[idx++]
+      const allocOptionsRes = results[idx++]
+      const poolResults = poolPromises.length ? results.slice(idx, idx + poolPromises.length) : []
+      idx += poolPromises.length
+      const allocBlockNamesRes = allocationFilter && String(allocationFilter).trim() !== '' ? results[idx++] : null
+      const orgPoolsResult = hasOrgPoolsFetch ? results[idx++] : null
+      const perEnvPools = poolResults.flatMap((r) => (r.pools || []).map((p) => ({ ...p, environment_id: p.environment_id ?? p.EnvironmentID })))
+      const orgPools = orgPoolsResult && (orgPoolsResult.pools ?? []).length > 0
+        ? (orgPoolsResult.pools ?? []).map((p) => ({ ...p, environment_id: p.environment_id ?? p.EnvironmentID }))
+        : []
+      allPools = orgPools.length > 0 ? orgPools : perEnvPools
+      pools = envIdForApi ? allPools.filter((p) => envIdsMatch(p.environment_id, envIdForApi)) : []
       if (isUnused) {
         const blockNamesWithAllocations = new Set(
           (allocOptionsRes.allocations || []).map((a) => (a.block_name || '').trim().toLowerCase())
@@ -184,7 +231,7 @@
         allocationBlockNamesFromFilter = null
       }
       envFilterName = environmentId
-        ? (envsRes.environments.find((e) => e.id === environmentId)?.name ?? null)
+        ? (environments.find((e) => e.id === environmentId)?.name ?? null)
         : null
     } catch (e) {
       error = e.message || 'Failed to load networks'
@@ -203,13 +250,14 @@
   $: allocEnd = Math.min(allocPage * allocPageSize + allocPageSize, allocTotal)
   $: allocTotalPages = allocPageSize > 0 ? Math.ceil(allocTotal / allocPageSize) : 0
 
-  $: effectiveFilter, blockNameFilter, allocationFilter, $selectedOrgForGlobalAdmin, (blockPage = 0, allocPage = 0, load())
+  $: effectiveFilter, blockNameFilter, allocationFilter, poolIdFilter, $selectedOrgForGlobalAdmin, (blockPage = 0, allocPage = 0, load())
 
   onMount(() => {
     function handleClickOutside(e) {
       if (!e.target.closest('.actions-menu-wrap')) {
         openBlockMenuId = null
         openAllocMenuId = null
+        openPoolMenuId = null
       }
     }
     document.addEventListener('click', handleClickOutside)
@@ -233,9 +281,60 @@
     return env?.name ?? null
   }
 
+  function getPoolName(poolId) {
+    if (poolId == null || poolId === '') return null
+    const pool = allPools.find((p) => envIdsMatch(p.id, poolId))
+    return pool?.name ?? null
+  }
+
+  $: envIdForApi =
+    effectiveFilter && effectiveFilter !== 'all' && effectiveFilter !== 'orphaned' && effectiveFilter !== 'unused'
+      ? effectiveFilter
+      : poolIdFilter != null && String(poolIdFilter).startsWith(POOL_FILTER_ENV_PREFIX)
+        ? String(poolIdFilter).slice(POOL_FILTER_ENV_PREFIX.length)
+        : null
+  $: effectiveFilterIsEnv = !!envIdForApi
+
+  /** Pool filter options: Environment entries (filter by env), then all pools with env name.
+   *  Inlined into reactive statement so Svelte tracks allPools / environments as dependencies. */
+  $: poolFilterOptions = [
+    { value: '', label: 'All' },
+    { value: POOL_FILTER_NONE, label: 'No pool' },
+    ...allPools.map((p) => ({
+      value: String(p.id),
+      label: `${p.name || p.id || '—'} (${getEnvironmentName(p.environment_id) ?? '—'})`,
+    })),
+  ]
+  $: createBlockPoolOptions = allPools.map((p) => ({
+    value: String(p.id),
+    label: `${p.name || p.id || '—'} (${getEnvironmentName(p.environment_id) ?? '—'})`,
+  }))
+  /** Pool IDs referenced by displayed blocks — used to narrow the Pools table when a block or allocation filter is active. */
+  $: poolIdsFromDisplayedBlocks = new Set(
+    displayedBlocks
+      .map((b) => b.pool_id ? String(b.pool_id).toLowerCase() : null)
+      .filter(Boolean)
+  )
+
+  /** Pools to show in the table: when orphaned, none; when unused, show pools for the unused blocks; when a specific pool is selected, show only that pool; when block/allocation filter narrows blocks, show only their pools; when env selected, show that env's pools; otherwise show all. */
+  $: displayedPools =
+    effectiveFilter === 'orphaned'
+      ? []
+      : effectiveFilter === 'unused'
+        ? allPools.filter((p) => poolIdsFromDisplayedBlocks.has(String(p.id).toLowerCase()))
+      : poolIdFilter === POOL_FILTER_NONE
+        ? []
+      : poolIdFilter != null && poolIdFilter !== '' && !String(poolIdFilter).startsWith(POOL_FILTER_ENV_PREFIX)
+        ? allPools.filter((p) => envIdsMatch(p.id, poolIdFilter))
+        : (blockNameFilter != null && String(blockNameFilter).trim() !== '') || (allocationFilter != null && String(allocationFilter).trim() !== '')
+          ? allPools.filter((p) => poolIdsFromDisplayedBlocks.has(String(p.id).toLowerCase()))
+          : envIdForApi
+            ? allPools.filter((p) => envIdsMatch(p.environment_id, envIdForApi))
+            : allPools
+
   $: effectiveFilter = unusedOnly ? 'unused' : orphanedOnly ? 'orphaned' : (environmentId ?? blockFilter)
 
-  let blockSortBy = 'name' // 'name' | 'environment' | 'cidr' | 'total_ips' | 'used_ips' | 'available_ips' | 'usage'
+  let blockSortBy = 'name' // 'name' | 'pool' | 'cidr' | 'total_ips' | 'used_ips' | 'available_ips' | 'usage'
   let blockSortDir = 'asc' // 'asc' | 'desc'
 
   function setBlockSort(column) {
@@ -254,21 +353,32 @@
     if (blockNameFilter != null && String(blockNameFilter).trim() !== '') {
       return blocks.filter((b) => String(b.name || '').trim().toLowerCase() === String(blockNameFilter).trim().toLowerCase())
     }
+    if (poolIdFilter != null && poolIdFilter !== '') {
+      if (poolIdFilter === POOL_FILTER_NONE) {
+        return blocks.filter((b) => !b.pool_id || String(b.pool_id).trim() === '')
+      }
+      if (String(poolIdFilter).startsWith(POOL_FILTER_ENV_PREFIX)) {
+        const envId = String(poolIdFilter).slice(POOL_FILTER_ENV_PREFIX.length)
+        return blocks.filter((b) => b.environment_id && envIdsMatch(b.environment_id, envId))
+      }
+      return blocks.filter((b) => b.pool_id && String(b.pool_id).toLowerCase() === String(poolIdFilter).toLowerCase())
+    }
     return blocks
   })()
 
   $: sortedBlocks = (() => {
     const list = [...displayedBlocks]
     const mult = blockSortDir === 'asc' ? 1 : -1
-    if (blockSortBy === 'name') {
+    const sortBy = blockSortBy === 'environment' ? 'name' : blockSortBy
+    if (sortBy === 'name') {
       list.sort((a, b) => mult * (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }))
-    } else if (blockSortBy === 'environment') {
+    } else if (sortBy === 'pool') {
       list.sort((a, b) => {
-        const na = getEnvironmentName(a.environment_id) ?? (isOrphanedBlock(a) ? 'Orphaned' : '')
-        const nb = getEnvironmentName(b.environment_id) ?? (isOrphanedBlock(b) ? 'Orphaned' : '')
+        const na = getPoolName(a.pool_id) ?? ''
+        const nb = getPoolName(b.pool_id) ?? ''
         return mult * na.localeCompare(nb, undefined, { sensitivity: 'base' })
       })
-    } else if (blockSortBy === 'cidr') {
+    } else if (sortBy === 'cidr') {
       list.sort((a, b) => {
         const pa = parseCidrToInt(a.cidr)
         const pb = parseCidrToInt(b.cidr)
@@ -277,29 +387,40 @@
         if (!pb) return -1
         return mult * (pa.baseInt - pb.baseInt)
       })
-    } else if (blockSortBy === 'total_ips') {
+    } else if (sortBy === 'total_ips') {
       list.sort((a, b) => mult * compareBlockCount(a.total_ips, b.total_ips))
-    } else if (blockSortBy === 'used_ips') {
+    } else if (sortBy === 'used_ips') {
       list.sort((a, b) => mult * compareBlockCount(a.used_ips, b.used_ips))
-    } else if (blockSortBy === 'available_ips') {
+    } else if (sortBy === 'available_ips') {
       list.sort((a, b) => mult * compareBlockCount(a.available_ips, b.available_ips))
-    } else if (blockSortBy === 'usage') {
+    } else if (sortBy === 'usage') {
       list.sort((a, b) => mult * (utilizationPercent(a) - utilizationPercent(b)))
     }
     return list
   })()
 
   $: envBlockNames =
-    effectiveFilter && effectiveFilter !== 'all' && blocks.length > 0
-      ? new Set(blocks.map((b) => (b.name || '').trim().toLowerCase()))
+    (effectiveFilter && effectiveFilter !== 'all' && effectiveFilter !== 'orphaned' && effectiveFilter !== 'unused') || envIdForApi
+      ? blocks.length > 0
+        ? new Set(blocks.map((b) => (b.name || '').trim().toLowerCase()))
+        : null
+      : null
+
+  $: blockNamesForAllocFilter =
+    (effectiveFilter && effectiveFilter !== 'all' && effectiveFilter !== 'orphaned' && effectiveFilter !== 'unused') || envIdForApi || (poolIdFilter != null && poolIdFilter !== '')
+      ? new Set(displayedBlocks.map((b) => (b.name || '').trim().toLowerCase()))
       : null
 
   $: displayedAllocations = (() => {
+    if (effectiveFilter === 'unused') return []
     if (allocationFilter && String(allocationFilter).trim() !== '') {
       return allocations.filter((a) => (a.name || '').trim() === (allocationFilter || '').trim())
     }
-    if (envBlockNames) {
-      return allocations.filter((a) => envBlockNames.has((a.block_name || '').trim().toLowerCase()))
+    if (blockNamesForAllocFilter && blockNamesForAllocFilter.size > 0) {
+      return allocations.filter((a) => blockNamesForAllocFilter.has((a.block_name || '').trim().toLowerCase()))
+    }
+    if (blockNamesForAllocFilter && blockNamesForAllocFilter.size === 0) {
+      return []
     }
     return allocations
   })()
@@ -372,20 +493,23 @@
       errorModalMessage = blockError
       return
     }
-    const envId = blockEnvironmentId && blockEnvironmentId !== '' ? blockEnvironmentId : null
+    const envId = blockPoolId
+      ? (allPools.find((p) => String(p.id) === blockPoolId)?.environment_id ?? null)
+      : null
     if (!envId && isGlobalAdmin($user) && (!$selectedOrgForGlobalAdmin || $selectedOrgForGlobalAdmin === '')) {
       blockError = 'Select an organization for orphan blocks (blocks without an environment)'
       errorModalMessage = blockError
       return
     }
     const orgId = !envId && isGlobalAdmin($user) && $selectedOrgForGlobalAdmin ? $selectedOrgForGlobalAdmin : null
+    const poolId = blockPoolId && blockPoolId.trim() !== '' ? blockPoolId.trim() : null
     blockSubmitting = true
     blockError = ''
     try {
-      await createBlock(name, cidr, envId, orgId)
+      await createBlock(name, cidr, envId, orgId, poolId)
       blockName = ''
       blockCidr = ''
-      blockEnvironmentId = ''
+      blockPoolId = ''
       showCreateBlock = false
       await load()
     } catch (e) {
@@ -401,20 +525,33 @@
     blockError = ''
     blockName = ''
     blockCidr = ''
-    blockEnvironmentId = environmentId || ''
+    blockPoolId = ''
   }
 
-  function startEditBlock(block) {
+  async function startEditBlock(block) {
     editingBlockId = block.id
     editBlockName = block.name
     editBlockEnvironmentId = isOrphanedBlock(block) ? '' : (block.environment_id ?? '')
+    editBlockPoolId = block.pool_id ? String(block.pool_id) : ''
     editBlockError = ''
+    editBlockPools = []
+    const envId = isOrphanedBlock(block) ? null : (block.environment_id ?? null)
+    if (envId) {
+      try {
+        const res = await listPools(envId)
+        editBlockPools = res.pools || []
+      } catch (_) {
+        editBlockPools = []
+      }
+    }
   }
 
   function cancelEditBlock() {
     editingBlockId = null
     editBlockName = ''
     editBlockEnvironmentId = ''
+    editBlockPoolId = ''
+    editBlockPools = []
     editBlockError = ''
   }
 
@@ -435,16 +572,19 @@
     if (block) {
       const origName = (block.name || '').trim()
       const origEnvId = isOrphanedBlock(block) ? '' : String(block.environment_id ?? '')
-      if (origName === name && origEnvId === newEnvId) {
+      const origPoolId = block.pool_id ? String(block.pool_id) : ''
+      const newPoolId = editBlockPoolId && editBlockPoolId.trim() !== '' ? editBlockPoolId.trim() : null
+      if (origName === name && origEnvId === newEnvId && origPoolId === (newPoolId || '')) {
         cancelEditBlock()
         return
       }
     }
     const orgId = newEnvId === '' && isGlobalAdmin($user) && $selectedOrgForGlobalAdmin ? $selectedOrgForGlobalAdmin : null
+    const poolId = editBlockPoolId && editBlockPoolId.trim() !== '' ? editBlockPoolId.trim() : null
     editBlockSubmitting = true
     editBlockError = ''
     try {
-      await updateBlock(editingBlockId, name, editBlockEnvironmentId || '', orgId)
+      await updateBlock(editingBlockId, name, editBlockEnvironmentId || '', orgId, poolId)
       cancelEditBlock()
       await load()
     } catch (e) {
@@ -452,6 +592,102 @@
       errorModalMessage = editBlockError
     } finally {
       editBlockSubmitting = false
+    }
+  }
+
+  async function handleCreatePool() {
+    const name = poolName.trim()
+    const cidr = poolCidr.trim()
+    const envId = createPoolEnvId?.trim() || ''
+    if (!envId) {
+      poolError = 'Environment is required'
+      errorModalMessage = poolError
+      return
+    }
+    if (!name || !cidr) {
+      poolError = 'Name and CIDR are required'
+      errorModalMessage = poolError
+      return
+    }
+    poolSubmitting = true
+    poolError = ''
+    try {
+      await createPool(envId, name, cidr)
+      poolName = ''
+      poolCidr = ''
+      showCreatePool = false
+      await load()
+    } catch (e) {
+      poolError = e.message || 'Failed to create pool'
+      errorModalMessage = poolError
+    } finally {
+      poolSubmitting = false
+    }
+  }
+
+  function startEditPool(pool) {
+    editingPoolId = pool.id
+    editPoolName = pool.name
+    editPoolCidr = pool.cidr
+    editPoolError = ''
+  }
+
+  function cancelEditPool() {
+    editingPoolId = null
+    editPoolName = ''
+    editPoolCidr = ''
+    editPoolError = ''
+  }
+
+  async function handleUpdatePool() {
+    const name = editPoolName.trim()
+    const cidr = editPoolCidr.trim()
+    if (!name || !cidr) {
+      editPoolError = 'Name and CIDR are required'
+      errorModalMessage = editPoolError
+      return
+    }
+    if (!editingPoolId) return
+    editPoolSubmitting = true
+    editPoolError = ''
+    try {
+      await updatePool(editingPoolId, name, cidr)
+      cancelEditPool()
+      await load()
+    } catch (e) {
+      editPoolError = e.message || 'Failed to update pool'
+      errorModalMessage = editPoolError
+    } finally {
+      editPoolSubmitting = false
+    }
+  }
+
+  function openDeletePoolConfirm(pool) {
+    deletePoolId = pool.id
+    deletePoolName = pool.name
+    deletePoolError = ''
+    deletePoolSubmitting = false
+  }
+
+  function closeDeletePoolConfirm() {
+    deletePoolId = null
+    deletePoolName = ''
+    deletePoolError = ''
+  }
+
+  async function handleDeletePool() {
+    if (!deletePoolId) return
+    deletePoolSubmitting = true
+    deletePoolError = ''
+    try {
+      await deletePool(deletePoolId)
+      closeDeletePoolConfirm()
+      await load()
+    } catch (e) {
+      deletePoolError = e.message || 'Failed to delete pool'
+      errorModalMessage = deletePoolError
+    } finally {
+      deletePoolSubmitting = false
     }
   }
 
@@ -468,7 +704,7 @@
     blockFilter = 'all'
     blockPage = 0
     allocPage = 0
-    dispatch('clearEnv')
+    dispatch('clearAllFilters')
     await tick()
     load()
   }
@@ -477,7 +713,7 @@
     if (value === 'all') {
       blockFilter = 'all'
       dispatch('clearEnv')
-      window.location.hash = 'networks'
+      // URL updated by parent (preserves pool for pool-only filter)
     } else if (value === 'orphaned') {
       blockFilter = 'orphaned'
       dispatch('clearEnv')
@@ -629,17 +865,25 @@
   </header>
 
   <div class="filter-bar">
-    <div class="filter-label" role="group" aria-label="Environment">
-      <span>Environment</span>
+    <div class="filter-label" role="group" aria-label="Filter">
+      <span>Filter</span>
       <SearchableSelect
         options={[
           { value: 'all', label: 'All' },
           { value: 'orphaned', label: 'Orphaned only' },
           { value: 'unused', label: 'Unused only' },
-          ...environments.map((e) => ({ value: String(e.id), label: e.name })),
         ]}
         value={String(effectiveFilter)}
         on:change={(e) => setFilter(e.detail)}
+        placeholder="All"
+      />
+    </div>
+    <div class="filter-label" role="group" aria-label="Pool">
+      <span>Pool</span>
+      <SearchableSelect
+        options={poolFilterOptions}
+        value={poolIdFilter != null && poolIdFilter !== '' ? String(poolIdFilter) : ''}
+        on:change={(e) => dispatch('setPoolFilter', { pool: e.detail === '' ? null : e.detail })}
         placeholder="All"
       />
     </div>
@@ -661,7 +905,7 @@
         placeholder="All"
       />
     </div>
-    {#if effectiveFilter !== 'all' || blockNameFilter || (allocationFilter && String(allocationFilter).trim() !== '')}
+    {#if effectiveFilter !== 'all' || blockNameFilter || (allocationFilter && String(allocationFilter).trim() !== '') || (poolIdFilter != null && poolIdFilter !== '')}
       <button type="button" class="btn btn-small" on:click={clearAllFilters}>Show all</button>
     {/if}
   </div>
@@ -669,6 +913,133 @@
   {#if loading}
     <div class="loading">Loading…</div>
   {:else}
+    <section class="section">
+      <div class="section-header">
+        <h2>Pools</h2>
+        <button class="btn btn-primary" on:click={() => { showCreatePool = true; poolError = ''; poolName = ''; poolCidr = ''; createPoolEnvId = envIdForApi || '' }}>Create pool</button>
+      </div>
+      {#if showCreatePool}
+        <div class="form-card">
+          <h3>New pool</h3>
+          <form on:submit|preventDefault={handleCreatePool}>
+            <div class="form-row">
+              <label for="create-pool-env">
+                <span>Environment</span>
+                <SearchableSelect
+                  options={environments.map((e) => ({ value: String(e.id), label: e.name }))}
+                  bind:value={createPoolEnvId}
+                  placeholder="Select environment"
+                />
+              </label>
+              <label for="create-pool-name">
+                <span>Name</span>
+                <input id="create-pool-name" type="text" bind:value={poolName} placeholder="e.g. prod-pool" disabled={poolSubmitting} />
+              </label>
+              <label for="create-pool-cidr">
+                <span>CIDR</span>
+                <input id="create-pool-cidr" type="text" bind:value={poolCidr} placeholder="e.g. 10.0.0.0/8" disabled={poolSubmitting} />
+              </label>
+            </div>
+            <div class="form-actions">
+              <button type="button" class="btn" on:click={() => (showCreatePool = false)} disabled={poolSubmitting}>Cancel</button>
+              <button type="submit" class="btn btn-primary" disabled={poolSubmitting}>
+                {poolSubmitting ? 'Creating…' : 'Create'}
+              </button>
+            </div>
+          </form>
+          {#if poolError}
+            <p class="form-error" role="alert">{poolError}</p>
+          {/if}
+        </div>
+      {/if}
+      {#if displayedPools.length > 0}
+        <DataTable>
+          <svelte:fragment slot="header">
+            <tr>
+              <th>Environment</th>
+              <th>Name</th>
+              <th>CIDR</th>
+              <th class="actions">Actions</th>
+            </tr>
+          </svelte:fragment>
+          <svelte:fragment slot="body">
+            {#each displayedPools as pool}
+              <tr>
+                {#if editingPoolId === pool.id}
+                  <td colspan="3" class="edit-cell">
+                    <form class="inline-edit" on:submit|preventDefault={handleUpdatePool}>
+                      <input type="text" bind:value={editPoolName} placeholder="Name" disabled={editPoolSubmitting} />
+                      <input type="text" bind:value={editPoolCidr} placeholder="CIDR" disabled={editPoolSubmitting} />
+                      <div class="inline-actions">
+                        <button type="button" class="btn btn-small" on:click={cancelEditPool} disabled={editPoolSubmitting}>Cancel</button>
+                        <button type="submit" class="btn btn-primary btn-small" disabled={editPoolSubmitting}>
+                          {editPoolSubmitting ? 'Saving…' : 'Save'}
+                        </button>
+                      </div>
+                    </form>
+                    {#if editPoolError}
+                      <span class="form-error" role="alert">{editPoolError}</span>
+                    {/if}
+                  </td>
+                  <td class="actions"></td>
+                {:else}
+                  <td class="environment"><span class="tag tag-env">{getEnvironmentName(pool.environment_id) ?? '—'}</span></td>
+                  <td class="name">{pool.name}</td>
+                  <td class="cidr"><code>{pool.cidr}</code></td>
+                  <td class="actions">
+                    <div class="actions-menu-wrap" role="group">
+                      <button type="button" class="menu-trigger" aria-haspopup="true" aria-expanded={openPoolMenuId === pool.id} on:click|stopPropagation={(e) => {
+                        if (openPoolMenuId === pool.id) {
+                          openPoolMenuId = null
+                        } else {
+                          const r = e.currentTarget.getBoundingClientRect()
+                          poolDropdownStyle = { left: r.right, top: r.bottom + 2 }
+                          openPoolMenuId = pool.id
+                        }
+                      }} title="Actions"><Icon icon="lucide:ellipsis-vertical" width="1.25em" height="1.25em" /></button>
+                      {#if openPoolMenuId === pool.id}
+                        <div class="menu-dropdown menu-dropdown-fixed" role="menu" style="position:fixed;left:{poolDropdownStyle.left}px;top:{poolDropdownStyle.top}px;transform:translateX(-100%);z-index:1000">
+                          <button type="button" role="menuitem" on:click|stopPropagation={() => { startEditPool(pool); openPoolMenuId = null }}>Edit</button>
+                          {#if effectiveFilterIsEnv}
+                            <button type="button" role="menuitem" on:click|stopPropagation={() => { showCreatePool = true; poolError = ''; poolName = ''; poolCidr = ''; openPoolMenuId = null }}>Add pool</button>
+                          {/if}
+                          <button type="button" role="menuitem" class="menu-item-danger" on:click|stopPropagation={() => { openDeletePoolConfirm(pool); openPoolMenuId = null }}>Delete</button>
+                        </div>
+                      {/if}
+                    </div>
+                  </td>
+                {/if}
+              </tr>
+            {/each}
+          </svelte:fragment>
+        </DataTable>
+      {:else if !showCreatePool}
+        <p class="table-empty-cell">
+          {#if effectiveFilter === 'orphaned' || effectiveFilter === 'unused'}
+            Pools belong to environments. Select an environment above to see and manage pools.
+          {:else}
+            No pools yet. Select an environment above and create a pool to define CIDR ranges that blocks can draw from.
+          {/if}
+        </p>
+      {/if}
+      {#if deletePoolId}
+        <div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="delete-pool-title">
+          <div class="modal">
+            <h2 id="delete-pool-title">Delete pool</h2>
+            <p>Delete pool <strong>{deletePoolName}</strong>? Blocks in this pool will be unassigned from the pool (not deleted).</p>
+            {#if deletePoolError}
+              <p class="form-error" role="alert">{deletePoolError}</p>
+            {/if}
+            <div class="modal-actions">
+              <button type="button" class="btn" on:click={closeDeletePoolConfirm} disabled={deletePoolSubmitting}>Cancel</button>
+              <button type="button" class="btn btn-danger" on:click={handleDeletePool} disabled={deletePoolSubmitting}>
+                {deletePoolSubmitting ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      {/if}
+    </section>
     <section class="section">
       <div class="section-header">
         <h2>Network blocks</h2>
@@ -680,7 +1051,14 @@
           <form on:submit|preventDefault={handleCreateBlock}>
             <div class="wizard-display">
               <h4 class="wizard-heading">CIDR wizard</h4>
-              <CidrWizard mode="block" environmentId={blockEnvironmentId || environmentId || null} bind:value={blockCidr} disabled={blockSubmitting} />
+              <CidrWizard
+                mode="block"
+                poolOptions={createBlockPoolOptions}
+                poolCidr={blockPoolId ? (allPools.find((p) => String(p.id) === blockPoolId)?.cidr ?? '') : ''}
+                bind:poolId={blockPoolId}
+                bind:value={blockCidr}
+                disabled={blockSubmitting}
+              />
             </div>
             <div class="form-row">
               <label for="create-block-cidr">
@@ -693,16 +1071,12 @@
                 <span>Name</span>
                 <input id="create-block-name" type="text" bind:value={blockName} placeholder="e.g. prod-vpc" disabled={blockSubmitting} />
               </label>
-              <div class="form-label-wrap" role="group" aria-label="Environment">
-                <span>Environment</span>
-                <SearchableSelect
-                  options={[{ value: '', label: '— None —' }, ...environments.map((e) => ({ value: String(e.id), label: e.name }))]}
-                  bind:value={blockEnvironmentId}
-                  placeholder="— None —"
-                  disabled={blockSubmitting}
-                />
-              </div>
             </div>
+            {#if createBlockPoolOptions.length > 0 && (!blockPoolId || String(blockPoolId).trim() === '')}
+              <p class="form-warn" role="status">
+                Creating without a pool will create an <strong>orphan block</strong> (not assigned to any environment or pool). Select a pool above to associate this block with an environment.
+              </p>
+            {/if}
             <div class="form-actions">
               <button type="button" class="btn" on:click={() => (showCreateBlock = false)} disabled={blockSubmitting}>Cancel</button>
               <button type="submit" class="btn btn-primary" disabled={blockSubmitting}>
@@ -724,10 +1098,10 @@
                   {/if}
                 </button>
               </th>
-              <th class="sortable" class:sorted={blockSortBy === 'environment'}>
-                <button type="button" class="th-sort" on:click={() => setBlockSort('environment')}>
-                  <span class="th-sort-label">Environment</span>
-                  {#if blockSortBy === 'environment'}
+              <th class="sortable" class:sorted={blockSortBy === 'pool'}>
+                <button type="button" class="th-sort" on:click={() => setBlockSort('pool')}>
+                  <span class="th-sort-label">Pool</span>
+                  {#if blockSortBy === 'pool'}
                     <span class="sort-icon" aria-hidden="true"><Icon icon={blockSortDir === 'asc' ? 'lucide:chevron-up' : 'lucide:chevron-down'} width="0.875em" height="0.875em" /></span>
                   {/if}
                 </button>
@@ -783,7 +1157,7 @@
                     No unused blocks (all blocks have at least one allocation).
                   {:else if effectiveFilter === 'orphaned'}
                     No orphaned blocks.
-                  {:else if effectiveFilter !== 'all'}
+                  {:else if envIdForApi}
                     No blocks in this environment yet. Create one above.
                   {:else}
                     No blocks yet. Create one above.
@@ -807,6 +1181,17 @@
                             disabled={editBlockSubmitting}
                           />
                         </div>
+                        {#if editBlockEnvironmentId && editBlockPools.length > 0}
+                          <div class="inline-edit-env" role="group" aria-label="Pool">
+                            <span class="sr-only">Pool</span>
+                            <SearchableSelect
+                              options={[{ value: '', label: '— None —' }, ...editBlockPools.map((p) => ({ value: String(p.id), label: p.name }))]}
+                              bind:value={editBlockPoolId}
+                              placeholder="— None —"
+                              disabled={editBlockSubmitting}
+                            />
+                          </div>
+                        {/if}
                         <div class="inline-actions">
                           <button type="button" class="btn btn-small" on:click={cancelEditBlock} disabled={editBlockSubmitting}>Cancel</button>
                           <button type="submit" class="btn btn-primary btn-small" disabled={editBlockSubmitting}>
@@ -818,12 +1203,11 @@
                     <td class="actions"></td>
                   {:else}
                     <td class="name">{block.name}</td>
-                    <td class="environment">
-                      {#if isOrphanedBlock(block)}
-                        <span class="tag tag-orphaned">Orphaned</span>
+                    <td class="pool">
+                      {#if !isOrphanedBlock(block)}
+                        <span class="tag tag-pool">{getPoolName(block.pool_id) ?? '—'}</span>
                       {:else}
-                        {@const envName = getEnvironmentName(block.environment_id)}
-                        <span class="tag tag-env">{envName ?? '—'}</span>
+                        <span class="tag tag-orphaned">Orphaned</span>
                       {/if}
                       {#if allocationCountForBlock(block.name) === 0}
                         <span class="tag tag-unused" title="No allocations in this block">Unused</span>
@@ -984,7 +1368,7 @@
                 <td colspan="4" class="table-empty-cell">
                   {#if allocationFilter && String(allocationFilter).trim() !== ''}
                     No allocations match the allocation filter.
-                  {:else if effectiveFilter !== 'all'}
+                  {:else if envIdForApi || (effectiveFilter && effectiveFilter !== 'all' && effectiveFilter !== 'orphaned' && effectiveFilter !== 'unused')}
                     No allocations in the filtered blocks yet.
                   {:else}
                     No allocations yet. Create one above.
@@ -1244,6 +1628,19 @@
     justify-content: flex-end;
     gap: 0.5rem;
   }
+  .form-warn {
+    margin: 0 0 1rem 0;
+    padding: 0.6rem 0.75rem;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    color: var(--text-muted);
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    border-radius: var(--radius);
+  }
+  .form-warn strong {
+    color: var(--text);
+  }
   .form-card {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -1423,6 +1820,11 @@
     background: rgba(88, 166, 255, 0.15);
     border: 1px solid var(--accent);
     color: var(--accent);
+  }
+  .tag-pool {
+    background: rgba(34, 197, 94, 0.15);
+    border: 1px solid var(--success, #22c55e);
+    color: var(--success, #22c55e);
   }
   .tag-unused {
     display: inline-block;

@@ -7,15 +7,15 @@ const maxListLimit = 500
 
 // Environment Input Types
 type createEnvironmentInput struct {
-	Name             string             `json:"name" required:"true" minLength:"1" maxLength:"255"`
-	OrganizationID   uuid.UUID          `json:"organization_id,omitempty" format:"uuid"`
-	InitialBlock     *initialBlockInput `json:"initial_block,omitempty"`
-	_                struct{}           `additionalProperties:"false"`
+	Name           string         `json:"name" required:"true" minLength:"1" maxLength:"255"`
+	OrganizationID uuid.UUID      `json:"organization_id,omitempty" format:"uuid"`
+	Pools          []poolItemInput `json:"pools" required:"true" minItems:"1"`
+	_              struct{}       `additionalProperties:"false"`
 }
 
-type initialBlockInput struct {
+type poolItemInput struct {
 	Name string `json:"name" required:"true" minLength:"1" maxLength:"255"`
-	CIDR string `json:"cidr" required:"true" minLength:"9" maxLength:"18"`
+	CIDR string `json:"cidr" required:"true" minLength:"9" maxLength:"50"`
 }
 
 type getEnvironmentInput struct {
@@ -36,6 +36,7 @@ type listBlocksInput struct {
 	Offset         int       `query:"offset" minimum:"0"`
 	Name           string    `query:"name" maxLength:"255"`
 	EnvironmentID  uuid.UUID `query:"environment_id" format:"uuid"`
+	PoolID         uuid.UUID `query:"pool_id" format:"uuid"`          // optional; filter blocks by pool (can be used with or without environment_id)
 	OrganizationID uuid.UUID `query:"organization_id" format:"uuid"` // optional; global admin uses this to scope to one org
 	OrphanedOnly   bool      `query:"orphaned_only"`
 	_              struct{}  `additionalProperties:"false"`
@@ -51,25 +52,52 @@ type listAllocationsInput struct {
 	_              struct{}  `additionalProperties:"false"`
 }
 
-type suggestEnvironmentBlockCIDRInput struct {
-	ID     uuid.UUID `path:"id" required:"true" format:"uuid"`
-	Prefix int       `query:"prefix" minimum:"1" maximum:"32"`
-	_      struct{}  `additionalProperties:"false"`
-}
-
 type updateEnvironmentInput struct {
 	ID   uuid.UUID `json:"id" path:"id" required:"true" format:"uuid"`
 	Name string    `json:"name" required:"true" minLength:"1" maxLength:"255"`
 	_    struct{}  `additionalProperties:"false"`
 }
 
+// Pool Input Types
+type createPoolInput struct {
+	EnvironmentID uuid.UUID `json:"environment_id" required:"true" format:"uuid"`
+	Name          string    `json:"name" required:"true" minLength:"1" maxLength:"255"`
+	CIDR          string    `json:"cidr" required:"true" minLength:"9" maxLength:"50"`
+	_             struct{}  `additionalProperties:"false"`
+}
+
+type getPoolInput struct {
+	ID uuid.UUID `json:"id" path:"id" required:"true" format:"uuid"`
+	_  struct{}  `additionalProperties:"false"`
+}
+
+type suggestPoolBlockCIDRInput struct {
+	ID     uuid.UUID `path:"id" required:"true" format:"uuid"`
+	Prefix int       `query:"prefix" minimum:"1" maximum:"32"`
+	_      struct{}  `additionalProperties:"false"`
+}
+
+type listPoolsInput struct {
+	EnvironmentID  uuid.UUID `query:"environment_id" format:"uuid"`
+	OrganizationID uuid.UUID `query:"organization_id" format:"uuid"` // optional; when set, list all pools in org (for dashboard)
+	_              struct{}  `additionalProperties:"false"`
+}
+
+type updatePoolInput struct {
+	ID   uuid.UUID `json:"id" path:"id" required:"true" format:"uuid"`
+	Name string    `json:"name" required:"true" minLength:"1" maxLength:"255"`
+	CIDR string    `json:"cidr" required:"true" minLength:"9" maxLength:"50"`
+	_    struct{}  `additionalProperties:"false"`
+}
+
 // Block Input Types
 type createBlockInput struct {
-	Name           string    `json:"name" required:"true" minLength:"1" maxLength:"255"`
-	CIDR           string    `json:"cidr" required:"true" minLength:"9" maxLength:"18"`
-	EnvironmentID  uuid.UUID `json:"environment_id,omitempty" format:"uuid"`
-	OrganizationID uuid.UUID `json:"organization_id,omitempty" format:"uuid"` // required for orphan blocks (no environment)
-	_              struct{}  `additionalProperties:"false"`
+	Name           string     `json:"name" required:"true" minLength:"1" maxLength:"255"`
+	CIDR           string     `json:"cidr" required:"true" minLength:"9" maxLength:"18"`
+	EnvironmentID  uuid.UUID  `json:"environment_id,omitempty" format:"uuid"`
+	OrganizationID uuid.UUID  `json:"organization_id,omitempty" format:"uuid"` // required for orphan blocks (no environment)
+	PoolID         *uuid.UUID `json:"pool_id,omitempty" format:"uuid"`          // optional; block CIDR must be contained in pool's CIDR
+	_              struct{}   `additionalProperties:"false"`
 }
 
 type getBlockInput struct {
@@ -88,6 +116,7 @@ type updateBlockInput struct {
 	Name           string     `json:"name" required:"true" minLength:"1" maxLength:"255"`
 	EnvironmentID  *uuid.UUID `json:"environment_id,omitempty" format:"uuid"`
 	OrganizationID *uuid.UUID `json:"organization_id,omitempty" format:"uuid"` // for orphan blocks
+	PoolID         *uuid.UUID `json:"pool_id,omitempty" format:"uuid"`       // optional; block CIDR must be contained in pool's CIDR
 	_              struct{}   `additionalProperties:"false"`
 }
 

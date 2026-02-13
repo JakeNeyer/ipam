@@ -1,6 +1,6 @@
 # Terraform Provider for IPAM
 
-This [Terraform](https://www.terraform.io) provider manages resources in an [IPAM](https://github.com/JakeNeyer/ipam) instance: environments, network blocks, allocations, and reserved blocks. It uses the IPAM HTTP API with Bearer token authentication.
+This [Terraform](https://www.terraform.io) provider manages resources in an [IPAM](https://github.com/JakeNeyer/ipam) instance: environments (with required initial pool), **pools**, network blocks, allocations, and reserved blocks. Hierarchy: **Environment → Pools → Blocks → Allocations**. It uses the IPAM HTTP API with Bearer token authentication.
 
 ## Requirements
 
@@ -50,9 +50,10 @@ export TF_CLI_CONFIG_FILE=dev_overrides.tfrc
 
 | Resource | Description |
 |----------|-------------|
-| `ipam_environment` | Create and manage an environment (e.g. prod, staging). |
+| `ipam_environment` | Create and manage an environment (requires `pools` argument with at least one pool: `pools = [ { name = "...", cidr = "..." } ]`). |
+| `ipam_pool` | Create and manage an environment pool (CIDR range blocks draw from). |
 | `ipam_reserved_block` | Reserve a CIDR range so it cannot be used as a block or allocation (admin only). Changing `cidr` forces replacement. |
-| `ipam_block` | Create and manage a network block (CIDR assigned to an environment). Changing `cidr` forces replacement. |
+| `ipam_block` | Create and manage a network block (CIDR assigned to an environment; optional `pool_id`). Changing `cidr` forces replacement. |
 | `ipam_allocation` | Create and manage an allocation (subnet within a block). Changing `block_name` or `cidr` forces replacement. |
 
 ## Data Sources
@@ -61,6 +62,8 @@ export TF_CLI_CONFIG_FILE=dev_overrides.tfrc
 |-------------|-------------|
 | `ipam_environment` | Fetch a single environment by ID. |
 | `ipam_environments` | List environments with optional `name` filter. |
+| `ipam_pool` | Fetch a single pool by ID. |
+| `ipam_pools` | List pools for an environment (`environment_id`). |
 | `ipam_reserved_block` | Fetch a single reserved block by ID (admin only). |
 | `ipam_reserved_blocks` | List all reserved blocks (admin only). |
 | `ipam_block` | Fetch a single network block by ID. |
@@ -87,11 +90,14 @@ provider "ipam" {
 
 resource "ipam_environment" "prod" {
   name = "prod"
+  pools = [
+    { name = "prod-pool", cidr = "10.0.0.0/8" }
+  ]
 }
 
 resource "ipam_block" "prod_vpc" {
   name           = "prod-vpc"
-  cidr           = "10.0.0.0/8"
+  cidr           = "10.0.0.0/16"
   environment_id = ipam_environment.prod.id
 }
 

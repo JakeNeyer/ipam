@@ -33,6 +33,7 @@ type BlockResourceModel struct {
 	UsedIps       types.String `tfsdk:"used_ips"`
 	AvailableIps  types.String `tfsdk:"available_ips"`
 	EnvironmentId types.String `tfsdk:"environment_id"`
+	PoolId        types.String `tfsdk:"pool_id"`
 }
 
 func (r *BlockResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -60,6 +61,10 @@ func (r *BlockResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 			"environment_id": schema.StringAttribute{
 				Optional:            true,
 				MarkdownDescription: "Environment UUID. Omit for orphaned blocks.",
+			},
+			"pool_id": schema.StringAttribute{
+				Optional:            true,
+				MarkdownDescription: "Pool UUID. Block CIDR must be contained in the pool's CIDR. Only for blocks in an environment.",
 			},
 			"total_ips": schema.StringAttribute{
 				Computed:            true,
@@ -96,7 +101,12 @@ func (r *BlockResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 	envID := plan.EnvironmentId.ValueString()
-	out, err := r.api.CreateBlock(plan.Name.ValueString(), plan.Cidr.ValueString(), envID)
+	var poolID *string
+	if !plan.PoolId.IsNull() && plan.PoolId.ValueString() != "" {
+		v := plan.PoolId.ValueString()
+		poolID = &v
+	}
+	out, err := r.api.CreateBlock(plan.Name.ValueString(), plan.Cidr.ValueString(), envID, poolID)
 	if err != nil {
 		resp.Diagnostics.AddError("API error", err.Error())
 		return
@@ -132,7 +142,12 @@ func (r *BlockResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		v := plan.EnvironmentId.ValueString()
 		envID = &v
 	}
-	out, err := r.api.UpdateBlock(plan.Id.ValueString(), plan.Name.ValueString(), envID)
+	var poolID *string
+	if !plan.PoolId.IsNull() && !plan.PoolId.IsUnknown() && plan.PoolId.ValueString() != "" {
+		v := plan.PoolId.ValueString()
+		poolID = &v
+	}
+	out, err := r.api.UpdateBlock(plan.Id.ValueString(), plan.Name.ValueString(), envID, poolID)
 	if err != nil {
 		resp.Diagnostics.AddError("API error", err.Error())
 		return
@@ -161,6 +176,11 @@ func (r *BlockResource) setModelFromAPI(m *BlockResourceModel, out *client.Block
 	m.Name = types.StringValue(out.Name)
 	m.Cidr = types.StringValue(out.CIDR)
 	m.EnvironmentId = types.StringValue(out.EnvironmentID)
+	if out.PoolID != nil && *out.PoolID != "" {
+		m.PoolId = types.StringValue(*out.PoolID)
+	} else {
+		m.PoolId = types.StringNull()
+	}
 	m.TotalIps = types.StringValue(out.TotalIPs)
 	m.UsedIps = types.StringValue(out.UsedIPs)
 	m.AvailableIps = types.StringValue(out.Available)

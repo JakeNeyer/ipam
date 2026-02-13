@@ -55,7 +55,7 @@ func NewExportCSVUseCase(s store.Storer) usecase.Interactor {
 			if err != nil {
 				return status.Wrap(err, status.Internal)
 			}
-			blocks, _, err = s.ListBlocksFiltered("", nil, orgID, false, 0, 0)
+			blocks, _, err = s.ListBlocksFiltered("", nil, nil, orgID, false, 0, 0)
 		} else {
 			envs, err = s.ListEnvironments()
 			if err != nil {
@@ -160,7 +160,7 @@ func ExportCSVHandler(s store.Storer) http.Handler {
 				http.Error(w, "Failed to list environments", http.StatusInternalServerError)
 				return
 			}
-			blocks, _, err = s.ListBlocksFiltered("", nil, orgID, false, 0, 0)
+			blocks, _, err = s.ListBlocksFiltered("", nil, nil, orgID, false, 0, 0)
 		} else {
 			envs, err = s.ListEnvironments()
 			if err != nil {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/JakeNeyer/ipam/terraform-provider-ipam/internal/client"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -26,8 +27,15 @@ type EnvironmentResource struct {
 }
 
 type EnvironmentResourceModel struct {
-	Id   types.String `tfsdk:"id"`
+	Id       types.String `tfsdk:"id"`
+	Name     types.String `tfsdk:"name"`
+	Pools    types.List   `tfsdk:"pools"`     // list of { name, cidr }
+	PoolIds  types.List   `tfsdk:"pool_ids"` // computed: UUIDs of created pools
+}
+
+type poolBlockModel struct {
 	Name types.String `tfsdk:"name"`
+	Cidr types.String `tfsdk:"cidr"`
 }
 
 func (r *EnvironmentResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -36,7 +44,7 @@ func (r *EnvironmentResource) Metadata(ctx context.Context, req resource.Metadat
 
 func (r *EnvironmentResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "IPAM environment. Environments group network blocks (e.g. prod, staging).",
+		MarkdownDescription: "IPAM environment. Environments group network blocks (e.g. prod, staging). Requires at least one pool.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:            true,
@@ -46,6 +54,27 @@ func (r *EnvironmentResource) Schema(ctx context.Context, req resource.SchemaReq
 			"name": schema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "Environment name.",
+			},
+			"pools": schema.ListNestedAttribute{
+				Required:            true,
+				MarkdownDescription: "At least one pool (CIDR range that blocks in this environment draw from).",
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"name": schema.StringAttribute{
+							Required:            true,
+							MarkdownDescription: "Pool name.",
+						},
+						"cidr": schema.StringAttribute{
+							Required:            true,
+							MarkdownDescription: "Pool CIDR (e.g. 10.0.0.0/8).",
+						},
+					},
+				},
+			},
+			"pool_ids": schema.ListAttribute{
+				ElementType:         types.StringType,
+				Computed:            true,
+				MarkdownDescription: "UUIDs of pools created with this environment (same order as `pools`).",
 			},
 		},
 	}
@@ -69,13 +98,33 @@ func (r *EnvironmentResource) Create(ctx context.Context, req resource.CreateReq
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	out, err := r.api.CreateEnvironment(plan.Name.ValueString(), nil)
+	var poolBlocks []poolBlockModel
+	resp.Diagnostics.Append(plan.Pools.ElementsAs(ctx, &poolBlocks, false)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	poolList := make([]client.PoolInput, 0, len(poolBlocks))
+	for _, pm := range poolBlocks {
+		poolList = append(poolList, client.PoolInput{Name: pm.Name.ValueString(), CIDR: pm.Cidr.ValueString()})
+	}
+	if len(poolList) == 0 {
+		resp.Diagnostics.AddError("Invalid config", "at least one pool is required")
+		return
+	}
+	out, err := r.api.CreateEnvironment(plan.Name.ValueString(), poolList)
 	if err != nil {
 		resp.Diagnostics.AddError("API error", err.Error())
 		return
 	}
 	plan.Id = types.StringValue(out.Id)
 	plan.Name = types.StringValue(out.Name)
+	if len(out.PoolIDs) > 0 {
+		poolIdVals := make([]types.String, 0, len(out.PoolIDs))
+		for _, id := range out.PoolIDs {
+			poolIdVals = append(poolIdVals, types.StringValue(id))
+		}
+		plan.PoolIds, _ = types.ListValueFrom(ctx, types.StringType, poolIdVals)
+	}
 	tflog.Trace(ctx, "created ipam_environment", map[string]interface{}{"id": out.Id})
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -93,6 +142,25 @@ func (r *EnvironmentResource) Read(ctx context.Context, req resource.ReadRequest
 	}
 	state.Id = types.StringValue(out.Id)
 	state.Name = types.StringValue(out.Name)
+	poolsResp, err := r.api.ListPools(state.Id.ValueString())
+	if err == nil && len(poolsResp.Pools) > 0 {
+		objType := types.ObjectType{AttrTypes: map[string]attr.Type{
+			"name": types.StringType,
+			"cidr": types.StringType,
+		}}
+		elems := make([]attr.Value, 0, len(poolsResp.Pools))
+		poolIdVals := make([]types.String, 0, len(poolsResp.Pools))
+		for _, p := range poolsResp.Pools {
+			obj, _ := types.ObjectValue(objType.AttrTypes, map[string]attr.Value{
+				"name": types.StringValue(p.Name),
+				"cidr": types.StringValue(p.CIDR),
+			})
+			elems = append(elems, obj)
+			poolIdVals = append(poolIdVals, types.StringValue(p.ID))
+		}
+		state.Pools = types.ListValueMust(objType, elems)
+		state.PoolIds, _ = types.ListValueFrom(ctx, types.StringType, poolIdVals)
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 

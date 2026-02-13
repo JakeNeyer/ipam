@@ -100,6 +100,30 @@ func NewCreateBlockUseCase(s store.Storer) usecase.Interactor {
 			}
 		}
 
+		// Pool is optional; if set, pool must belong to the block's environment and block CIDR must be contained in pool CIDR
+		if input.PoolID != nil && *input.PoolID != uuid.Nil {
+			if input.EnvironmentID == uuid.Nil {
+				return status.Wrap(errors.New("pool_id can only be set for blocks in an environment"), status.InvalidArgument)
+			}
+			pool, err := s.GetPool(*input.PoolID)
+			if err != nil {
+				return status.Wrap(errors.New("pool not found"), status.NotFound)
+			}
+			if pool.EnvironmentID != input.EnvironmentID {
+				return status.Wrap(errors.New("pool does not belong to the block's environment"), status.InvalidArgument)
+			}
+			contained, err := network.Contains(pool.CIDR, input.CIDR)
+			if err != nil {
+				return status.Wrap(err, status.InvalidArgument)
+			}
+			if !contained {
+				return status.Wrap(
+					fmt.Errorf("block CIDR %s must be contained within pool %q CIDR %s", input.CIDR, pool.Name, pool.CIDR),
+					status.InvalidArgument,
+				)
+			}
+		}
+
 		// Derive-only: total_ips stored only when it fits in BIGINT; API always derives from CIDR
 		totalStored := int(network.CIDRAddressCountInt64(input.CIDR))
 		block := &network.Block{
@@ -107,6 +131,7 @@ func NewCreateBlockUseCase(s store.Storer) usecase.Interactor {
 			CIDR:           input.CIDR,
 			EnvironmentID:  input.EnvironmentID,
 			OrganizationID: blockOrgID,
+			PoolID:         input.PoolID,
 			Usage: network.Usage{
 				TotalIPs:     totalStored,
 				UsedIPs:      0,
@@ -120,7 +145,7 @@ func NewCreateBlockUseCase(s store.Storer) usecase.Interactor {
 		if block.EnvironmentID != uuid.Nil {
 			existing, err = s.ListBlocksByEnvironment(block.EnvironmentID)
 		} else {
-			existing, _, err = s.ListBlocksFiltered("", nil, &block.OrganizationID, true, 0, 0)
+			existing, _, err = s.ListBlocksFiltered("", nil, nil, &block.OrganizationID, true, 0, 0)
 		}
 		if err != nil {
 			return status.Wrap(err, status.Internal)
@@ -169,6 +194,7 @@ func NewCreateBlockUseCase(s store.Storer) usecase.Interactor {
 		output.Available = availStr
 		output.EnvironmentID = block.EnvironmentID
 		output.OrganizationID = block.OrganizationID
+		output.PoolID = block.PoolID
 		return nil
 	})
 
@@ -197,6 +223,20 @@ func NewListBlocksUseCase(s store.Storer) usecase.Interactor {
 			}
 		}
 		orgID := auth.ResolveOrgID(ctx, user, input.OrganizationID)
+		var poolID *uuid.UUID
+		if input.PoolID != uuid.Nil {
+			poolID = &input.PoolID
+			pool, err := s.GetPool(input.PoolID)
+			if err != nil {
+				return status.Wrap(errors.New("pool not found"), status.NotFound)
+			}
+			if userOrg := auth.UserOrgForAccess(ctx, user); userOrg != uuid.Nil {
+				env, err := s.GetEnvironment(pool.EnvironmentID)
+				if err != nil || env.OrganizationID != userOrg {
+					return status.Wrap(errors.New("pool not found"), status.NotFound)
+				}
+			}
+		}
 		limit, offset := input.Limit, input.Offset
 		if limit <= 0 {
 			limit = defaultListLimit
@@ -207,7 +247,7 @@ func NewListBlocksUseCase(s store.Storer) usecase.Interactor {
 		if offset < 0 {
 			offset = 0
 		}
-		blocks, total, err := s.ListBlocksFiltered(input.Name, envID, orgID, input.OrphanedOnly, limit, offset)
+		blocks, total, err := s.ListBlocksFiltered(input.Name, envID, poolID, orgID, input.OrphanedOnly, limit, offset)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -224,6 +264,7 @@ func NewListBlocksUseCase(s store.Storer) usecase.Interactor {
 				Available:      availStr,
 				EnvironmentID:  block.EnvironmentID,
 				OrganizationID: block.OrganizationID,
+				PoolID:         block.PoolID,
 			}
 		}
 		return nil
@@ -263,6 +304,7 @@ func NewGetBlockUseCase(s store.Storer) usecase.Interactor {
 		output.Available = availStr
 		output.EnvironmentID = block.EnvironmentID
 		output.OrganizationID = block.OrganizationID
+		output.PoolID = block.PoolID
 		return nil
 	})
 
@@ -297,15 +339,42 @@ func NewUpdateBlockUseCase(s store.Storer) usecase.Interactor {
 		if input.OrganizationID != nil {
 			block.OrganizationID = *input.OrganizationID
 		}
+		// Allow setting or clearing pool (send pool_id: null to clear)
+		if input.PoolID != nil {
+			block.PoolID = input.PoolID
+		}
 		orgID := auth.ResolveOrgID(ctx, user, uuid.Nil)
 		if block.EnvironmentID == uuid.Nil && block.OrganizationID == uuid.Nil && orgID != nil {
 			block.OrganizationID = *orgID
+		}
+		// If pool is set, validate it belongs to block's environment and block CIDR is contained in pool
+		if block.PoolID != nil && *block.PoolID != uuid.Nil {
+			if block.EnvironmentID == uuid.Nil {
+				return status.Wrap(errors.New("pool_id can only be set for blocks in an environment"), status.InvalidArgument)
+			}
+			pool, err := s.GetPool(*block.PoolID)
+			if err != nil {
+				return status.Wrap(errors.New("pool not found"), status.NotFound)
+			}
+			if pool.EnvironmentID != block.EnvironmentID {
+				return status.Wrap(errors.New("pool does not belong to the block's environment"), status.InvalidArgument)
+			}
+			contained, err := network.Contains(pool.CIDR, block.CIDR)
+			if err != nil {
+				return status.Wrap(err, status.InvalidArgument)
+			}
+			if !contained {
+				return status.Wrap(
+					fmt.Errorf("block CIDR %s must be contained within pool %q CIDR %s", block.CIDR, pool.Name, pool.CIDR),
+					status.InvalidArgument,
+				)
+			}
 		}
 		var existing []*network.Block
 		if block.EnvironmentID != uuid.Nil {
 			existing, err = s.ListBlocksByEnvironment(block.EnvironmentID)
 		} else {
-			existing, _, err = s.ListBlocksFiltered("", nil, &block.OrganizationID, true, 0, 0)
+			existing, _, err = s.ListBlocksFiltered("", nil, nil, &block.OrganizationID, true, 0, 0)
 		}
 		if err != nil {
 			return status.Wrap(err, status.Internal)
@@ -362,6 +431,7 @@ func NewUpdateBlockUseCase(s store.Storer) usecase.Interactor {
 		output.Available = availStr
 		output.EnvironmentID = block.EnvironmentID
 		output.OrganizationID = block.OrganizationID
+		output.PoolID = block.PoolID
 		return nil
 	})
 

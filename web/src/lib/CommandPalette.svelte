@@ -1,7 +1,7 @@
 <script>
   import { createEventDispatcher } from 'svelte'
   import Icon from '@iconify/svelte'
-  import { listEnvironments, listBlocks, listAllocations } from './api.js'
+  import { listEnvironments, listBlocks, listAllocations, listPools } from './api.js'
   import { selectedOrgForGlobalAdmin, isGlobalAdmin } from './auth.js'
 
   export let open = false
@@ -32,7 +32,7 @@
   }
 
   let query = ''
-  let searchResults = [] // { type: 'env'|'block'|'alloc', id, label, meta, payload }
+  let searchResults = [] // { type: 'env'|'block'|'alloc'|'pool', id, label, meta, payload }
   let searchLoading = false
   let selectedIndex = 0
   let inputEl
@@ -56,10 +56,13 @@
     try {
       const opts = { name: q, limit: 5, offset: 0 }
       if (isGlobalAdmin(currentUser) && $selectedOrgForGlobalAdmin) opts.organization_id = $selectedOrgForGlobalAdmin
-      const [envsRes, blocksRes, allocsRes] = await Promise.all([
+      const envOpts = { limit: 8, offset: 0 }
+      if (isGlobalAdmin(currentUser) && $selectedOrgForGlobalAdmin) envOpts.organization_id = $selectedOrgForGlobalAdmin
+      const [envsRes, blocksRes, allocsRes, envsForPoolsRes] = await Promise.all([
         listEnvironments(opts),
         listBlocks(opts),
         listAllocations(opts),
+        listEnvironments(envOpts),
       ])
       const results = []
       ;(envsRes.environments || []).forEach((e) => {
@@ -77,6 +80,37 @@
           payload: a,
         })
       })
+      const envsForPools = envsForPoolsRes.environments || []
+      if (envsForPools.length > 0) {
+        const poolResults = await Promise.all(envsForPools.map((e) => listPools(e.id)))
+        const poolsWithEnv = []
+        poolResults.forEach((res, i) => {
+          const env = envsForPools[i]
+          ;(res.pools || []).forEach((p) => {
+            poolsWithEnv.push({
+              pool: p,
+              environmentId: env.id,
+              environmentName: env.name || env.id,
+            })
+          })
+        })
+        const matchingPools = poolsWithEnv
+          .filter(
+            ({ pool }) =>
+              (pool.name && pool.name.toLowerCase().includes(q)) ||
+              (pool.cidr && pool.cidr.toLowerCase().includes(q))
+          )
+          .slice(0, 5)
+        matchingPools.forEach(({ pool, environmentId, environmentName }) => {
+          results.push({
+            type: 'search-pool',
+            id: pool.id,
+            label: pool.name || pool.id,
+            meta: `Pool · ${environmentName}`,
+            payload: { pool, environmentId, environmentName },
+          })
+        })
+      }
       searchResults = results
     } catch {
       searchResults = []
@@ -110,6 +144,12 @@
       dispatch('navigate', { path: 'networks', block: item.payload.name })
     } else if (item.type === 'search-alloc') {
       dispatch('navigate', { path: 'networks', block: item.payload.block_name, allocation: item.payload.name })
+    } else if (item.type === 'search-pool') {
+      dispatch('navigate', {
+        path: 'networks',
+        environmentId: item.payload.environmentId,
+        pool: item.payload.pool.id,
+      })
     }
     close()
   }
@@ -175,7 +215,7 @@
           bind:this={inputEl}
           type="text"
           class="palette-input"
-          placeholder="Search environments, blocks, allocations or run a command…"
+          placeholder="Search environments, pools, blocks, allocations or run a command…"
           bind:value={query}
           on:input={onQueryInput}
           on:keydown={handleKeydown}
@@ -207,7 +247,7 @@
         {/if}
       </div>
       <div class="palette-footer">
-        <span class="palette-footer-hint">Search: environments, blocks, allocations</span>
+        <span class="palette-footer-hint">Search: environments, pools, blocks, allocations</span>
         <span class="palette-footer-keys">
           <kbd><Icon icon="lucide:chevron-up" width="0.75em" height="0.75em" inline /></kbd>
           <kbd><Icon icon="lucide:chevron-down" width="0.75em" height="0.75em" inline /></kbd>

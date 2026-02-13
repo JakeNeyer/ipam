@@ -2,13 +2,13 @@
   import { onMount } from 'svelte'
   import { createEventDispatcher } from 'svelte'
   import Icon from '@iconify/svelte'
-  import { listOrganizations, listUsers, listEnvironments, listBlocks, listAllocations } from '../lib/api.js'
+  import { listOrganizations, listUsers, listEnvironments, listBlocks, listAllocations, listPools } from '../lib/api.js'
 
   const dispatch = createEventDispatcher()
 
   let loading = true
   let error = ''
-  /** @type {Array<{ id: string, name: string, users: number, environments: number, blocks: number, allocations: number }>} */
+  /** @type {Array<{ id: string, name: string, users: number, environments: number, blocks: number, allocations: number, pools: number }>} */
   let orgStats = []
 
   onMount(() => {
@@ -39,10 +39,16 @@
       const stats = await Promise.all(
         organizations.map(async (org) => {
           const [envsRes, blocksRes, allocsRes] = await Promise.all([
-            listEnvironments({ organization_id: org.id, limit: 1, offset: 0 }),
+            listEnvironments({ organization_id: org.id, limit: 200, offset: 0 }),
             listBlocks({ organization_id: org.id, limit: 1, offset: 0 }),
             listAllocations({ organization_id: org.id, limit: 1, offset: 0 }),
           ])
+          const envs = envsRes.environments ?? []
+          let pools = 0
+          if (envs.length > 0) {
+            const poolResults = await Promise.all(envs.map((e) => listPools(e.id)))
+            pools = poolResults.reduce((s, r) => s + (r.pools?.length ?? 0), 0)
+          }
           return {
             id: org.id,
             name: org.name,
@@ -50,6 +56,7 @@
             environments: envsRes.total ?? 0,
             blocks: blocksRes.total ?? 0,
             allocations: allocsRes.total ?? 0,
+            pools,
           }
         })
       )
@@ -102,6 +109,10 @@
         <span class="stats-summary-value">{orgStats.reduce((s, o) => s + o.allocations, 0)}</span>
         <span class="stats-summary-label">Allocations</span>
       </div>
+      <div class="stats-summary">
+        <span class="stats-summary-value">{orgStats.reduce((s, o) => s + o.pools, 0)}</span>
+        <span class="stats-summary-label">Pools</span>
+      </div>
     </section>
 
     <section class="org-table-section">
@@ -115,6 +126,7 @@
               <th class="num">Environments</th>
               <th class="num">Blocks</th>
               <th class="num">Allocations</th>
+              <th class="num">Pools</th>
               <th></th>
             </tr>
           </thead>
@@ -126,6 +138,7 @@
                 <td class="num">{org.environments}</td>
                 <td class="num">{org.blocks}</td>
                 <td class="num">{org.allocations}</td>
+                <td class="num">{org.pools}</td>
                 <td class="action">
                   <button
                     type="button"
@@ -147,7 +160,7 @@
 <style>
   .global-admin-dashboard {
     padding: 1.25rem 1.5rem;
-    max-width: 56rem;
+    max-width: 100%;
   }
   .page-header {
     margin-bottom: 1.5rem;

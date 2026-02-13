@@ -30,14 +30,15 @@ bash setup.sh
 
 ## Concepts
 
-- **Environments** — Logical groupings (e.g. `Production`, `Staging`) that contain network blocks.
-- **Network blocks** — CIDR ranges (e.g. `10.1.0.0/16`) that define a pool of IP addresses.
-- **Allocations** — Subnets carved out of a block (e.g. `10.1.0.0/24`) representing actual usage.
+- **Environments** — Logical groupings (e.g. `Production`, `Staging`) that contain pools and network blocks.
+- **Pools** — CIDR ranges (e.g. `10.0.0.0/8`) that define the address space for an environment. Blocks in that environment must have a CIDR contained within a pool. Every environment has at least one pool.
+- **Network blocks** — CIDR ranges (e.g. `10.0.0.0/16`) that define a block of IP addresses; each block is optionally assigned to a pool.
+- **Allocations** — Subnets carved out of a block (e.g. `10.0.1.0/24`) representing actual usage.
 
 ## First steps (UI)
 
-1. Create an environment on the **Environments** page.
-2. Create a network block on the **Networks** page and assign it to the environment. The CIDR wizard suggests non-overlapping ranges.
+1. Create an environment on the **Environments** page with a name and **initial pool** (pool name + CIDR). You can add more pools later from Networks.
+2. Create a network block on the **Networks** page and assign it to the environment (and optionally to a pool). The CIDR wizard suggests non-overlapping ranges.
 3. Create allocations within the block to reserve subnets.
 
 Alternatively, use the **Network Advisor** to plan environments, blocks, and sizing in one guided flow and generate everything at once.
@@ -70,7 +71,7 @@ The auto-allocate endpoint returns the assigned CIDR in the response. It uses bi
 
 ## Terraform provider
 
-The `jakeneyer/ipam` Terraform provider manages environments, blocks, and allocations as infrastructure-as-code.
+The `jakeneyer/ipam` Terraform provider manages environments, pools, blocks, and allocations as infrastructure-as-code.
 
 ```hcl
 terraform {
@@ -89,6 +90,9 @@ provider "ipam" {
 
 resource "ipam_environment" "prod" {
   name = "production"
+  pools = [
+    { name = "prod-pool", cidr = "10.0.0.0/8" }
+  ]
 }
 
 resource "ipam_block" "main" {

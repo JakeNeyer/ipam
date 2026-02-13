@@ -70,6 +70,7 @@ func (p *IpamProvider) Configure(ctx context.Context, req provider.ConfigureRequ
 func (p *IpamProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		NewEnvironmentResource,
+		NewPoolResource,
 		NewReservedBlockResource,
 		NewBlockResource,
 		NewAllocationResource,
@@ -80,6 +81,8 @@ func (p *IpamProvider) DataSources(ctx context.Context) []func() datasource.Data
 	return []func() datasource.DataSource{
 		NewEnvironmentDataSource,
 		NewEnvironmentsDataSource,
+		NewPoolDataSource,
+		NewPoolsDataSource,
 		NewReservedBlockDataSource,
 		NewReservedBlocksDataSource,
 		NewBlockDataSource,

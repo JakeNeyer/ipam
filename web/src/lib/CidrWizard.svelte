@@ -1,13 +1,17 @@
 <script>
   import { onMount } from 'svelte'
   import { cidrRange, ipVersion } from './cidr.js'
-  import { suggestBlockCidr, suggestEnvironmentBlockCidr } from './api.js'
+  import { suggestBlockCidr, suggestPoolBlockCidr } from './api.js'
   import { formatBlockCount } from './blockCount.js'
 
   /** @type {'block' | 'allocation'} */
   export let mode = 'block'
-  /** Environment ID for block mode (used to suggest CIDR that does not overlap existing blocks in that environment) */
-  export let environmentId = null
+  /** Pool ID for block mode (used to suggest CIDR that does not overlap existing blocks in that pool). Bindable when poolOptions provided. */
+  export let poolId = null
+  /** Options for pool selector in block mode: [{ value, label }]. If non-empty, a Pool dropdown is shown. */
+  export let poolOptions = []
+  /** When in block mode and a pool is selected, the pool's CIDR (e.g. 10.0.0.0/8). IP version is locked to match. */
+  export let poolCidr = ''
   /** Parent block CIDR when mode is 'allocation' */
   export let parentCidr = ''
   /** Block ID for allocation mode (used to fetch suggested CIDR from API) */
@@ -126,11 +130,17 @@
     { length: allocationPrefixMax - allocationPrefixMin + 1 },
     (_, i) => allocationPrefixMin + i
   )
+  $: poolParsed = mode === 'block' && poolCidr ? parseCidr(poolCidr) : null
+  $: poolVersion = poolParsed?.version ?? null
+  $: if (mode === 'block' && poolVersion != null && blockVersion !== poolVersion) {
+    blockVersion = poolVersion
+  }
   $: blockPrefixOptions = blockVersion === 6 ? PREFIX_OPTIONS_BLOCK_IPV6 : PREFIX_OPTIONS_BLOCK_IPV4
   $: blockPrefixMin = blockVersion === 6 ? 16 : 8
   $: if (mode === 'block' && !blockPrefixOptions.includes(selectedPrefix)) {
     selectedPrefix = blockVersion === 6 ? 64 : 24
   }
+  $: showBlockVersionSelect = mode === 'block' && poolVersion == null
 
   $: allocationCidrComputed =
     mode === 'allocation' && parentParsed
@@ -162,23 +172,23 @@
 
   $: allocationSuggestedCidr = suggestedCidrFromApi || allocationCidrComputed
 
-  // Fetch suggested block CIDR for environment (no overlap with existing blocks) when environmentId and prefix set
+  // Fetch suggested block CIDR for pool (no overlap with existing blocks in pool) when poolId and prefix set
   $: suggestedBlockTrigger =
-    mode === 'block' && environmentId && selectedPrefix >= blockPrefixMin
-      ? [environmentId, selectedPrefix]
+    mode === 'block' && poolId && selectedPrefix >= blockPrefixMin
+      ? [poolId, selectedPrefix]
       : []
   $: if (suggestedBlockTrigger.length) {
-    const [eid, prefix] = suggestedBlockTrigger
+    const [pid, prefix] = suggestedBlockTrigger
     suggestedBlockLoading = true
-    suggestEnvironmentBlockCidr(eid, prefix)
+    suggestPoolBlockCidr(pid, prefix)
       .then((cidr) => {
-        if (eid === environmentId && prefix === selectedPrefix) suggestedBlockCidrFromApi = cidr
+        if (pid === poolId && prefix === selectedPrefix) suggestedBlockCidrFromApi = cidr
       })
       .catch(() => {
-        if (eid === environmentId && prefix === selectedPrefix) suggestedBlockCidrFromApi = ''
+        if (pid === poolId && prefix === selectedPrefix) suggestedBlockCidrFromApi = ''
       })
       .finally(() => {
-        if (eid === environmentId && prefix === selectedPrefix) suggestedBlockLoading = false
+        if (pid === poolId && prefix === selectedPrefix) suggestedBlockLoading = false
       })
   } else {
     suggestedBlockCidrFromApi = ''
@@ -215,20 +225,40 @@
     <div class="wizard-section">
       <header class="wizard-header">
         <h4 class="wizard-title">CIDR range</h4>
-        {#if environmentId}
-          <p class="wizard-hint">A suggested CIDR (no overlap with existing blocks in this environment) is shown below.</p>
+        {#if poolId}
+          <p class="wizard-hint">A suggested CIDR (optimal fit in the selected pool, no overlap with existing blocks) is shown below.</p>
+        {:else if poolOptions.length > 0}
+          <p class="wizard-hint">Select a pool and prefix to get a suggested CIDR that fits optimally in the pool.</p>
         {:else}
           <p class="wizard-hint">Choose the base address and prefix length for the block.</p>
         {/if}
       </header>
       <div class="wizard-fields">
-        <div class="wizard-field">
-          <span class="wizard-field-label">IP version</span>
-          <select bind:value={blockVersion} on:change={syncBlockValue} disabled={disabled} class="prefix-select">
-            <option value={4}>IPv4</option>
-            <option value={6}>IPv6</option>
-          </select>
-        </div>
+        {#if poolOptions.length > 0}
+          <div class="wizard-field">
+            <span class="wizard-field-label">Pool</span>
+            <select bind:value={poolId} disabled={disabled} class="prefix-select">
+              <option value="">— None —</option>
+              {#each poolOptions as opt}
+                <option value={opt.value}>{opt.label}</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
+        {#if showBlockVersionSelect}
+          <div class="wizard-field">
+            <span class="wizard-field-label">IP version</span>
+            <select bind:value={blockVersion} on:change={syncBlockValue} disabled={disabled} class="prefix-select">
+              <option value={4}>IPv4</option>
+              <option value={6}>IPv6</option>
+            </select>
+          </div>
+        {:else if poolVersion != null}
+          <div class="wizard-field">
+            <span class="wizard-field-label">IP version</span>
+            <span class="wizard-field-readonly" title="Determined by selected pool">{poolVersion === 6 ? 'IPv6' : 'IPv4'}</span>
+          </div>
+        {/if}
         {#if blockVersion === 6}
           <div class="wizard-field wizard-field-ipv6">
             <span class="wizard-field-label">Base address (IPv6)</span>
@@ -271,7 +301,7 @@
           </div>
         </div>
       </div>
-      {#if !environmentId}
+      {#if !poolId}
         <div class="wizard-result">
           <span class="result-label">Resulting CIDR</span>
           <code class="result-cidr">{blockCidrComputed}</code>
@@ -284,7 +314,7 @@
           </button>
         </div>
       {/if}
-      {#if environmentId}
+      {#if poolId}
         <div class="wizard-result wizard-result-suggested">
           <span class="result-label">Suggested CIDR</span>
           {#if suggestedBlockLoading}
@@ -296,7 +326,7 @@
               <span class="result-range">{suggestedRange.start} – {suggestedRange.end}</span>
             {/if}
             <span class="ip-count">{formatIpCount(blockIpCount)} IPs</span>
-            <button type="button" class="btn btn-primary btn-small" on:click={applySuggestedBlockCidr} disabled={disabled || suggestedBlockLoading} title="Use suggested CIDR that does not overlap existing blocks in this environment">
+            <button type="button" class="btn btn-primary btn-small" on:click={applySuggestedBlockCidr} disabled={disabled || suggestedBlockLoading} title="Use suggested CIDR that does not overlap existing blocks in this pool">
               Use this CIDR
             </button>
           {:else if selectedPrefix < blockPrefixMin}
@@ -402,6 +432,10 @@
     flex-direction: column;
     gap: 0.4rem;
     min-width: 0;
+  }
+  .wizard-field-readonly {
+    font-size: 0.9375rem;
+    color: var(--text);
   }
   .wizard-field-label {
     font-size: 0.8rem;

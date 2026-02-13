@@ -21,6 +21,9 @@ func TestAccEnvironmentResource(t *testing.T) {
 				Config: testAccProviderConfig(endpoint, token) + `
 resource "ipam_environment" "acc" {
   name = "acc-env"
+  pools = [
+    { name = "acc-pool", cidr = "10.0.0.0/8" }
+  ]
 }
 `,
 				Check: resource.ComposeAggregateTestCheckFunc(
@@ -32,6 +35,9 @@ resource "ipam_environment" "acc" {
 				Config: testAccProviderConfig(endpoint, token) + `
 resource "ipam_environment" "acc" {
   name = "acc-env-updated"
+  pools = [
+    { name = "acc-pool", cidr = "10.0.0.0/8" }
+  ]
 }
 `,
 				Check: resource.ComposeAggregateTestCheckFunc(
@@ -60,12 +66,20 @@ func TestAccBlockResource(t *testing.T) {
 				Config: testAccProviderConfig(endpoint, token) + `
 resource "ipam_environment" "acc" {
   name = "acc-block-env"
+  pools = [
+    { name = "acc-pool", cidr = "10.0.0.0/8" }
+  ]
+}
+
+data "ipam_pools" "acc" {
+  environment_id = ipam_environment.acc.id
 }
 
 resource "ipam_block" "acc" {
   name           = "acc-block"
   cidr           = "10.100.0.0/24"
   environment_id = ipam_environment.acc.id
+  pool_id        = ipam_environment.acc.pool_ids[0]
 }
 `,
 				Check: resource.ComposeAggregateTestCheckFunc(
@@ -82,12 +96,20 @@ resource "ipam_block" "acc" {
 				Config: testAccProviderConfig(endpoint, token) + `
 resource "ipam_environment" "acc" {
   name = "acc-block-env"
+  pools = [
+    { name = "acc-pool", cidr = "10.0.0.0/8" }
+  ]
+}
+
+data "ipam_pools" "acc" {
+  environment_id = ipam_environment.acc.id
 }
 
 resource "ipam_block" "acc" {
   name           = "acc-block-renamed"
   cidr           = "10.100.0.0/24"
   environment_id = ipam_environment.acc.id
+  pool_id        = ipam_environment.acc.pool_ids[0]
 }
 `,
 				Check: resource.ComposeAggregateTestCheckFunc(
@@ -115,12 +137,20 @@ func TestAccAllocationResource(t *testing.T) {
 				Config: testAccProviderConfig(endpoint, token) + `
 resource "ipam_environment" "acc" {
   name = "acc-alloc-env"
+  pools = [
+    { name = "acc-pool", cidr = "10.0.0.0/8" }
+  ]
+}
+
+data "ipam_pools" "acc" {
+  environment_id = ipam_environment.acc.id
 }
 
 resource "ipam_block" "acc" {
   name           = "acc-alloc-block"
   cidr           = "10.101.0.0/24"
   environment_id = ipam_environment.acc.id
+  pool_id        = ipam_environment.acc.pool_ids[0]
 }
 
 resource "ipam_allocation" "acc" {
@@ -140,12 +170,20 @@ resource "ipam_allocation" "acc" {
 				Config: testAccProviderConfig(endpoint, token) + `
 resource "ipam_environment" "acc" {
   name = "acc-alloc-env"
+  pools = [
+    { name = "acc-pool", cidr = "10.0.0.0/8" }
+  ]
+}
+
+data "ipam_pools" "acc" {
+  environment_id = ipam_environment.acc.id
 }
 
 resource "ipam_block" "acc" {
   name           = "acc-alloc-block"
   cidr           = "10.101.0.0/24"
   environment_id = ipam_environment.acc.id
+  pool_id        = ipam_environment.acc.pool_ids[0]
 }
 
 resource "ipam_allocation" "acc" {
@@ -179,18 +217,26 @@ func TestAccAllocationAutoResource(t *testing.T) {
 				Config: testAccProviderConfig(endpoint, token) + `
 resource "ipam_environment" "acc" {
   name = "acc-auto-alloc-env"
+  pools = [
+    { name = "acc-pool", cidr = "10.0.0.0/8" }
+  ]
+}
+
+data "ipam_pools" "acc" {
+  environment_id = ipam_environment.acc.id
 }
 
 resource "ipam_block" "acc" {
   name           = "acc-auto-alloc-block"
   cidr           = "10.104.0.0/16"
   environment_id = ipam_environment.acc.id
+  pool_id        = ipam_environment.acc.pool_ids[0]
 }
 
 resource "ipam_allocation" "acc" {
   name           = "acc-auto-alloc"
   block_name     = ipam_block.acc.name
-  prefix_length = 24
+  prefix_length  = 24
 }
 `,
 				Check: resource.ComposeAggregateTestCheckFunc(
@@ -262,12 +308,20 @@ func TestAccDataSources(t *testing.T) {
 				Config: testAccProviderConfig(endpoint, token) + `
 resource "ipam_environment" "acc" {
   name = "acc-ds-env"
+  pools = [
+    { name = "acc-pool", cidr = "10.0.0.0/8" }
+  ]
+}
+
+data "ipam_pools" "acc" {
+  environment_id = ipam_environment.acc.id
 }
 
 resource "ipam_block" "acc" {
   name           = "acc-ds-block"
   cidr           = "10.102.0.0/24"
   environment_id = ipam_environment.acc.id
+  pool_id        = ipam_environment.acc.pool_ids[0]
 }
 
 resource "ipam_allocation" "acc" {

@@ -50,65 +50,58 @@ if [ -z "$API_TOKEN" ]; then
   exit 1
 fi
 
-echo "Creating environments..."
-PROD_RESP=$(curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/environments" -H "Content-Type: application/json" -d '{"name":"Production"}')
+echo "Creating environments (each requires at least one pool)..."
+PROD_RESP=$(curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/environments" -H "Content-Type: application/json" \
+  -d '{"name":"Production","pools":[{"name":"Production pool","cidr":"10.0.0.0/8"}]}')
 PROD_ID=$(echo "$PROD_RESP" | json_get id)
-echo "  Production -> ${PROD_ID}"
+PROD_POOL_ID=$(echo "$PROD_RESP" | json_get initial_pool_id)
+echo "  Production -> ${PROD_ID} (pool ${PROD_POOL_ID})"
 
-STAGING_RESP=$(curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/environments" -H "Content-Type: application/json" -d '{"name":"Staging"}')
+STAGING_RESP=$(curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/environments" -H "Content-Type: application/json" \
+  -d '{"name":"Staging","pools":[{"name":"Staging pool","cidr":"10.0.0.0/8"}]}')
 STAGING_ID=$(echo "$STAGING_RESP" | json_get id)
-echo "  Staging -> ${STAGING_ID}"
+STAGING_POOL_ID=$(echo "$STAGING_RESP" | json_get initial_pool_id)
+echo "  Staging -> ${STAGING_ID} (pool ${STAGING_POOL_ID})"
 
 echo "Creating blocks (non-contiguous per env to test suggested CIDR ranges)..."
 # Production: 10.0.0.0/16, 10.2.0.0/16, 10.4.0.0/16 — gaps at 10.1.x, 10.3.x, 10.5.x, etc.
 curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/blocks" -H "Content-Type: application/json" \
-  -d "{\"name\":\"prod-vpc\",\"cidr\":\"10.0.0.0/16\",\"environment_id\":\"${PROD_ID}\"}" >/dev/null
+  -d "{\"name\":\"prod-vpc\",\"cidr\":\"10.0.0.0/16\",\"environment_id\":\"${PROD_ID}\",\"pool_id\":\"${PROD_POOL_ID}\"}" >/dev/null
 echo "  prod-vpc (10.0.0.0/16) in Production"
 
 curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/blocks" -H "Content-Type: application/json" \
-  -d "{\"name\":\"prod-dmz\",\"cidr\":\"10.2.0.0/16\",\"environment_id\":\"${PROD_ID}\"}" >/dev/null
+  -d "{\"name\":\"prod-dmz\",\"cidr\":\"10.2.0.0/16\",\"environment_id\":\"${PROD_ID}\",\"pool_id\":\"${PROD_POOL_ID}\"}" >/dev/null
 echo "  prod-dmz (10.2.0.0/16) in Production"
 
 curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/blocks" -H "Content-Type: application/json" \
-  -d "{\"name\":\"prod-data\",\"cidr\":\"10.4.0.0/16\",\"environment_id\":\"${PROD_ID}\"}" >/dev/null
+  -d "{\"name\":\"prod-data\",\"cidr\":\"10.4.0.0/16\",\"environment_id\":\"${PROD_ID}\",\"pool_id\":\"${PROD_POOL_ID}\"}" >/dev/null
 echo "  prod-data (10.4.0.0/16) in Production"
 
 # Staging: 10.1.0.0/16, 10.3.0.0/16, 10.5.0.0/16 — gaps at 10.2.x, 10.4.x, etc.
 curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/blocks" -H "Content-Type: application/json" \
-  -d "{\"name\":\"staging-vpc\",\"cidr\":\"10.1.0.0/16\",\"environment_id\":\"${STAGING_ID}\"}" >/dev/null
+  -d "{\"name\":\"staging-vpc\",\"cidr\":\"10.1.0.0/16\",\"environment_id\":\"${STAGING_ID}\",\"pool_id\":\"${STAGING_POOL_ID}\"}" >/dev/null
 echo "  staging-vpc (10.1.0.0/16) in Staging"
 
 curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/blocks" -H "Content-Type: application/json" \
-  -d "{\"name\":\"staging-test\",\"cidr\":\"10.3.0.0/16\",\"environment_id\":\"${STAGING_ID}\"}" >/dev/null
+  -d "{\"name\":\"staging-test\",\"cidr\":\"10.3.0.0/16\",\"environment_id\":\"${STAGING_ID}\",\"pool_id\":\"${STAGING_POOL_ID}\"}" >/dev/null
 echo "  staging-test (10.3.0.0/16) in Staging"
 
 curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/blocks" -H "Content-Type: application/json" \
-  -d "{\"name\":\"staging-dev\",\"cidr\":\"10.5.0.0/16\",\"environment_id\":\"${STAGING_ID}\"}" >/dev/null
+  -d "{\"name\":\"staging-dev\",\"cidr\":\"10.5.0.0/16\",\"environment_id\":\"${STAGING_ID}\",\"pool_id\":\"${STAGING_POOL_ID}\"}" >/dev/null
 echo "  staging-dev (10.5.0.0/16) in Staging"
 
 curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/blocks" -H "Content-Type: application/json" \
   -d '{"name":"orphan-block","cidr":"192.168.0.0/24"}' >/dev/null
 echo "  orphan-block (192.168.0.0/24) [no environment]"
 
-# IPv6 ULA blocks
-curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/blocks" -H "Content-Type: application/json" \
-  -d "{\"name\":\"prod-ula\",\"cidr\":\"fd00:0:0:1::/48\",\"environment_id\":\"${PROD_ID}\"}" >/dev/null
-echo "  prod-ula (fd00:0:0:1::/48) in Production"
-curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/blocks" -H "Content-Type: application/json" \
-  -d "{\"name\":\"staging-ula\",\"cidr\":\"fd00:0:0:2::/48\",\"environment_id\":\"${STAGING_ID}\"}" >/dev/null
-echo "  staging-ula (fd00:0:0:2::/48) in Staging"
-curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/blocks" -H "Content-Type: application/json" \
-  -d '{"name":"orphan-ula","cidr":"fd00:0:0:0::/48"}' >/dev/null
-echo "  orphan-ula (fd00:0:0:0::/48) [no environment]"
-
 # Full utilization: entire block allocated (100%)
 curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/blocks" -H "Content-Type: application/json" \
-  -d "{\"name\":\"full-block\",\"cidr\":\"10.7.0.0/26\",\"environment_id\":\"${PROD_ID}\"}" >/dev/null
+  -d "{\"name\":\"full-block\",\"cidr\":\"10.7.0.0/26\",\"environment_id\":\"${PROD_ID}\",\"pool_id\":\"${PROD_POOL_ID}\"}" >/dev/null
 echo "  full-block (10.7.0.0/26) in Production [for 100% utilization]"
 
 # Nearly full utilization: ~94% allocated (240/256)
 curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/blocks" -H "Content-Type: application/json" \
-  -d "{\"name\":\"nearly-full-block\",\"cidr\":\"10.8.0.0/24\",\"environment_id\":\"${PROD_ID}\"}" >/dev/null
+  -d "{\"name\":\"nearly-full-block\",\"cidr\":\"10.8.0.0/24\",\"environment_id\":\"${PROD_ID}\",\"pool_id\":\"${PROD_POOL_ID}\"}" >/dev/null
 echo "  nearly-full-block (10.8.0.0/24) in Production [for ~94% utilization]"
 
 echo "Creating allocations..."
@@ -123,13 +116,6 @@ echo "  prod-db 10.0.2.0/24 in prod-vpc (gap 10.0.1.0/24 for bin-pack demo)"
 curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/allocations" -H "Content-Type: application/json" \
   -d '{"name":"staging-app","block_name":"staging-vpc","cidr":"10.1.0.0/24"}' >/dev/null
 echo "  staging-app 10.1.0.0/24 in staging-vpc"
-
-curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/allocations" -H "Content-Type: application/json" \
-  -d '{"name":"prod-ula-subnet","block_name":"prod-ula","cidr":"fd00:0:0:1::/64"}' >/dev/null
-echo "  prod-ula-subnet fd00:0:0:1::/64 in prod-ula"
-curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/allocations" -H "Content-Type: application/json" \
-  -d '{"name":"staging-ula-subnet","block_name":"staging-ula","cidr":"fd00:0:0:2::/64"}' >/dev/null
-echo "  staging-ula-subnet fd00:0:0:2::/64 in staging-ula"
 
 curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/allocations" -H "Content-Type: application/json" \
   -d '{"name":"orphan-subnet","block_name":"orphan-block","cidr":"192.168.0.0/26"}' >/dev/null
@@ -164,10 +150,6 @@ curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/reserved-blocks" -H 
   -d '{"name":"DMZ","cidr":"172.16.0.0/24","reason":"DMZ reserve"}' >/dev/null
 echo "  DMZ 172.16.0.0/24 (DMZ reserve)"
 
-curl "${CURL_OPTS[@]}" -f "${CURL_AUTH[@]}" -X POST "${API}/reserved-blocks" -H "Content-Type: application/json" \
-  -d '{"name":"ULA reserve","cidr":"fd00:0:0:ff00::/56","reason":"Reserved IPv6 ULA range"}' >/dev/null
-echo "  ULA reserve fd00:0:0:ff00::/56 (Reserved IPv6 ULA range)"
-
 # Adversarial: attempt invalid requests and expect API to reject (4xx)
 echo "Verifying API rejects invalid data..."
 expect_4xx() {
@@ -185,9 +167,11 @@ expect_4xx() {
 
 # Environment: empty name
 expect_4xx "environment with empty name" -X POST "${API}/environments" -H "Content-Type: application/json" -d '{"name":""}'
-# Environment: invalid initial block CIDR
-expect_4xx "environment with invalid initial block CIDR" -X POST "${API}/environments" -H "Content-Type: application/json" \
-  -d '{"name":"BadEnv","initial_block":{"name":"x","cidr":"not-a-cidr"}}'
+# Environment: missing required pools
+expect_4xx "environment without pools" -X POST "${API}/environments" -H "Content-Type: application/json" -d '{"name":"BadEnv"}'
+# Environment: invalid pool CIDR
+expect_4xx "environment with invalid pool CIDR" -X POST "${API}/environments" -H "Content-Type: application/json" \
+  -d '{"name":"BadEnv","pools":[{"name":"x","cidr":"not-a-cidr"}]}'
 
 # Block: missing name
 expect_4xx "block with missing name" -X POST "${API}/blocks" -H "Content-Type: application/json" \

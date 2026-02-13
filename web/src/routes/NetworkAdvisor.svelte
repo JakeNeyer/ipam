@@ -1,8 +1,7 @@
 <script>
-  import { tick } from 'svelte'
+  import { tick, onMount } from 'svelte'
   import {
     getSubnetInfo,
-    parseCidrToInt,
     parseCidrToBigInt,
     cidrRangeToBigInt,
     formatAddressFromBigInt,
@@ -10,11 +9,6 @@
   } from '../lib/cidr.js'
   import {
     totalIPsForPrefix,
-    suggestBlockForEnvironment,
-    blockSizeForEnvironment,
-    totalAllocatedBlockIPsForDisplay,
-    getMaxNetworks as sizingGetMaxNetworks,
-    getMaxHostsPerNetwork as sizingGetMaxHostsPerNetwork,
   } from '../lib/networkSizing.js'
   import { formatBlockCount } from '../lib/blockCount.js'
   import { createBlock, createEnvironment, createReservedBlock, listBlocks, listReservedBlocks } from '../lib/api.js'
@@ -83,14 +77,12 @@
   ]
 
   let currentStep = 1
-  let startCidr = RFC1918_OPTIONS[0].cidr
+  let poolCidr = RFC1918_OPTIONS[0].cidr
   let selectedTemplate = 'dev-test-prod'
   let environments = ENV_TEMPLATES[selectedTemplate].map((name, idx) => ({
     id: `env-${idx}`,
     name,
-    networks: 6,
-    hostsPerNetwork: 120,
-    growthPercent: 0,
+    networks: 4,
   }))
   let includeReservedBlocks = false
   let reservedBlocksDraft = [{ id: `reserved-${Date.now()}`, name: '', cidr: '', reason: '' }]
@@ -99,10 +91,109 @@
   let generateSuccess = ''
   let showStartOverModal = false
   let existingOccupiedIPs = 0
+  let existingOccupiedRanges = []
   let loadingOccupied = false
   let lastOccupiedLoadKey = ''
   let previousBaseCidrForSizing = ''
   let hasInitialMaximized = false
+
+  const MIN_BLOCK_IPS = 8 // /29 for IPv4 -- smallest meaningful network block
+
+  /** Compute per-block sizing for N equal blocks in a pool. */
+  function blockSizingForPool(poolRange, networks, version = 4) {
+    if (!poolRange) return null
+    const bits = version === 6 ? 128 : 32
+    const poolSize = poolRange.end - poolRange.start + 1n
+    const n = BigInt(Math.max(1, networks))
+    const perBlock = poolSize / n
+    if (perBlock <= 0n) return null
+    let exp = 0n
+    while ((1n << (exp + 1n)) <= perBlock) exp++
+    const blockIPs = 1n << exp
+    const prefix = Number(BigInt(bits) - exp)
+    const totalIPs = blockIPs * n
+    return { prefix, blockIPs, totalIPs, poolSize }
+  }
+
+  /** Max networks that fit in a pool with at least MIN_BLOCK_IPS per block. */
+  function maxNetworksInPool(poolRange) {
+    if (!poolRange) return 1
+    const poolSize = poolRange.end - poolRange.start + 1n
+    const max = poolSize / BigInt(MIN_BLOCK_IPS)
+    return Math.max(1, max <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(max) : Number.MAX_SAFE_INTEGER)
+  }
+
+  /**
+   * Place N equal-sized, power-of-2-aligned pools within a base range,
+   * skipping over any occupied ranges (existing blocks + reserved blocks).
+   */
+  function computePoolRangesInFreeSpace(baseRange, occupiedRanges, n) {
+    if (!baseRange || n < 1) return []
+    const baseSize = baseRange.end - baseRange.start + 1n
+    const occupiedIPs = BigInt(occupiedIPsWithinRange(baseRange, occupiedRanges))
+    const totalFree = baseSize - occupiedIPs
+    if (totalFree < BigInt(n)) return []
+
+    // Target pool size: largest power of 2 where n pools fit in available space
+    const targetPerPool = totalFree / BigInt(n)
+    let exp = 0n
+    while ((1n << (exp + 1n)) <= targetPerPool) exp++
+    let poolSize = 1n << exp
+    if (poolSize <= 0n) return []
+
+    const bits = baseRange.version === 6 ? 128 : 32
+    const prefix = Number(BigInt(bits) - exp)
+
+    // Merge occupied ranges within base for efficient conflict checking
+    const clipped = occupiedRanges
+      .filter((r) => r.start <= baseRange.end && r.end >= baseRange.start)
+      .map((r) => ({
+        start: r.start > baseRange.start ? r.start : baseRange.start,
+        end: r.end < baseRange.end ? r.end : baseRange.end,
+      }))
+      .sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0))
+    const mergedOccupied = []
+    for (const r of clipped) {
+      if (mergedOccupied.length > 0 && r.start <= mergedOccupied[mergedOccupied.length - 1].end + 1n) {
+        if (r.end > mergedOccupied[mergedOccupied.length - 1].end) mergedOccupied[mergedOccupied.length - 1].end = r.end
+      } else {
+        mergedOccupied.push({ start: r.start, end: r.end })
+      }
+    }
+
+    // Place pools sequentially, aligning to poolSize boundaries and skipping occupied space
+    const pools = []
+    let cursor = baseRange.start
+
+    for (let i = 0; i < n; i++) {
+      let placed = false
+      while (cursor + poolSize - 1n <= baseRange.end) {
+        const aligned = alignUpBigInt(cursor, poolSize)
+        if (aligned + poolSize - 1n > baseRange.end) break
+        const candidateEnd = aligned + poolSize - 1n
+        const conflict = mergedOccupied.find((r) => r.start <= candidateEnd && aligned <= r.end)
+        if (!conflict) {
+          const addrStr =
+            baseRange.version === 6 ? formatAddressFromBigInt(aligned, 6) : intToAddress(Number(aligned))
+          pools.push({
+            start: aligned,
+            end: candidateEnd,
+            prefix,
+            version: baseRange.version,
+            cidr: `${addrStr}/${prefix}`,
+          })
+          cursor = aligned + poolSize
+          placed = true
+          break
+        }
+        // Skip past the conflict and try next aligned position
+        cursor = conflict.end + 1n
+      }
+      if (!placed) break
+    }
+
+    return pools
+  }
 
   function isPrivateCidr(cidr) {
     const parsed = parseCidrToBigInt(cidr)
@@ -118,57 +209,39 @@
     return false
   }
 
-  function toHostStep(value) {
-    return Math.max(8, Math.round(value / 8) * 8)
-  }
-
-  // Logarithmic slider mapping: internal 0–SLIDER_STEPS maps to 1–max via log scale.
+  // Slider mapping: 0-SLIDER_STEPS maps to 1-max. Use linear when max is small so the slider isn't stuck at 1; use log scale for large max.
   const SLIDER_STEPS = 1000
+  const SLIDER_LINEAR_THRESHOLD = 32 // use linear scale when max <= this so 1,2,3... are evenly spread
   function networksToSlider(networks, max) {
     if (max <= 1) return 0
     const clamped = Math.max(1, Math.min(networks, max))
+    if (max <= SLIDER_LINEAR_THRESHOLD) {
+      return Math.round(((clamped - 1) / (max - 1)) * SLIDER_STEPS)
+    }
     return Math.round((Math.log(clamped) / Math.log(max)) * SLIDER_STEPS)
   }
   function sliderToNetworks(sliderVal, max) {
     if (max <= 1) return 1
     const t = Number(sliderVal) / SLIDER_STEPS
+    if (max <= SLIDER_LINEAR_THRESHOLD) {
+      return Math.max(1, Math.round(1 + (max - 1) * t))
+    }
     return Math.max(1, Math.round(Math.pow(max, t)))
   }
 
   const advisorVersion = () => parsedStart?.version ?? 4
 
-  /** Set each env to 1 network and max hostsPerNetwork for the base CIDR (iterative: each env's max depends on prior envs) */
-  function setEnvironmentsToMaxForBaseCidr(envs) {
-    const basePrefix = parsedStart?.prefix ?? 0
-    const version = advisorVersion()
-    if (!basePrefix || envs.length === 0) return envs
-    const result = []
-    for (let i = 0; i < envs.length; i += 1) {
-      const env = envs[i]
-      const envWithOneNetwork = { ...env, networks: 1 }
-      const currentEnvs = [...result, { ...env, networks: 1 }, ...envs.slice(i + 1)]
-      const maxHosts = sizingGetMaxHostsPerNetwork(
-        currentEnvs,
-        basePrefix,
-        env.id,
-        envWithOneNetwork,
-        0,
-        version,
-      )
-      result.push({ ...env, networks: 1, hostsPerNetwork: maxHosts })
-    }
-    return result
-  }
-
-  function getMaxHostsPerNetworkForEnvironment(id, envOverride = null) {
-    return sizingGetMaxHostsPerNetwork(
-      environments,
-      parsedStart?.prefix ?? 0,
-      id,
-      envOverride,
-      0,
-      advisorVersion(),
-    )
+  /** Clamp each environment's network count to fit in its pool (accounting for occupied space). */
+  function clampEnvironmentsToPool(envs) {
+    if (envs.length === 0) return envs
+    const baseRange = startRangeForPools ?? (parsedStart && cidrToRange(normalizeCidr(poolCidr) || poolCidr)) ?? null
+    if (!baseRange) return envs
+    const pools = computePoolRangesInFreeSpace(baseRange, allOccupiedRanges, envs.length)
+    if (pools.length !== envs.length) return envs
+    return envs.map((env, i) => {
+      const max = maxNetworksInPool(pools[i])
+      return { ...env, networks: Math.max(1, Math.min(Math.max(1, Math.round(Number(env.networks) || 1)), max)) }
+    })
   }
 
   function intToAddress(intValue) {
@@ -199,7 +272,7 @@
 
   /** Suggested reserved block CIDR within base (e.g. last /16 for /8, last /24 for /16) */
   function suggestedReservedCidrPlaceholder() {
-    const baseRange = parsedStart ? cidrToRange(normalizeCidr(startCidr) || startCidr) : null
+    const baseRange = parsedStart ? cidrToRange(normalizeCidr(poolCidr) || poolCidr) : null
     if (!baseRange) return parsedStart?.version === 6 ? 'e.g. fd00::1:0/64' : 'e.g. 10.255.0.0/16'
     const baseSize = baseRange.end - baseRange.start + 1n
     const suggestedPrefix = baseRange.prefix >= 16 ? 24 : 16
@@ -236,7 +309,7 @@
 
   async function loadExistingOccupiedInBase() {
     if (!parsedStart || loadingOccupied) return
-    const startRange = cidrToRange(normalizeCidr(startCidr) || startCidr)
+    const startRange = cidrToRange(normalizeCidr(poolCidr) || poolCidr)
     if (!startRange) return
     loadingOccupied = true
     existingOccupiedIPs = startRange.version === 6 ? 0n : 0
@@ -256,8 +329,10 @@
         const rg = cidrToRange(r.cidr)
         if (rg && rg.version === startRange.version) ranges.push(rg)
       }
+      existingOccupiedRanges = ranges
       existingOccupiedIPs = occupiedIPsWithinRange(startRange, ranges)
     } catch {
+      existingOccupiedRanges = []
       existingOccupiedIPs = startRange.version === 6 ? 0n : 0
     } finally {
       loadingOccupied = false
@@ -303,11 +378,9 @@
     const base = ENV_TEMPLATES[templateKey].map((name, idx) => ({
       id: `env-${Date.now()}-${idx}`,
       name,
-      networks: 6,
-      hostsPerNetwork: 120,
-      growthPercent: 0,
+      networks: 4,
     }))
-    environments = setEnvironmentsToMaxForBaseCidr(base)
+    environments = clampEnvironmentsToPool(base)
   }
 
   function addEnvironment() {
@@ -315,44 +388,27 @@
       id: `env-${Date.now()}`,
       name: `env-${environments.length + 1}`,
       networks: 4,
-      hostsPerNetwork: 80,
-      growthPercent: 0,
     }
-    environments = setEnvironmentsToMaxForBaseCidr([...environments, newEnv])
+    environments = clampEnvironmentsToPool([...environments, newEnv])
   }
 
   function removeEnvironment(id) {
-    environments = environments.filter((e) => e.id !== id)
+    const remaining = environments.filter((e) => e.id !== id)
+    environments = clampEnvironmentsToPool(remaining)
   }
 
-  function updateEnvironmentSizing(id, key, rawValue) {
-    const numericValue = Number(rawValue)
-    if (!Number.isFinite(numericValue)) return
-    environments = environments.map((env) => {
+  function updateEnvironmentNetworks(id, rawValue) {
+    const n = Math.max(1, Math.round(Number(rawValue)))
+    if (!Number.isFinite(n)) return
+    environments = environments.map((env, i) => {
       if (env.id !== id) return env
-      if (key === 'networks') {
-        const networks = Math.max(1, Math.round(numericValue))
-        const updated = { ...env, networks }
-        const maxHosts = Math.max(8, getMaxHostsPerNetworkForEnvironment(id, updated))
-        return { ...updated, hostsPerNetwork: maxHosts }
-      }
-      return env
+      const max = maxNetworksInPool(envPoolRanges?.[i])
+      return { ...env, networks: Math.min(n, max) }
     })
   }
 
-  function getMaxNetworksForEnvironment(id, envOverride = null) {
-    return sizingGetMaxNetworks(
-      environments,
-      parsedStart?.prefix ?? 0,
-      id,
-      envOverride,
-      0,
-      advisorVersion(),
-    )
-  }
-
   function selectStartCidr(cidr) {
-    if (cidr) startCidr = cidr
+    if (cidr) poolCidr = cidr
   }
 
   function addReservedDraft() {
@@ -379,17 +435,17 @@
     if (generating) return
     generateError = ''
     generateSuccess = ''
-    const normalizedStart = normalizeCidr(startCidr)
+    const normalizedStart = normalizeCidr(poolCidr)
     const startRange = cidrToRange(normalizedStart)
     if (!startRange) {
-      generateError = 'Starting CIDR is invalid.'
+      generateError = 'Base CIDR is invalid.'
       return
     }
     const envPlans = environments
-      .map((env) => ({
+      .map((env, i) => ({
         env,
         envName: (env.name || '').trim(),
-        suggestion: suggestBlockForEnvironment(env, startRange.version),
+        poolRange: envPoolRanges[i] ?? null,
       }))
       .filter((item) => item.envName.length > 0)
     if (envPlans.length === 0) {
@@ -462,23 +518,28 @@
       const generated = []
       let totalBlocksCreated = 0
       for (const plan of envPlans) {
-        const envResponse = await createEnvironment(plan.envName, null, isGlobalAdmin($user) ? $selectedOrgForGlobalAdmin : null)
+        const poolRange = plan.poolRange ?? startRange
+        const poolCidrForEnv = poolRange?.cidr ?? normalizedStart
+        const pools = [{ name: `${plan.envName} pool`, cidr: poolCidrForEnv }]
+        const envResponse = await createEnvironment(plan.envName, pools, isGlobalAdmin($user) ? $selectedOrgForGlobalAdmin : null)
         const networksCount = Math.max(1, Number(plan.env.networks) || 0)
-        const blockPrefix = plan.suggestion.networkPrefix
+        const sizing = blockSizingForPool(poolRange, networksCount, startRange.version)
+        if (!sizing) throw new Error(`Cannot compute block size for ${plan.envName}.`)
+        const blockPrefix = sizing.prefix
 
         for (let i = 0; i < networksCount; i += 1) {
-          const cidr = findNextFreeCidr(startRange, blockPrefix, occupiedRanges)
+          const cidr = findNextFreeCidr(poolRange, blockPrefix, occupiedRanges)
           if (!cidr) {
             throw new Error(
-              `No available /${blockPrefix} CIDR remains inside ${normalizedStart} for ${plan.envName}. ` +
-                `Existing blocks or reserved ranges may be using the space. Reduce environment sizes or use a larger base CIDR.`,
+              `No available /${blockPrefix} CIDR remains inside pool ${poolCidrForEnv} for ${plan.envName}. ` +
+                `Reduce networks for this environment, or use a larger base CIDR.`,
             )
           }
           const blockName = makeUniqueName(
             networksCount > 1 ? `${plan.envName} Block ${i + 1}` : `${plan.envName} Block`,
             usedBlockNames,
           )
-          await createBlock(blockName, cidr, envResponse.id)
+          await createBlock(blockName, cidr, envResponse.id, null, envResponse.initial_pool_id ?? null)
           const blockRange = cidrToRange(cidr)
           if (blockRange) occupiedRanges.push(blockRange)
           generated.push({ envName: plan.envName, cidr })
@@ -506,10 +567,27 @@
     if (currentStep > 1) currentStep -= 1
   }
 
-  $: parsedStart = parseCidrToBigInt(startCidr)
+  $: parsedStart = parseCidrToBigInt(poolCidr)
+  $: startRangeForPools = parsedStart && (normalizeCidr(poolCidr) || poolCidr)
+    ? cidrToRange(normalizeCidr(poolCidr) || poolCidr)
+    : null
+  /** Pools: base CIDR split into N equal-sized pools placed in free space (avoiding existing blocks & reserved). */
+  $: envPoolRanges = (() => {
+    if (!startRangeForPools || environments.length === 0) return []
+    return computePoolRangesInFreeSpace(startRangeForPools, allOccupiedRanges, environments.length)
+  })()
+  /** True if the base CIDR can fit all current environments as pools (each gets a pool range). */
+  $: poolsFitInBase =
+    !startRangeForPools || environments.length === 0 || envPoolRanges.length === environments.length
+  /** True if adding one more environment would still fit in the base (so "Add environment" is allowed). */
+  $: canAddMoreEnvironments = (() => {
+    if (!startRangeForPools || environments.length === 0) return true
+    const nextRanges = computePoolRangesInFreeSpace(startRangeForPools, allOccupiedRanges, environments.length + 1)
+    return nextRanges.length === environments.length + 1
+  })()
   $: startInfo = parsedStart
     ? getSubnetInfo(
-        startCidr.indexOf('/') >= 0 ? startCidr.slice(0, startCidr.indexOf('/')).trim() : startCidr.trim(),
+        poolCidr.indexOf('/') >= 0 ? poolCidr.slice(0, poolCidr.indexOf('/')).trim() : poolCidr.trim(),
         parsedStart.prefix,
         parsedStart.version,
       )
@@ -523,39 +601,35 @@
       : 0n
   $: startUsableIPs = startInfo?.usable ?? 0
   $: advisorVer = advisorVersion()
-  $: environmentSizing = environments.map((env) => ({ env, suggestion: suggestBlockForEnvironment(env, advisorVer) }))
-  $: totalRequiredIPs = environmentSizing.reduce((sum, item) => sum + item.suggestion.requiredIPs, 0)
-  $: totalNetworkBlocksToCreate = environments.reduce((sum, env) => sum + Math.max(1, Number(env.networks) || 1), 0)
-  $: totalRequiredBlockIPs = environmentSizing.reduce((sum, item) => sum + item.suggestion.requiredBlockIPs, 0)
-  /** Sum of IPs consumed (N subnets × subnet size each; matches actual generation). BigInt for IPv6 to avoid Infinity. */
-  $: totalAllocatedBlockIPsDisplay = (() => {
-    const v = parsedStart?.version ?? advisorVer
-    const raw = totalAllocatedBlockIPsForDisplay(environments, v)
-    // Safety: if IPv6 but helper returns a number (shouldn't), coerce to BigInt for comparisons.
-    if (v === 6 && typeof raw !== 'bigint') {
-      const n = Number(raw)
-      return Number.isFinite(n) ? BigInt(Math.trunc(n)) : 0n
-    }
-    return raw
+  $: totalNetworkBlocks = environments.reduce((sum, env) => sum + Math.max(1, Number(env.networks) || 1), 0)
+  /** Total IPs consumed by all planned blocks (BigInt for v4 and v6 safety). */
+  $: totalAllocatedIPs = (() => {
+    let sum = 0n
+    environments.forEach((env, i) => {
+      const sizing = blockSizingForPool(envPoolRanges[i], env.networks, advisorVer)
+      if (sizing) sum += sizing.totalIPs
+    })
+    return sum
   })()
-  $: totalAllocatedBlockIPs =
-    typeof totalAllocatedBlockIPsDisplay === 'bigint'
-      ? totalAllocatedBlockIPsDisplay
-      : environmentSizing.reduce((sum, item) => sum + item.suggestion.requiredBlockIPs, 0)
-  $: totalPlannedUsableIPs = environmentSizing.reduce((sum, item) => sum + item.suggestion.usableIPsInPlannedSubnets, 0)
-  $: aggregateFreeIPs = Math.max(0, totalPlannedUsableIPs - totalRequiredIPs)
-  $: aggregateUsedPercent =
-    totalPlannedUsableIPs > 0 ? Math.min(100, Math.round((totalRequiredIPs / totalPlannedUsableIPs) * 100)) : 0
-  /** Base CIDR block space usage: each env takes a portion; compare allocated block IPs to base total */
   $: usagePercent =
     startTotalIPsBigInt > 0n
-      ? Math.min(
-          100,
-          typeof totalAllocatedBlockIPsDisplay === 'bigint'
-            ? Number((totalAllocatedBlockIPsDisplay * 100n) / startTotalIPsBigInt)
-            : Number((BigInt(totalAllocatedBlockIPs) * 100n) / startTotalIPsBigInt),
-        )
+      ? Math.min(100, Number((totalAllocatedIPs * 100n) / startTotalIPsBigInt))
       : 0
+  /** Auto-clamp each environment's network count to fit in its pool. */
+  $: if (environments.length > 0 && startRangeForPools) {
+    const poolRangesForClamp = computePoolRangesInFreeSpace(startRangeForPools, allOccupiedRanges, environments.length)
+    if (poolRangesForClamp.length >= environments.length) {
+      let changed = false
+      const next = environments.map((env, i) => {
+        const max = maxNetworksInPool(poolRangesForClamp[i])
+        const current = Math.max(1, Math.round(Number(env.networks) || 1))
+        if (current <= max) return env
+        changed = true
+        return { ...env, networks: max }
+      })
+      if (changed) environments = next
+    }
+  }
   $: reservedDraftEntries = reservedBlocksDraft
     .map((entry) => ({
       ...entry,
@@ -565,9 +639,23 @@
     }))
     .filter((entry) => entry.name || entry.cidr || entry.reason)
   $: hasValidReservedDrafts = reservedDraftEntries.every((entry) => normalizeCidr(entry.cidr))
+  /** All occupied ranges: existing blocks/reserved + any draft reserved entries. */
+  $: allOccupiedRanges = (() => {
+    const ranges = [...existingOccupiedRanges]
+    if (includeReservedBlocks) {
+      for (const e of reservedDraftEntries) {
+        const cidr = normalizeCidr(e.cidr)
+        if (cidr) {
+          const r = cidrToRange(cidr)
+          if (r) ranges.push(r)
+        }
+      }
+    }
+    return ranges
+  })()
   $: reservedDraftOccupiedIPs = (() => {
     if (!includeReservedBlocks || !parsedStart) return 0
-    const startRange = cidrToRange(normalizeCidr(startCidr) || startCidr)
+    const startRange = cidrToRange(normalizeCidr(poolCidr) || poolCidr)
     if (!startRange) return 0
     const ranges = reservedDraftEntries
       .filter((e) => normalizeCidr(e.cidr))
@@ -585,34 +673,26 @@
       ? (startTotalIPsBigInt - totalOccupiedForSizing > 0n ? startTotalIPsBigInt - totalOccupiedForSizing : 0n)
       : Math.max(0, Number(startTotalIPs) - totalOccupiedForSizing)
   $: fitsInBaseCidr =
-    (parsedStart?.version === 6 &&
-      startTotalIPsBigInt > 0n &&
-      typeof totalAllocatedBlockIPsDisplay === 'bigint' &&
-      totalAllocatedBlockIPsDisplay <= availableIPsInBase) ||
-    (parsedStart?.version === 4 && Number(startTotalIPs) > 0 && totalAllocatedBlockIPs <= availableIPsInBase)
-  $: normalizedBaseCidr = parsedStart ? (normalizeCidr(startCidr) || startCidr) : ''
+    startTotalIPsBigInt > 0n &&
+    totalAllocatedIPs <= (typeof availableIPsInBase === 'bigint' ? availableIPsInBase : BigInt(Math.max(0, Math.floor(Number(availableIPsInBase)))))
+  $: normalizedBaseCidr = parsedStart ? (normalizeCidr(poolCidr) || poolCidr) : ''
   $: if (parsedStart && environments.length > 0 && !hasInitialMaximized) {
     hasInitialMaximized = true
-    environments = setEnvironmentsToMaxForBaseCidr(environments)
+    environments = clampEnvironmentsToPool(environments)
   }
   $: if (normalizedBaseCidr && normalizedBaseCidr !== previousBaseCidrForSizing) {
     const hadPrevious = previousBaseCidrForSizing !== ''
     previousBaseCidrForSizing = normalizedBaseCidr
     if (hadPrevious) {
       tick().then(() => {
-        environments = environments.map((env) => ({
-          ...env,
-          networks: 1,
-          hostsPerNetwork: 8,
-          growthPercent: 0,
-        }))
-        environments = setEnvironmentsToMaxForBaseCidr(environments)
+        environments = environments.map((env) => ({ ...env, networks: 1 }))
+        environments = clampEnvironmentsToPool(environments)
       })
     }
   }
   $: occupiedLoadKey =
-    (currentStep === 4 || currentStep === 5) && parsedStart
-      ? `${currentStep}:${normalizeCidr(startCidr) || startCidr}`
+    currentStep >= 2 && parsedStart
+      ? normalizeCidr(poolCidr) || poolCidr
       : ''
   $: if (occupiedLoadKey) {
     if (occupiedLoadKey !== lastOccupiedLoadKey && !loadingOccupied) {
@@ -624,39 +704,50 @@
   }
   $: hasValidEnvironmentNames = environments.some((e) => (e.name || '').trim().length > 0)
   $: selectedStartHint = (() => {
-    const norm = normalizeCidr(startCidr) || startCidr.trim()
+    const norm = normalizeCidr(poolCidr) || poolCidr.trim()
     if (!norm) return 'other'
     const match = CIDR_HINTS.find((h) => h.cidr && normalizeCidr(h.cidr) === norm)
     return match ? match.cidr : 'other'
   })()
   $: canContinue =
     currentStep === 1 ? !!parsedStart :
-    currentStep === 2 ? hasValidEnvironmentNames :
+    currentStep === 2 ? hasValidEnvironmentNames && poolsFitInBase :
     currentStep === 3 ? (!includeReservedBlocks || hasValidReservedDrafts) :
     true
+
+  onMount(() => {
+    const onFocus = () => {
+      if (currentStep >= 2 && parsedStart) {
+        lastOccupiedLoadKey = ''
+      }
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  })
 </script>
 
 <div class="page">
   <header class="page-header">
     <div class="page-header-text">
       <h1 class="page-title">Network Advisor</h1>
-      <p class="page-desc">Step-by-step wizard to plan CIDR strategy, environments, and block sizing.</p>
+      <p class="page-desc">Plan from a base CIDR: define environments (each with a pool), then size network blocks.</p>
     </div>
   </header>
 
   <section class="wizard-progress card">
     <div class="wizard-steps">
       <span class="step" class:active={currentStep === 1} class:done={currentStep > 1}>1. Base CIDR</span>
-      <span class="step" class:active={currentStep === 2} class:done={currentStep > 2}>2. Environments</span>
-      <span class="step" class:active={currentStep === 3} class:done={currentStep > 3}>3. Reserve blocks</span>
-      <span class="step" class:active={currentStep === 4} class:done={currentStep > 4}>4. Block sizing</span>
+      <span class="step" class:active={currentStep === 2} class:done={currentStep > 2}>2. Environments & pools</span>
+      <span class="step" class:active={currentStep === 3} class:done={currentStep > 3}>3. Reserved blocks</span>
+      <span class="step" class:active={currentStep === 4} class:done={currentStep > 4}>4. Network blocks</span>
       <span class="step" class:active={currentStep === 5}>5. Summary</span>
     </div>
   </section>
 
   <section class="card section">
     {#if currentStep === 1}
-      <h2>Step 1: Choose a starting CIDR</h2>
+      <h2>Step 1: Choose base CIDR</h2>
+      <p class="muted">The overall address space. Environments (and their pools) and network blocks will be carved from this range.</p>
       <div class="hint-grid">
         {#each CIDR_HINTS as hint}
           <button
@@ -689,20 +780,20 @@
       </div>
       <div class="start-cidr-input">
         <div class="form-row">
-          <label for="advisor-start-cidr">Starting CIDR</label>
-          <input id="advisor-start-cidr" class="input" type="text" bind:value={startCidr} placeholder="e.g. 10.0.0.0/8 or fd00::/8" />
+          <label for="advisor-base-cidr">Base CIDR</label>
+          <input id="advisor-base-cidr" class="input" type="text" bind:value={poolCidr} placeholder="e.g. 10.0.0.0/8 or fd00::/8" />
         </div>
       </div>
       {#if !parsedStart}
         <p class="error">Enter a valid CIDR (e.g. 10.0.0.0/8 or fd00::/8).</p>
-      {:else if !isPrivateCidr(startCidr)}
+      {:else if !isPrivateCidr(poolCidr)}
         <p class="warn">This CIDR is valid, but it is not in a private range (RFC 1918 or IPv6 ULA).</p>
       {:else}
-        <p class="ok">Private CIDR detected. Estimated usable IPs: {typeof startUsableIPs === 'number' ? startUsableIPs.toLocaleString() : formatBlockCount(startUsableIPs)}.</p>
+        <p class="ok">Base range set. Estimated usable IPs: {typeof startUsableIPs === 'number' ? startUsableIPs.toLocaleString() : formatBlockCount(startUsableIPs)}.</p>
       {/if}
     {:else if currentStep === 2}
-      <h2>Step 2: Define environments</h2>
-      <p class="muted">Select a suggested model to populate environments, then customize names.</p>
+      <h2>Step 2: Define environments (with pools)</h2>
+      <p class="muted">Each environment gets one pool -- the base CIDR is split into pools sized by each environment's needs (equal split). Select a template or add environments, then customize names. The pool shown next to each environment is that environment's share. You can add more pools per environment later on the Networks page.</p>
 
       <div class="hint-grid">
         {#each ENV_HINTS as hint}
@@ -724,20 +815,29 @@
         {/each}
       </div>
 
+      {#if parsedStart && environments.length > 0 && !poolsFitInBase}
+        <p class="warn">Too many environments for this base CIDR -- only {envPoolRanges.length} pool{envPoolRanges.length === 1 ? '' : 's'} fit. Remove environment{environments.length - envPoolRanges.length === 1 ? '' : 's'} or choose a larger base so all pools fit.</p>
+      {/if}
       <div class="env-grid">
-        {#each environments as env}
-          <div class="env-pill">
-            <input class="env-name" type="text" bind:value={env.name} />
+        {#each environments as env, i}
+          {@const poolRange = envPoolRanges[i]}
+          <div class="env-pill env-pill-with-pool">
+            <input class="env-name" type="text" bind:value={env.name} placeholder="Environment name" />
+            {#if poolRange}
+              <span class="env-pool-cidr" title="Pool CIDR (sized for this environment's needs)">{poolRange.cidr}</span>
+            {:else if parsedStart && environments.length > 0}
+              <span class="env-pool-cidr muted">--</span>
+            {/if}
             <button type="button" class="btn btn-small btn-danger" on:click={() => removeEnvironment(env.id)} disabled={environments.length <= 1}>Remove</button>
           </div>
         {/each}
       </div>
       <div class="actions">
-        <button type="button" class="btn btn-primary btn-small" on:click={addEnvironment}>Add environment</button>
+        <button type="button" class="btn btn-primary btn-small" on:click={addEnvironment} disabled={!canAddMoreEnvironments} title={canAddMoreEnvironments ? '' : 'Base CIDR cannot fit more pools. Use a larger base or remove an environment.'}>Add environment</button>
       </div>
     {:else if currentStep === 3}
       <h2>Step 3: Optional reserved blocks</h2>
-      <p class="muted">Reserve CIDR ranges first; they will be carved out before environment blocks.</p>
+      <p class="muted">Reserve CIDR ranges within the base; they will be carved out before environment pools and network blocks.</p>
       <label class="reserve-toggle">
         <input type="checkbox" bind:checked={includeReservedBlocks} />
         <span>Include reserved blocks in generated plan</span>
@@ -783,28 +883,25 @@
       {/if}
     {:else if currentStep === 4}
       <h2>Step 4: Size network blocks</h2>
-      <p class="muted">Estimate hosts and number of networks in each environment. Reserved blocks are deducted first.</p>
+      <p class="muted">Choose how many network blocks each environment needs. The base CIDR is split into equal pools -- block size is automatically maximized to fit.</p>
       {#if parsedStart && (typeof totalOccupiedForSizing === 'bigint' ? totalOccupiedForSizing > 0n : totalOccupiedForSizing > 0) && !loadingOccupied}
         <p class="field-note" style="margin-bottom: 0.75rem">
-          <strong>{formatBlockCount(totalOccupiedForSizing)}</strong> IPs in base CIDR are used by existing blocks
-          {#if (typeof reservedDraftOccupiedIPs === 'bigint' ? reservedDraftOccupiedIPs > 0n : reservedDraftOccupiedIPs > 0)}
-            and reserved blocks ({formatBlockCount(reservedDraftOccupiedIPs)})
-          {/if}
-          . Sliders limited to <strong>{formatBlockCount(availableIPsInBase)}</strong> available IPs.
+          <strong>{formatBlockCount(totalOccupiedForSizing)}</strong> IPs used by existing blocks.
+          <strong>{formatBlockCount(availableIPsInBase)}</strong> available.
         </p>
       {:else if parsedStart && loadingOccupied}
-        <p class="field-note" style="margin-bottom: 0.75rem">Checking existing blocks…</p>
+        <p class="field-note" style="margin-bottom: 0.75rem">Checking existing blocks...</p>
       {/if}
       <div class="advisor-grid">
-        {#each environmentSizing as item}
-          {@const env = item.env}
-          {@const baseTotalNum = typeof startTotalIPs === 'string' ? Number(startTotalIPs) : startTotalIPs}
-          {@const subnetSize = item.suggestion.networkUsableIPs}
-          {@const sliderMax = Math.max(1, subnetSize > 0 && Number.isFinite(baseTotalNum) ? Math.min(1e9, Math.floor(baseTotalNum / subnetSize)) : 1)}
-          {@const ipsPerNetwork = item.suggestion.networkUsableIPs}
-          {@const totalIPs = item.suggestion.requiredBlockIPs}
-          <article class="advisor-env-card" class:exceeded={!fitsInBaseCidr}>
+        {#each environments as env, i}
+          {@const poolRange = envPoolRanges[i]}
+          {@const sliderMax = maxNetworksInPool(poolRange)}
+          {@const sizing = blockSizingForPool(poolRange, env.networks, advisorVer)}
+          <article class="advisor-env-card">
             <h3>{env.name || 'Environment'}</h3>
+            {#if poolRange}
+              <p class="env-pool-label muted">Pool: {poolRange.cidr}</p>
+            {/if}
             <div class="networks-control">
               <span class="networks-label">Networks</span>
               <input
@@ -814,141 +911,96 @@
                 max={SLIDER_STEPS}
                 step="1"
                 value={networksToSlider(env.networks, sliderMax)}
-                on:input={(e) => updateEnvironmentSizing(env.id, 'networks', sliderToNetworks(e.currentTarget.value, sliderMax))}
+                on:input={(e) => updateEnvironmentNetworks(env.id, sliderToNetworks(e.currentTarget.value, sliderMax))}
               />
               <input
                 type="number"
                 class="networks-input"
                 min="1"
                 value={env.networks}
-                on:input={(e) => updateEnvironmentSizing(env.id, 'networks', e.currentTarget.value)}
+                on:input={(e) => updateEnvironmentNetworks(env.id, e.currentTarget.value)}
               />
             </div>
-            <div class="env-sizing-detail">
-              <span>{typeof ipsPerNetwork === 'number' && Number.isFinite(ipsPerNetwork) ? ipsPerNetwork.toLocaleString() : formatBlockCount(ipsPerNetwork)} IPs per network</span>
-              <span>{typeof totalIPs === 'number' && Number.isFinite(totalIPs) ? totalIPs.toLocaleString() : formatBlockCount(totalIPs)} IPs total</span>
-            </div>
+            {#if sizing}
+              <div class="env-sizing-detail">
+                <span>/{sizing.prefix} per block ({formatBlockCount(sizing.blockIPs)} IPs)</span>
+                <span>{formatBlockCount(sizing.totalIPs)} IPs total</span>
+              </div>
+            {/if}
           </article>
         {/each}
       </div>
       <article class="result advisor-result-card">
-        <h3>Aggregate sizing result</h3>
-        <div>Required host IPs (usable): <strong>{totalRequiredIPs.toLocaleString()}</strong></div>
-        <div>
-          Total block IPs consumed (from base CIDR): <strong>{formatBlockCount(totalAllocatedBlockIPsDisplay)}</strong>
-        </div>
+        <h3>Aggregate sizing</h3>
+        <div>Network blocks: <strong>{totalNetworkBlocks}</strong></div>
+        <div>Block IPs consumed: <strong>{formatBlockCount(totalAllocatedIPs)}</strong></div>
         {#if parsedStart}
           <div class={fitsInBaseCidr ? 'ok' : 'warn'}>
             {fitsInBaseCidr
-              ? `Fits in ${normalizeCidr(startCidr) || startCidr} (${usagePercent}% of base CIDR used)`
-              : `Exceeds base CIDR — need ${formatBlockCount(totalAllocatedBlockIPsDisplay)} IPs, only ${formatBlockCount(availableIPsInBase)} available (existing & reserved deducted)`}
+              ? `Fits in base ${normalizeCidr(poolCidr) || poolCidr} (${usagePercent}% used)`
+              : `Exceeds base -- ${formatBlockCount(totalAllocatedIPs)} needed, ${formatBlockCount(availableIPsInBase)} available`}
           </div>
-        {/if}
-        <div>Planned subnet capacity (all environments): <strong>{typeof totalPlannedUsableIPs === 'number' && Number.isFinite(totalPlannedUsableIPs) ? totalPlannedUsableIPs.toLocaleString() : formatBlockCount(totalPlannedUsableIPs)}</strong></div>
-        <div class="ip-capacity">
-          <div class="ip-capacity-head">
-            <span>Block IPs used: <strong>{formatBlockCount(totalAllocatedBlockIPsDisplay)}</strong></span>
-            <span>
-              Base CIDR total: <strong>{formatBlockCount(startTotalIPs)}</strong>
-              {#if (typeof totalOccupiedForSizing === 'bigint' ? totalOccupiedForSizing > 0n : totalOccupiedForSizing > 0)}
-                <span class="muted">(deducts existing & reserved blocks → {formatBlockCount(availableIPsInBase)} available)</span>
-              {/if}
-            </span>
-          </div>
-          <div class="ip-capacity-bar" role="presentation">
-            <div class="ip-capacity-used" style="width: {usagePercent}%"></div>
-          </div>
-        </div>
-      </article>
-    {:else if currentStep === 4}
-      <h2>Step 4: Optional reserved blocks</h2>
-      <p class="muted">Optionally reserve CIDR ranges before generating resources from this plan.</p>
-      <label class="reserve-toggle">
-        <input type="checkbox" bind:checked={includeReservedBlocks} />
-        <span>Include reserved blocks in generated plan</span>
-      </label>
-      {#if includeReservedBlocks}
-        {#if $user?.role !== 'admin'}
-          <p class="warn">Only admins can create reserved blocks. You can continue without adding them.</p>
-        {/if}
-        <div class="reserve-grid">
-          {#each reservedBlocksDraft as entry}
-            <div class="reserve-row">
-              <input
-                class="input reserve-input"
-                type="text"
-                placeholder="Name (optional)"
-                value={entry.name}
-                on:input={(e) => updateReservedDraft(entry.id, 'name', e.currentTarget.value)}
-              />
-              <input
-                class="input reserve-input reserve-cidr"
-                type="text"
-                placeholder="CIDR (e.g. {suggestedReservedCidrPlaceholder()})"
-                value={entry.cidr}
-                on:input={(e) => updateReservedDraft(entry.id, 'cidr', e.currentTarget.value)}
-              />
-              <input
-                class="input reserve-input"
-                type="text"
-                placeholder="Reason (optional)"
-                value={entry.reason}
-                on:input={(e) => updateReservedDraft(entry.id, 'reason', e.currentTarget.value)}
-              />
-              <button type="button" class="btn btn-small btn-danger" on:click={() => removeReservedDraft(entry.id)}>Remove</button>
+          <div class="ip-capacity">
+            <div class="ip-capacity-head">
+              <span>Used: <strong>{formatBlockCount(totalAllocatedIPs)}</strong></span>
+              <span>
+                Available: <strong>{formatBlockCount(availableIPsInBase)}</strong>
+                {#if (typeof totalOccupiedForSizing === 'bigint' ? totalOccupiedForSizing > 0n : totalOccupiedForSizing > 0)}
+                  <span class="muted">(of {formatBlockCount(startTotalIPs)} base, minus existing)</span>
+                {:else}
+                  <span class="muted">(of {formatBlockCount(startTotalIPs)} base)</span>
+                {/if}
+              </span>
             </div>
-          {/each}
-        </div>
-        <div class="actions">
-          <button type="button" class="btn btn-primary btn-small" on:click={addReservedDraft}>Add reserved block</button>
-        </div>
-        {#if !hasValidReservedDrafts}
-          <p class="error">Every reserved block entry must include a valid CIDR.</p>
+            <div class="ip-capacity-bar" role="presentation">
+              <div class="ip-capacity-used" style="width: {usagePercent}%"></div>
+            </div>
+          </div>
         {/if}
-      {/if}
+      </article>
     {:else}
       <h2>Step 5: Advisor summary</h2>
-      <p>Network blocks to be created: <strong>{totalNetworkBlocksToCreate.toLocaleString()}</strong></p>
-      <p>Required host IPs across environments: <strong>{totalRequiredIPs.toLocaleString()}</strong></p>
-      <p>Total block space consumed from base CIDR: <strong>{formatBlockCount(totalAllocatedBlockIPsDisplay)}</strong></p>
+      <p>Network blocks: <strong>{totalNetworkBlocks}</strong></p>
+      <p>Block IPs consumed: <strong>{formatBlockCount(totalAllocatedIPs)}</strong></p>
       {#if parsedStart}
         {#if loadingOccupied}
-          <p class="muted">Checking existing blocks in base CIDR…</p>
+          <p class="muted">Checking existing blocks...</p>
         {:else}
           <p>
-            Base CIDR: <strong>{formatBlockCount(startTotalIPs)}</strong> total IPs
+            Base: <strong>{formatBlockCount(startTotalIPs)}</strong> total
             {#if (typeof totalOccupiedForSizing === 'bigint' ? totalOccupiedForSizing > 0n : totalOccupiedForSizing > 0)}
-              — <strong>{formatBlockCount(totalOccupiedForSizing)}</strong> used
-              ({#if (typeof existingOccupiedIPs === 'bigint' ? existingOccupiedIPs > 0n : existingOccupiedIPs > 0)}{formatBlockCount(existingOccupiedIPs)} existing{/if}
-              {#if (typeof existingOccupiedIPs === 'bigint' ? existingOccupiedIPs > 0n : existingOccupiedIPs > 0) && (typeof reservedDraftOccupiedIPs === 'bigint' ? reservedDraftOccupiedIPs > 0n : reservedDraftOccupiedIPs > 0)}, {/if}
-              {#if (typeof reservedDraftOccupiedIPs === 'bigint' ? reservedDraftOccupiedIPs > 0n : reservedDraftOccupiedIPs > 0)}{formatBlockCount(reservedDraftOccupiedIPs)} reserved{/if})
+              -- <strong>{formatBlockCount(totalOccupiedForSizing)}</strong> used by existing blocks
             {/if}
-          </p>
-          <p>
-            Available for plan: <strong>{formatBlockCount(availableIPsInBase)}</strong> IPs
+            -- <strong>{formatBlockCount(availableIPsInBase)}</strong> available
           </p>
         {/if}
         {#if !loadingOccupied}
           {#if !fitsInBaseCidr}
-            <p class="warn">Plan needs {formatBlockCount(totalAllocatedBlockIPsDisplay)} IPs but only {formatBlockCount(availableIPsInBase)} available. Reduce environment sizes or choose a larger base CIDR.</p>
+            <p class="warn">Plan needs {formatBlockCount(totalAllocatedIPs)} IPs but only {formatBlockCount(availableIPsInBase)} available.</p>
           {:else}
-            <p class="ok">Current plan fits within available capacity.</p>
+            <p class="ok">Plan fits within available capacity ({usagePercent}% used).</p>
           {/if}
         {/if}
       {/if}
       <div class="summary-grid">
-        {#each environments as env}
-          {@const suggestion = suggestBlockForEnvironment(env, advisorVer)}
+        {#each environments as env, i}
+          {@const poolRange = envPoolRanges[i]}
+          {@const sizing = blockSizingForPool(poolRange, env.networks, advisorVer)}
           <div class="summary-card">
             <div class="summary-title">{env.name || 'Environment'}</div>
-            <div>Network blocks to be created: <strong>{Math.max(1, Number(env.networks) || 1).toLocaleString()}</strong></div>
-            <div>Capacity: {typeof suggestion.usableIPs === 'number' ? suggestion.usableIPs.toLocaleString() : formatBlockCount(suggestion.usableIPs)} usable IPs</div>
+            {#if poolRange}
+              <div class="muted" style="font-size: 0.8rem;">Pool: {poolRange.cidr}</div>
+            {/if}
+            <div>Blocks: <strong>{Math.max(1, Number(env.networks) || 1)}</strong></div>
+            {#if sizing}
+              <div>/{sizing.prefix} each ({formatBlockCount(sizing.blockIPs)} IPs per block)</div>
+            {/if}
           </div>
         {/each}
       </div>
       <div class="actions">
         <button type="button" class="btn btn-primary btn-small" on:click={generateAdvisorPlan} disabled={generating}>
-          {generating ? 'Generating…' : 'Generate resources from plan'}
+          {generating ? 'Generating...' : 'Generate plan'}
         </button>
       </div>
       {#if generateError}
@@ -1113,6 +1165,14 @@
     gap: 0.5rem;
     align-items: center;
   }
+  .env-pill-with-pool {
+    flex-wrap: wrap;
+  }
+  .env-pool-cidr {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--text-muted);
+  }
   .env-name {
     flex: 1;
     min-width: 0;
@@ -1137,12 +1197,13 @@
     padding: 0.75rem;
     background: var(--bg);
   }
-  .advisor-env-card.exceeded {
-    border-color: var(--warn, #f59e0b);
-  }
   .advisor-env-card h3 {
-    margin: 0 0 0.65rem;
+    margin: 0 0 0.25rem;
     font-size: 0.95rem;
+  }
+  .advisor-env-card .env-pool-label {
+    margin: 0 0 0.5rem;
+    font-size: 0.78rem;
   }
   .advisor-env-card input[type="range"] {
     width: 100%;

@@ -7,12 +7,16 @@ Manages an IPAM allocation. An allocation is a subnet within a network block (e.
 ```hcl
 resource "ipam_environment" "example" {
   name = "prod"
+  pools = [
+    { name = "prod-pool", cidr = "10.0.0.0/8" }
+  ]
 }
 
 resource "ipam_block" "example" {
   name           = "prod-vpc"
   cidr           = "10.0.0.0/8"
   environment_id = ipam_environment.example.id
+  pool_id        = ipam_environment.example.pool_ids[0]
 }
 
 resource "ipam_allocation" "example" {

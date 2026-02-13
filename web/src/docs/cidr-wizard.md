@@ -7,7 +7,7 @@ The CIDR wizard suggests non-overlapping CIDR ranges when creating network block
 <img src="/images/cidr-wizard-dark.png" alt="CIDR wizard (dark mode)" class="screenshot-dark" />
 </p>
 
-- **For blocks** — Set a base address (e.g. `10.0.0.0`) and prefix length (e.g. `/16`), or use a suggested CIDR that avoids existing blocks and reserved ranges.
+- **For blocks** — Set a base address (e.g. `10.0.0.0`) and prefix length (e.g. `/16`), or select a **pool** and use a suggested CIDR that avoids existing blocks and reserved ranges within that pool.
 - **For allocations** — Select a parent block, choose a prefix length (e.g. `/24` for 256 IPs), and the wizard suggests the next available subnet that fits without overlaps.
 - **Manual entry** — You can always type a CIDR manually instead of using a suggestion.
 

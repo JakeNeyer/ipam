@@ -4,9 +4,11 @@ import "github.com/google/uuid"
 
 // Environment Output Types
 type environmentOutput struct {
-	Id   uuid.UUID `json:"id" format:"uuid"`
-	Name string    `json:"name" minLength:"1" maxLength:"255"`
-	_    struct{}  `additionalProperties:"false"`
+	Id             uuid.UUID   `json:"id" format:"uuid"`
+	Name           string      `json:"name" minLength:"1" maxLength:"255"`
+	InitialPoolID  *uuid.UUID  `json:"initial_pool_id,omitempty" format:"uuid"` // first pool created (backward compat)
+	PoolIDs        []uuid.UUID `json:"pool_ids,omitempty" format:"uuid"`        // all pools created with the environment
+	_              struct{}    `additionalProperties:"false"`
 }
 
 type environmentListOutput struct {
@@ -29,17 +31,33 @@ type environmentDetailOutput struct {
 	_      struct{}       `additionalProperties:"false"`
 }
 
-// Block Output Types (total_ips, used_ips, available_ips are derived from CIDR; string supports IPv6 /64 etc.)
-type blockOutput struct {
+// Pool Output Types
+type poolOutput struct {
 	ID             uuid.UUID `json:"id" format:"uuid"`
+	OrganizationID uuid.UUID `json:"organization_id" format:"uuid"`
+	EnvironmentID  uuid.UUID `json:"environment_id" format:"uuid"`
 	Name           string    `json:"name" minLength:"1" maxLength:"255"`
 	CIDR           string    `json:"cidr" minLength:"9" maxLength:"50"`
-	TotalIPs      string    `json:"total_ips"`
-	UsedIPs       string    `json:"used_ips"`
-	Available     string    `json:"available_ips"`
-	EnvironmentID  uuid.UUID `json:"environment_id,omitempty" format:"uuid"`
-	OrganizationID uuid.UUID `json:"organization_id,omitempty" format:"uuid"` // for orphan blocks
 	_              struct{}  `additionalProperties:"false"`
+}
+
+type poolListOutput struct {
+	Pools []*poolOutput `json:"pools"`
+	_     struct{}      `additionalProperties:"false"`
+}
+
+// Block Output Types (total_ips, used_ips, available_ips are derived from CIDR; string supports IPv6 /64 etc.)
+type blockOutput struct {
+	ID             uuid.UUID  `json:"id" format:"uuid"`
+	Name           string     `json:"name" minLength:"1" maxLength:"255"`
+	CIDR           string     `json:"cidr" minLength:"9" maxLength:"50"`
+	TotalIPs      string     `json:"total_ips"`
+	UsedIPs       string     `json:"used_ips"`
+	Available     string     `json:"available_ips"`
+	EnvironmentID  uuid.UUID  `json:"environment_id,omitempty" format:"uuid"`
+	OrganizationID uuid.UUID  `json:"organization_id,omitempty" format:"uuid"` // for orphan blocks
+	PoolID         *uuid.UUID `json:"pool_id,omitempty" format:"uuid"`        // optional
+	_              struct{}   `additionalProperties:"false"`
 }
 
 type suggestBlockCIDROutput struct {

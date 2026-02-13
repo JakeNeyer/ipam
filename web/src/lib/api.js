@@ -88,15 +88,21 @@ export async function listEnvironments(opts = {}) {
 }
 
 /**
+ * Create an environment. Requires an initial pool (CIDR range blocks in this environment can draw from).
  * @param {string} name
- * @param {{ name: string, cidr: string } | null} [initialBlock]
+ * @param {{ name: string, cidr: string }} initialPool - required pool name and CIDR for the environment
+ * @param {{ name: string, cidr: string }[]} pools - At least one pool (name and cidr each required)
  * @param {string | null} [organizationId] - Global admin: create env in this org
  */
-export async function createEnvironment(name, initialBlock = null, organizationId = null) {
-  const body = { name }
-  if (initialBlock && initialBlock.name && initialBlock.cidr) {
-    body.initial_block = { name: initialBlock.name, cidr: initialBlock.cidr }
+export async function createEnvironment(name, pools, organizationId = null) {
+  if (!Array.isArray(pools) || pools.length === 0) {
+    throw new Error('At least one pool is required')
   }
+  const poolList = pools.map((p) => {
+    if (!p || !p.name || !p.cidr) throw new Error('Each pool must have name and cidr')
+    return { name: p.name, cidr: p.cidr }
+  })
+  const body = { name, pools: poolList }
   if (organizationId != null && organizationId !== '') body.organization_id = organizationId
   return post('/environments', body)
 }
@@ -119,7 +125,43 @@ export async function deleteEnvironment(id) {
 }
 
 /**
- * @param {{ limit?: number, offset?: number, name?: string, environment_id?: string, organization_id?: string, orphaned_only?: boolean }} opts
+ * List pools for an environment.
+ * @param {string} environmentId - environment UUID
+ * @returns {{ pools: Array<{ id: string, environment_id: string, name: string, cidr: string }> }}
+ */
+export async function listPools(environmentId) {
+  const data = await get('/pools', { environment_id: environmentId })
+  return { pools: data.pools ?? [] }
+}
+
+/**
+ * List all pools for an organization (e.g. for dashboard utilization).
+ * @param {string} organizationId - organization UUID
+ * @returns {{ pools: Array<{ id: string, organization_id: string, environment_id: string, name: string, cidr: string }> }}
+ */
+export async function listPoolsByOrganization(organizationId) {
+  const data = await get('/pools', { organization_id: organizationId })
+  return { pools: data.pools ?? [] }
+}
+
+export async function createPool(environmentId, name, cidr) {
+  return post('/pools', { environment_id: environmentId, name, cidr })
+}
+
+export async function getPool(id) {
+  return get('/pools/' + encodeURIComponent(id))
+}
+
+export async function updatePool(id, name, cidr) {
+  return put('/pools/' + id, { name, cidr })
+}
+
+export async function deletePool(id) {
+  return del('/pools/' + id)
+}
+
+/**
+ * @param {{ limit?: number, offset?: number, name?: string, environment_id?: string, pool_id?: string, organization_id?: string, orphaned_only?: boolean }} opts
  * @returns {{ blocks: Array, total: number }}
  */
 export async function listBlocks(opts = {}) {
@@ -127,6 +169,7 @@ export async function listBlocks(opts = {}) {
   const params = { limit: limit || 500, offset: opts.offset ?? 0 }
   if (opts.name != null && opts.name !== '') params.name = opts.name
   if (opts.environment_id != null && opts.environment_id !== '') params.environment_id = opts.environment_id
+  if (opts.pool_id != null && opts.pool_id !== '') params.pool_id = opts.pool_id
   if (opts.organization_id != null && opts.organization_id !== '') params.organization_id = opts.organization_id
   if (opts.orphaned_only) params.orphaned_only = 'true'
   const data = await get('/blocks', params)
@@ -139,11 +182,13 @@ export async function listBlocks(opts = {}) {
  * @param {string} cidr
  * @param {string|null} [environmentId] - environment UUID or null for orphan block
  * @param {string|null} [organizationId] - required for orphan blocks when global admin; org-scoped users use their org
+ * @param {string|null} [poolId] - optional pool UUID; block CIDR must be contained in pool's CIDR
  */
-export async function createBlock(name, cidr, environmentId = null, organizationId = null) {
+export async function createBlock(name, cidr, environmentId = null, organizationId = null, poolId = null) {
   const body = { name, cidr }
   if (environmentId) body.environment_id = environmentId
   if (!environmentId && organizationId) body.organization_id = organizationId
+  if (poolId) body.pool_id = poolId
   return post('/blocks', body)
 }
 
@@ -152,8 +197,9 @@ const NIL_UUID = '00000000-0000-0000-0000-000000000000'
 
 /**
  * Update a network block. When setting to orphan (no environment), organizationId is required for global admin.
+ * @param {string|null} [poolId] - optional pool UUID; pass null to clear
  */
-export async function updateBlock(id, name, environmentId = null, organizationId = null) {
+export async function updateBlock(id, name, environmentId = null, organizationId = null, poolId = undefined) {
   const body = { name }
   if (environmentId !== undefined && environmentId !== null) {
     body.environment_id = environmentId === '' ? NIL_UUID : environmentId
@@ -161,6 +207,7 @@ export async function updateBlock(id, name, environmentId = null, organizationId
   if (environmentId === '' || environmentId === null) {
     if (organizationId) body.organization_id = organizationId
   }
+  if (poolId !== undefined) body.pool_id = poolId
   return put('/blocks/' + id, body)
 }
 
@@ -173,8 +220,8 @@ export async function suggestBlockCidr(blockId, prefix) {
   return data?.cidr ?? ''
 }
 
-export async function suggestEnvironmentBlockCidr(environmentId, prefix) {
-  const data = await get(`/environments/${environmentId}/suggest-block-cidr?prefix=${encodeURIComponent(prefix)}`)
+export async function suggestPoolBlockCidr(poolId, prefix) {
+  const data = await get(`/pools/${poolId}/suggest-block-cidr?prefix=${encodeURIComponent(prefix)}`)
   return data?.cidr ?? ''
 }
 

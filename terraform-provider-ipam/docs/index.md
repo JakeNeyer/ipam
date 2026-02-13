@@ -1,6 +1,6 @@
 # IPAM Provider
 
-The IPAM provider manages resources in an [IPAM](https://github.com/JakeNeyer/ipam) instance: environments, network blocks, allocations, and reserved blocks. It uses the IPAM HTTP API with Bearer token authentication.
+The IPAM provider manages resources in an [IPAM](https://github.com/JakeNeyer/ipam) instance: environments, **pools**, network blocks, allocations, and reserved blocks. It uses the IPAM HTTP API with Bearer token authentication. Hierarchy: **Environment → Pools → Blocks → Allocations**; every environment has at least one pool (CIDR range blocks draw from).
 
 ## Authentication
 
@@ -32,11 +32,14 @@ provider "ipam" {
 
 resource "ipam_environment" "prod" {
   name = "prod"
+  pools = [
+    { name = "prod-pool", cidr = "10.0.0.0/8" }
+  ]
 }
 
 resource "ipam_block" "prod_vpc" {
   name           = "prod-vpc"
-  cidr           = "10.0.0.0/8"
+  cidr           = "10.0.0.0/16"
   environment_id = ipam_environment.prod.id
 }
 
@@ -58,7 +61,8 @@ resource "ipam_allocation" "region_a" {
 
 ## Resources
 
-- [ipam_environment](resources/ipam_environment.md) – Manage an IPAM environment.
+- [ipam_environment](resources/ipam_environment.md) – Manage an IPAM environment (requires `pools` argument with at least one pool).
+- [ipam_pool](resources/ipam_pool.md) – Manage an environment pool (CIDR range blocks draw from).
 - [ipam_block](resources/ipam_block.md) – Manage a network block.
 - [ipam_allocation](resources/ipam_allocation.md) – Manage an allocation (subnet within a block).
 - [ipam_reserved_block](resources/ipam_reserved_block.md) – Reserve a CIDR range (admin only).
@@ -67,6 +71,8 @@ resource "ipam_allocation" "region_a" {
 
 - [ipam_environment](data-sources/ipam_environment.md) – Fetch a single environment by ID.
 - [ipam_environments](data-sources/ipam_environments.md) – List environments with optional name filter.
+- [ipam_pool](data-sources/ipam_pool.md) – Fetch a single pool by ID.
+- [ipam_pools](data-sources/ipam_pools.md) – List pools for an environment.
 - [ipam_block](data-sources/ipam_block.md) – Fetch a single network block by ID.
 - [ipam_blocks](data-sources/ipam_blocks.md) – List network blocks with optional filters.
 - [ipam_allocation](data-sources/ipam_allocation.md) – Fetch a single allocation by ID.

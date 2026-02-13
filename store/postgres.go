@@ -336,6 +336,10 @@ func (s *PostgresStore) DeleteEnvironment(id uuid.UUID) error {
 	if err != nil {
 		return err
 	}
+	_, err = s.db.Exec(`DELETE FROM pools WHERE environment_id = $1`, id)
+	if err != nil {
+		return err
+	}
 	res, err := s.db.Exec(`DELETE FROM environments WHERE id = $1`, id)
 	if err != nil {
 		return err
@@ -347,6 +351,106 @@ func (s *PostgresStore) DeleteEnvironment(id uuid.UUID) error {
 	return nil
 }
 
+func uuidPtrOptional(p *uuid.UUID) interface{} {
+	if p == nil || *p == uuid.Nil {
+		return nil
+	}
+	return *p
+}
+
+func (s *PostgresStore) CreatePool(pool *network.Pool) error {
+	if pool.ID == uuid.Nil {
+		pool.ID = s.GenerateID()
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO pools (id, organization_id, environment_id, name, cidr) VALUES ($1, $2, $3, $4, $5)`,
+		pool.ID, pool.OrganizationID, pool.EnvironmentID, pool.Name, pool.CIDR,
+	)
+	return err
+}
+
+func (s *PostgresStore) GetPool(id uuid.UUID) (*network.Pool, error) {
+	var p network.Pool
+	err := s.db.QueryRow(
+		`SELECT id, organization_id, environment_id, name, cidr FROM pools WHERE id = $1`,
+		id,
+	).Scan(&p.ID, &p.OrganizationID, &p.EnvironmentID, &p.Name, &p.CIDR)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("pool not found")
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+func (s *PostgresStore) ListPoolsByEnvironment(envID uuid.UUID) ([]*network.Pool, error) {
+	rows, err := s.db.Query(
+		`SELECT id, organization_id, environment_id, name, cidr FROM pools WHERE environment_id = $1 ORDER BY name`,
+		envID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*network.Pool
+	for rows.Next() {
+		var p network.Pool
+		if err := rows.Scan(&p.ID, &p.OrganizationID, &p.EnvironmentID, &p.Name, &p.CIDR); err != nil {
+			return nil, err
+		}
+		out = append(out, &p)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) ListPoolsByOrganization(orgID uuid.UUID) ([]*network.Pool, error) {
+	rows, err := s.db.Query(
+		`SELECT id, organization_id, environment_id, name, cidr FROM pools WHERE organization_id = $1 ORDER BY name`,
+		orgID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*network.Pool
+	for rows.Next() {
+		var p network.Pool
+		if err := rows.Scan(&p.ID, &p.OrganizationID, &p.EnvironmentID, &p.Name, &p.CIDR); err != nil {
+			return nil, err
+		}
+		out = append(out, &p)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) UpdatePool(id uuid.UUID, pool *network.Pool) error {
+	res, err := s.db.Exec(
+		`UPDATE pools SET name = $1, cidr = $2 WHERE id = $3`,
+		pool.Name, pool.CIDR, id,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("pool not found")
+	}
+	return nil
+}
+
+func (s *PostgresStore) DeletePool(id uuid.UUID) error {
+	res, err := s.db.Exec(`DELETE FROM pools WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("pool not found")
+	}
+	return nil
+}
+
 func (s *PostgresStore) CreateBlock(block *network.Block) error {
 	if block.ID == uuid.Nil {
 		block.ID = s.GenerateID()
@@ -354,20 +458,20 @@ func (s *PostgresStore) CreateBlock(block *network.Block) error {
 	// Derive-only: store total_ips only when it fits in BIGINT (e.g. IPv4); API always derives from CIDR
 	total := network.CIDRAddressCountInt64(block.CIDR)
 	_, err := s.db.Exec(
-		`INSERT INTO blocks (id, name, cidr, environment_id, organization_id, total_ips) VALUES ($1, $2, $3, $4, $5, $6)`,
-		block.ID, block.Name, block.CIDR, uuidPtr(block.EnvironmentID), uuidPtr(block.OrganizationID), total,
+		`INSERT INTO blocks (id, name, cidr, environment_id, organization_id, pool_id, total_ips) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		block.ID, block.Name, block.CIDR, uuidPtr(block.EnvironmentID), uuidPtr(block.OrganizationID), uuidPtrOptional(block.PoolID), total,
 	)
 	return err
 }
 
 func (s *PostgresStore) GetBlock(id uuid.UUID) (*network.Block, error) {
 	var name, cidr string
-	var envID, orgID nullUUID
+	var envID, orgID, poolID nullUUID
 	var totalIPs int64
 	err := s.db.QueryRow(
-		`SELECT id, name, cidr, environment_id, organization_id, total_ips FROM blocks WHERE id = $1`,
+		`SELECT id, name, cidr, environment_id, organization_id, pool_id, total_ips FROM blocks WHERE id = $1`,
 		id,
-	).Scan(&id, &name, &cidr, &envID, &orgID, &totalIPs)
+	).Scan(&id, &name, &cidr, &envID, &orgID, &poolID, &totalIPs)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("block not found")
 	}
@@ -382,6 +486,10 @@ func (s *PostgresStore) GetBlock(id uuid.UUID) (*network.Block, error) {
 	if orgID.Valid && orgID.UUID != uuid.Nil {
 		orgUUID = orgID.UUID
 	}
+	var poolUUID *uuid.UUID
+	if poolID.Valid && poolID.UUID != uuid.Nil {
+		poolUUID = &poolID.UUID
+	}
 	t := int(totalIPs)
 	return &network.Block{
 		ID:             id,
@@ -389,17 +497,18 @@ func (s *PostgresStore) GetBlock(id uuid.UUID) (*network.Block, error) {
 		CIDR:           cidr,
 		EnvironmentID:  envUUID,
 		OrganizationID: orgUUID,
+		PoolID:         poolUUID,
 		Usage:          network.Usage{TotalIPs: t, UsedIPs: 0, AvailableIPs: t},
 		Children:       []network.Block{},
 	}, nil
 }
 
 func (s *PostgresStore) ListBlocks() ([]*network.Block, error) {
-	out, _, err := s.ListBlocksFiltered("", nil, nil, false, 0, 0)
+	out, _, err := s.ListBlocksFiltered("", nil, nil, nil, false, 0, 0)
 	return out, err
 }
 
-func (s *PostgresStore) ListBlocksFiltered(name string, environmentID *uuid.UUID, organizationID *uuid.UUID, orphanedOnly bool, limit, offset int) ([]*network.Block, int, error) {
+func (s *PostgresStore) ListBlocksFiltered(name string, environmentID *uuid.UUID, poolID *uuid.UUID, organizationID *uuid.UUID, orphanedOnly bool, limit, offset int) ([]*network.Block, int, error) {
 	var countArgs []interface{}
 	countQ := `SELECT COUNT(*) FROM blocks WHERE 1=1`
 	idx := 1
@@ -411,6 +520,11 @@ func (s *PostgresStore) ListBlocksFiltered(name string, environmentID *uuid.UUID
 	if environmentID != nil {
 		countQ += fmt.Sprintf(` AND environment_id = $%d`, idx)
 		countArgs = append(countArgs, *environmentID)
+		idx++
+	}
+	if poolID != nil {
+		countQ += fmt.Sprintf(` AND pool_id = $%d`, idx)
+		countArgs = append(countArgs, *poolID)
 		idx++
 	}
 	if organizationID != nil {
@@ -430,7 +544,7 @@ func (s *PostgresStore) ListBlocksFiltered(name string, environmentID *uuid.UUID
 	if err := s.db.QueryRow(countQ, countArgs...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	selQ := `SELECT id, name, cidr, environment_id, organization_id, total_ips FROM blocks WHERE 1=1`
+	selQ := `SELECT id, name, cidr, environment_id, organization_id, pool_id, total_ips FROM blocks WHERE 1=1`
 	selArgs := []interface{}{}
 	i := 1
 	if name != "" {
@@ -441,6 +555,11 @@ func (s *PostgresStore) ListBlocksFiltered(name string, environmentID *uuid.UUID
 	if environmentID != nil {
 		selQ += fmt.Sprintf(` AND environment_id = $%d`, i)
 		selArgs = append(selArgs, *environmentID)
+		i++
+	}
+	if poolID != nil {
+		selQ += fmt.Sprintf(` AND pool_id = $%d`, i)
+		selArgs = append(selArgs, *poolID)
 		i++
 	}
 	if organizationID != nil {
@@ -471,9 +590,9 @@ func (s *PostgresStore) ListBlocksFiltered(name string, environmentID *uuid.UUID
 	for rows.Next() {
 		var id uuid.UUID
 		var n, cidr string
-		var envID, orgID nullUUID
+		var envID, orgID, poolID nullUUID
 		var totalIPs int64
-		if err := rows.Scan(&id, &n, &cidr, &envID, &orgID, &totalIPs); err != nil {
+		if err := rows.Scan(&id, &n, &cidr, &envID, &orgID, &poolID, &totalIPs); err != nil {
 			return nil, 0, err
 		}
 		envUUID := uuid.Nil
@@ -484,6 +603,10 @@ func (s *PostgresStore) ListBlocksFiltered(name string, environmentID *uuid.UUID
 		if orgID.Valid && orgID.UUID != uuid.Nil {
 			orgUUID = orgID.UUID
 		}
+		var poolUUID *uuid.UUID
+		if poolID.Valid && poolID.UUID != uuid.Nil {
+			poolUUID = &poolID.UUID
+		}
 		t := int(totalIPs)
 		out = append(out, &network.Block{
 			ID:             id,
@@ -491,6 +614,7 @@ func (s *PostgresStore) ListBlocksFiltered(name string, environmentID *uuid.UUID
 			CIDR:           cidr,
 			EnvironmentID:  envUUID,
 			OrganizationID: orgUUID,
+			PoolID:         poolUUID,
 			Usage:          network.Usage{TotalIPs: t, UsedIPs: 0, AvailableIPs: t},
 			Children:       []network.Block{},
 		})
@@ -499,16 +623,61 @@ func (s *PostgresStore) ListBlocksFiltered(name string, environmentID *uuid.UUID
 }
 
 func (s *PostgresStore) ListBlocksByEnvironment(envID uuid.UUID) ([]*network.Block, error) {
-	blocks, _, err := s.ListBlocksFiltered("", &envID, nil, false, 0, 0)
+	blocks, _, err := s.ListBlocksFiltered("", &envID, nil, nil, false, 0, 0)
 	return blocks, err
+}
+
+func (s *PostgresStore) ListBlocksByPool(poolID uuid.UUID) ([]*network.Block, error) {
+	rows, err := s.db.Query(
+		`SELECT id, name, cidr, environment_id, organization_id, pool_id, total_ips FROM blocks WHERE pool_id = $1 ORDER BY name`,
+		poolID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*network.Block
+	for rows.Next() {
+		var id uuid.UUID
+		var n, cidr string
+		var envID, orgID, poolIDCol nullUUID
+		var totalIPs int64
+		if err := rows.Scan(&id, &n, &cidr, &envID, &orgID, &poolIDCol, &totalIPs); err != nil {
+			return nil, err
+		}
+		envUUID := uuid.Nil
+		if envID.Valid {
+			envUUID = envID.UUID
+		}
+		orgUUID := uuid.Nil
+		if orgID.Valid && orgID.UUID != uuid.Nil {
+			orgUUID = orgID.UUID
+		}
+		var poolUUID *uuid.UUID
+		if poolIDCol.Valid && poolIDCol.UUID != uuid.Nil {
+			poolUUID = &poolIDCol.UUID
+		}
+		t := int(totalIPs)
+		out = append(out, &network.Block{
+			ID:             id,
+			Name:           n,
+			CIDR:           cidr,
+			EnvironmentID:  envUUID,
+			OrganizationID: orgUUID,
+			PoolID:         poolUUID,
+			Usage:          network.Usage{TotalIPs: t, UsedIPs: 0, AvailableIPs: t},
+			Children:       []network.Block{},
+		})
+	}
+	return out, rows.Err()
 }
 
 func (s *PostgresStore) UpdateBlock(id uuid.UUID, block *network.Block) error {
 	// Derive-only: store total_ips only when it fits in BIGINT; API always derives from CIDR
 	total := network.CIDRAddressCountInt64(block.CIDR)
 	res, err := s.db.Exec(
-		`UPDATE blocks SET name = $1, cidr = $2, environment_id = $3, organization_id = $4, total_ips = $5 WHERE id = $6`,
-		block.Name, block.CIDR, uuidPtr(block.EnvironmentID), uuidPtr(block.OrganizationID), total, id,
+		`UPDATE blocks SET name = $1, cidr = $2, environment_id = $3, organization_id = $4, pool_id = $5, total_ips = $6 WHERE id = $7`,
+		block.Name, block.CIDR, uuidPtr(block.EnvironmentID), uuidPtr(block.OrganizationID), uuidPtrOptional(block.PoolID), total, id,
 	)
 	if err != nil {
 		return err
@@ -580,7 +749,7 @@ func (s *PostgresStore) ListAllocationsFiltered(name string, blockName string, e
 		idx++
 	}
 	if organizationID != nil {
-		countQ += fmt.Sprintf(` AND LOWER(block_name) IN (SELECT LOWER(b.name) FROM blocks b JOIN environments e ON b.environment_id = e.id WHERE e.organization_id = $%d)`, idx)
+		countQ += fmt.Sprintf(` AND LOWER(block_name) IN (SELECT LOWER(b.name) FROM blocks b LEFT JOIN environments e ON b.environment_id = e.id WHERE (e.organization_id = $%d OR (b.environment_id IS NULL AND b.organization_id = $%d)))`, idx, idx)
 		args = append(args, *organizationID)
 		idx++
 	}
@@ -596,7 +765,7 @@ func (s *PostgresStore) ListAllocationsFiltered(name string, blockName string, e
 		i++
 	}
 	if organizationID != nil {
-		selQ += fmt.Sprintf(` AND LOWER(block_name) IN (SELECT LOWER(b.name) FROM blocks b JOIN environments e ON b.environment_id = e.id WHERE e.organization_id = $%d)`, i)
+		selQ += fmt.Sprintf(` AND LOWER(block_name) IN (SELECT LOWER(b.name) FROM blocks b LEFT JOIN environments e ON b.environment_id = e.id WHERE (e.organization_id = $%d OR (b.environment_id IS NULL AND b.organization_id = $%d)))`, i, i)
 		selArgs = append(selArgs, *organizationID)
 		i++
 	}

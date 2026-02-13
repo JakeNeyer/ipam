@@ -25,7 +25,7 @@
   }
   .table {
     width: 100%;
-    min-width: max-content;
+    table-layout: auto;
     border-collapse: collapse;
     font-size: 0.9rem;
   }

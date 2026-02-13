@@ -89,14 +89,24 @@ func NewServer(s store.Storer, cfg *config.Config) *web.Service {
 	getEnvUC := handlers.NewGetEnvironmentUseCase(s)
 	svc.Get("/api/environments/{id}", getEnvUC)
 
-	suggestEnvBlockCIDRUC := handlers.NewSuggestEnvironmentBlockCIDRUseCase(s)
-	svc.Get("/api/environments/{id}/suggest-block-cidr", suggestEnvBlockCIDRUC)
-
 	updateEnvUC := handlers.NewUpdateEnvironmentUseCase(s)
 	svc.Put("/api/environments/{id}", updateEnvUC)
 
 	deleteEnvUC := handlers.NewDeleteEnvironmentUseCase(s)
 	svc.Delete("/api/environments/{id}", deleteEnvUC)
+
+	createPoolUC := handlers.NewCreatePoolUseCase(s)
+	svc.Post("/api/pools", createPoolUC)
+	listPoolsUC := handlers.NewListPoolsUseCase(s)
+	svc.Get("/api/pools", listPoolsUC)
+	getPoolUC := handlers.NewGetPoolUseCase(s)
+	svc.Get("/api/pools/{id}", getPoolUC)
+	suggestPoolBlockCIDRUC := handlers.NewSuggestPoolBlockCIDRUseCase(s)
+	svc.Get("/api/pools/{id}/suggest-block-cidr", suggestPoolBlockCIDRUC)
+	updatePoolUC := handlers.NewUpdatePoolUseCase(s)
+	svc.Put("/api/pools/{id}", updatePoolUC)
+	deletePoolUC := handlers.NewDeletePoolUseCase(s)
+	svc.Delete("/api/pools/{id}", deletePoolUC)
 
 	createBlockUC := handlers.NewCreateBlockUseCase(s)
 	svc.Post("/api/blocks", createBlockUC)

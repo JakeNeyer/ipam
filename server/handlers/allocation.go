@@ -34,7 +34,7 @@ func NewCreateAllocationUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(errors.New("unauthorized"), status.Unauthenticated)
 		}
 		orgID := auth.ResolveOrgID(ctx, user, uuid.Nil)
-		blocks, _, err := s.ListBlocksFiltered(input.BlockName, nil, orgID, false, 0, 0)
+		blocks, _, err := s.ListBlocksFiltered(input.BlockName, nil, nil, orgID, false, 0, 0)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -63,7 +63,7 @@ func NewCreateAllocationUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(errors.New("allocation CIDR must fall within the parent block's CIDR range"), status.InvalidArgument)
 		}
 
-		allAllocs, err := s.ListAllocations()
+		allAllocs, _, err := s.ListAllocationsFiltered("", input.BlockName, uuid.Nil, orgID, 0, 0)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -133,7 +133,7 @@ func NewAutoAllocateUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(errors.New("unauthorized"), status.Unauthenticated)
 		}
 		orgID := auth.ResolveOrgID(ctx, user, uuid.Nil)
-		blocks, _, err := s.ListBlocksFiltered(input.BlockName, nil, orgID, false, 0, 0)
+		blocks, _, err := s.ListBlocksFiltered(input.BlockName, nil, nil, orgID, false, 0, 0)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -263,7 +263,7 @@ func allocationInOrg(s store.Storer, orgID uuid.UUID, alloc *network.Allocation)
 	if orgID == uuid.Nil {
 		return true
 	}
-	blocks, _, err := s.ListBlocksFiltered(strings.TrimSpace(alloc.Block.Name), nil, &orgID, false, 1, 0)
+	blocks, _, err := s.ListBlocksFiltered(strings.TrimSpace(alloc.Block.Name), nil, nil, &orgID, false, 1, 0)
 	if err != nil || len(blocks) == 0 {
 		return false
 	}
@@ -323,7 +323,8 @@ func NewUpdateAllocationUseCase(s store.Storer) usecase.Interactor {
 
 		alloc.Name = input.Name
 
-		allAllocs, err := s.ListAllocations()
+		orgID := auth.ResolveOrgID(ctx, user, uuid.Nil)
+		allAllocs, _, err := s.ListAllocationsFiltered("", alloc.Block.Name, uuid.Nil, orgID, 0, 0)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}

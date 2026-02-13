@@ -122,6 +122,9 @@ func NextAvailableCIDRWithAllocations(supernet string, prefixLength int, allocat
 
 	subnetSize := uint32(1 << (bits - prefixLength))
 
+	// Best-fit bin packing: choose the smallest gap that fits the requested size to reduce fragmentation.
+	var bestStart net.IP
+	var bestGapSize uint32 = 0
 	for _, g := range gaps {
 		start := nextAligned(g.first, prefixLength)
 		if ipLess(g.last, start) {
@@ -135,7 +138,14 @@ func NextAvailableCIDRWithAllocations(supernet string, prefixLength int, allocat
 		if !supernetNet.Contains(endIP) {
 			continue
 		}
-		return fmt.Sprintf("%s/%d", start.String(), prefixLength), nil
+		gapSize := ipToU32(g.last) - ipToU32(g.first) + 1
+		if bestStart == nil || gapSize < bestGapSize {
+			bestStart = start
+			bestGapSize = gapSize
+		}
+	}
+	if bestStart != nil {
+		return fmt.Sprintf("%s/%d", bestStart.String(), prefixLength), nil
 	}
 
 	var start net.IP

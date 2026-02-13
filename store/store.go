@@ -28,12 +28,22 @@ type EnvironmentStore interface {
 	DeleteEnvironment(id uuid.UUID) error
 }
 
+type PoolStore interface {
+	CreatePool(pool *network.Pool) error
+	GetPool(id uuid.UUID) (*network.Pool, error)
+	ListPoolsByEnvironment(envID uuid.UUID) ([]*network.Pool, error)
+	ListPoolsByOrganization(orgID uuid.UUID) ([]*network.Pool, error)
+	UpdatePool(id uuid.UUID, pool *network.Pool) error
+	DeletePool(id uuid.UUID) error
+}
+
 type BlockStore interface {
 	CreateBlock(block *network.Block) error
 	GetBlock(id uuid.UUID) (*network.Block, error)
 	ListBlocks() ([]*network.Block, error)
-	ListBlocksFiltered(name string, environmentID *uuid.UUID, organizationID *uuid.UUID, orphanedOnly bool, limit, offset int) ([]*network.Block, int, error)
+	ListBlocksFiltered(name string, environmentID *uuid.UUID, poolID *uuid.UUID, organizationID *uuid.UUID, orphanedOnly bool, limit, offset int) ([]*network.Block, int, error)
 	ListBlocksByEnvironment(envID uuid.UUID) ([]*network.Block, error)
+	ListBlocksByPool(poolID uuid.UUID) ([]*network.Block, error)
 	UpdateBlock(id uuid.UUID, block *network.Block) error
 	DeleteBlock(id uuid.UUID) error
 }
@@ -98,6 +108,7 @@ type Storer interface {
 	IDGenerator
 	OrganizationStore
 	EnvironmentStore
+	PoolStore
 	BlockStore
 	AllocationStore
 	ReservedBlockStore

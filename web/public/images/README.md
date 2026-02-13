@@ -12,7 +12,8 @@ To regenerate placeholder PNGs only: `npm run create-placeholder-screenshots`.
 
 Files:
 
-- `dashboard-light.png` / `dashboard-dark.png` — Dashboard (`#`)
+- `dashboard-light.png` / `dashboard-dark.png` — Dashboard (`#dashboard`)
+- `resource-graph-light.png` / `resource-graph-dark.png` — Resource graph only (Dashboard section; used by Overview data model diagram). Captured only when the graph is visible (Dashboard has env/pool/block/alloc data).
 - `networks-light.png` / `networks-dark.png` — Networks (`#networks`)
 - `environments-light.png` / `environments-dark.png` — Environments (`#environments`)
 - `admin-light.png` / `admin-dark.png` — Admin (`#admin`)
@@ -21,5 +22,6 @@ Files:
 - `cidr-wizard-light.png` / `cidr-wizard-dark.png` — CIDR wizard (Create block)
 - `subnet-calculator-light.png` / `subnet-calculator-dark.png` — Subnet calculator (`#subnet-calculator`)
 - `logo.svg` / `logo-light.svg` — App logo (used in Nav, Landing, Login, Setup)
+- `data-model.svg` — Styled SVG that embeds `resource-graph-light.png` (Overview data model diagram). Regenerate the PNG with the screenshot script when the Dashboard graph changes.
 
 The docs viewer shows the light screenshot in light mode and the dark screenshot in dark mode.

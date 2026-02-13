@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/JakeNeyer/ipam/network"
 	"github.com/JakeNeyer/ipam/server/auth"
@@ -18,6 +19,9 @@ func NewCreateEnvironmentUseCase(s store.Storer) usecase.Interactor {
 		if input.Name == "" {
 			return status.Wrap(errors.New("name is required"), status.InvalidArgument)
 		}
+		if len(input.Pools) == 0 {
+			return status.Wrap(errors.New("at least one pool is required"), status.InvalidArgument)
+		}
 		user := auth.UserFromContext(ctx)
 		if user == nil {
 			return status.Wrap(errors.New("unauthorized"), status.Unauthenticated)
@@ -27,6 +31,48 @@ func NewCreateEnvironmentUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(errors.New("organization is required"), status.InvalidArgument)
 		}
 		orgID := *orgIDPtr
+
+		for i, p := range input.Pools {
+			if p.Name == "" || p.CIDR == "" {
+				return status.Wrap(fmt.Errorf("pool at index %d: name and cidr are required", i), status.InvalidArgument)
+			}
+			if valid := network.ValidateCIDR(p.CIDR); !valid {
+				return status.Wrap(fmt.Errorf("pool %q: invalid CIDR format", p.Name), status.InvalidArgument)
+			}
+		}
+		for i := 0; i < len(input.Pools); i++ {
+			for j := i + 1; j < len(input.Pools); j++ {
+				overlap, err := network.Overlaps(input.Pools[i].CIDR, input.Pools[j].CIDR)
+				if err != nil {
+					return status.Wrap(err, status.InvalidArgument)
+				}
+				if overlap {
+					return status.Wrap(
+						fmt.Errorf("pools %q and %q overlap", input.Pools[i].Name, input.Pools[j].Name),
+						status.InvalidArgument,
+					)
+				}
+			}
+		}
+
+		existingPools, err := s.ListPoolsByOrganization(orgID)
+		if err != nil {
+			return status.Wrap(err, status.Internal)
+		}
+		for _, newPool := range input.Pools {
+			for _, other := range existingPools {
+				overlap, err := network.Overlaps(newPool.CIDR, other.CIDR)
+				if err != nil {
+					return status.Wrap(err, status.Internal)
+				}
+				if overlap {
+					return status.Wrap(
+						fmt.Errorf("pool CIDR %s overlaps with existing pool %q (%s) in this organization", newPool.CIDR, other.Name, other.CIDR),
+						status.InvalidArgument,
+					)
+				}
+			}
+		}
 
 		env := &network.Environment{
 			Id:             s.GenerateID(),
@@ -39,25 +85,22 @@ func NewCreateEnvironmentUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(err, status.Internal)
 		}
 
-		if input.InitialBlock != nil && input.InitialBlock.Name != "" && input.InitialBlock.CIDR != "" {
-			if valid := network.ValidateCIDR(input.InitialBlock.CIDR); !valid {
-				return status.Wrap(errors.New("invalid initial block CIDR format"), status.InvalidArgument)
+		output.PoolIDs = make([]uuid.UUID, 0, len(input.Pools))
+		for _, p := range input.Pools {
+			pool := &network.Pool{
+				ID:             s.GenerateID(),
+				OrganizationID: orgID,
+				EnvironmentID:  env.Id,
+				Name:           p.Name,
+				CIDR:           p.CIDR,
 			}
-			totalStored := int(network.CIDRAddressCountInt64(input.InitialBlock.CIDR))
-			block := &network.Block{
-				Name:          input.InitialBlock.Name,
-				CIDR:          input.InitialBlock.CIDR,
-				EnvironmentID: env.Id,
-				Usage: network.Usage{
-					TotalIPs:     totalStored,
-					UsedIPs:      0,
-					AvailableIPs: totalStored,
-				},
-				Children: []network.Block{},
-			}
-			if err := s.CreateBlock(block); err != nil {
+			if err := s.CreatePool(pool); err != nil {
 				return status.Wrap(err, status.Internal)
 			}
+			output.PoolIDs = append(output.PoolIDs, pool.ID)
+		}
+		if len(output.PoolIDs) > 0 {
+			output.InitialPoolID = &output.PoolIDs[0]
 		}
 
 		output.Id = env.Id
@@ -146,6 +189,7 @@ func NewGetEnvironmentUseCase(s store.Storer) usecase.Interactor {
 				Available:      availStr,
 				EnvironmentID:  b.EnvironmentID,
 				OrganizationID: blockOrgID,
+				PoolID:         b.PoolID,
 			}
 		}
 		return nil
@@ -205,63 +249,5 @@ func NewDeleteEnvironmentUseCase(s store.Storer) usecase.Interactor {
 	u.SetTitle("Delete Environment")
 	u.SetDescription("Deletes an environment")
 	u.SetExpectedErrors(status.NotFound, status.Internal)
-	return u
-}
-
-// SuggestEnvironmentBlockCIDR returns a suggested CIDR for a new block in the environment
-// at the given prefix length, considering existing blocks in that environment (no overlap).
-const defaultBlockSupernet = "10.0.0.0/8"
-
-// SuggestEnvironmentBlockCIDR handler
-func NewSuggestEnvironmentBlockCIDRUseCase(s store.Storer) usecase.Interactor {
-	u := usecase.NewInteractor(func(ctx context.Context, input suggestEnvironmentBlockCIDRInput, output *suggestBlockCIDROutput) error {
-		if input.Prefix < 9 || input.Prefix > 32 {
-			return status.Wrap(errors.New("prefix must be between 9 and 32"), status.InvalidArgument)
-		}
-		env, err := s.GetEnvironment(input.ID)
-		if err != nil {
-			return status.Wrap(errors.New("environment not found"), status.NotFound)
-		}
-		user := auth.UserFromContext(ctx)
-		if userOrg := auth.UserOrgForAccess(ctx, user); userOrg != uuid.Nil && env.OrganizationID != userOrg {
-			return status.Wrap(errors.New("environment not found"), status.NotFound)
-		}
-		blocks, err := s.ListBlocksByEnvironment(input.ID)
-		if err != nil {
-			return status.Wrap(err, status.Internal)
-		}
-		var existingCIDRs []string
-		for _, b := range blocks {
-			if b.CIDR != "" {
-				existingCIDRs = append(existingCIDRs, b.CIDR)
-			}
-		}
-		reservedOrgID := &env.OrganizationID
-		reserved, err := s.ListReservedBlocks(reservedOrgID)
-		if err != nil {
-			return status.Wrap(err, status.Internal)
-		}
-		for _, r := range reserved {
-			overlap, _ := network.Overlaps(defaultBlockSupernet, r.CIDR)
-			if !overlap {
-				continue
-			}
-			contained, _ := network.Contains(defaultBlockSupernet, r.CIDR)
-			if contained {
-				existingCIDRs = append(existingCIDRs, r.CIDR)
-			} else {
-				existingCIDRs = append(existingCIDRs, defaultBlockSupernet)
-			}
-		}
-		cidr, err := network.NextAvailableCIDRWithAllocations(defaultBlockSupernet, input.Prefix, existingCIDRs)
-		if err != nil {
-			return status.Wrap(err, status.InvalidArgument)
-		}
-		output.CIDR = cidr
-		return nil
-	})
-	u.SetTitle("Suggest Environment Block CIDR")
-	u.SetDescription("Suggests a CIDR for a new block in the environment at the given prefix length, considering existing blocks in that environment")
-	u.SetExpectedErrors(status.NotFound, status.InvalidArgument, status.Internal)
 	return u
 }

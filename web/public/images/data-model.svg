@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 920 380" width="100%" role="img" aria-labelledby="data-model-title">
+  <title id="data-model-title">IPAM data model: Environment ? Pools ? Network blocks ? Allocations (resource graph from Dashboard)</title>
+  <defs>
+    <style>
+      .dm-frame { fill: var(--dm-bg, #f8fafc); stroke: var(--dm-border, #e2e8f0); stroke-width: 1; }
+      .dm-caption { font: 11px system-ui, sans-serif; fill: var(--dm-caption, #64748b); }
+    </style>
+    <filter id="dm-shadow" x="-4%" y="-2%" width="108%" height="108%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.08"/>
+    </filter>
+  </defs>
+  <!-- Rounded frame with subtle shadow -->
+  <rect class="dm-frame" x="10" y="10" width="900" height="340" rx="12" ry="12" filter="url(#dm-shadow)"/>
+  <!-- Screenshot of Dashboard resource graph (run: npm run screenshot-docs to capture) -->
+  <image
+    href="/images/resource-graph-light.png"
+    x="20"
+    y="20"
+    width="880"
+    height="300"
+    preserveAspectRatio="xMidYMid meet"
+    alt="Dashboard resource graph showing Environment, Pool, Block, and Allocation nodes"
+  />
+  <text class="dm-caption" x="460" y="338" text-anchor="middle">Resource graph (Dashboard)</text>
+</svg>

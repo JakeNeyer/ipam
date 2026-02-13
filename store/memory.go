@@ -24,6 +24,7 @@ const signupInviteSecretBytes = 32
 type Store struct {
 	organizations  map[uuid.UUID]*Organization
 	environments   map[uuid.UUID]*network.Environment
+	pools          map[uuid.UUID]*network.Pool
 	blocks         map[uuid.UUID]*network.Block
 	allocations    map[uuid.UUID]*network.Allocation
 	reservedBlocks map[uuid.UUID]*ReservedBlock
@@ -42,6 +43,7 @@ func NewStore() *Store {
 	return &Store{
 		organizations:  make(map[uuid.UUID]*Organization),
 		environments:   make(map[uuid.UUID]*network.Environment),
+		pools:          make(map[uuid.UUID]*network.Pool),
 		blocks:         make(map[uuid.UUID]*network.Block),
 		allocations:    make(map[uuid.UUID]*network.Allocation),
 		reservedBlocks: make(map[uuid.UUID]*ReservedBlock),
@@ -120,6 +122,11 @@ func (s *Store) DeleteOrganization(id uuid.UUID) error {
 		}
 	}
 	for _, envID := range orgEnvIDs {
+		for pid, pool := range s.pools {
+			if pool.EnvironmentID == envID {
+				delete(s.pools, pid)
+			}
+		}
 		for bid, block := range s.blocks {
 			if block.EnvironmentID != envID {
 				continue
@@ -277,12 +284,17 @@ func (s *Store) UpdateEnvironment(id uuid.UUID, env *network.Environment) error 
 	return nil
 }
 
-// DeleteEnvironment removes the environment, all blocks that belong to it, and all allocations in those blocks.
+// DeleteEnvironment removes the environment, its pools, all blocks that belong to it, and all allocations in those blocks.
 func (s *Store) DeleteEnvironment(id uuid.UUID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.environments[id]; !exists {
 		return fmt.Errorf("environment not found")
+	}
+	for pid, pool := range s.pools {
+		if pool.EnvironmentID == id {
+			delete(s.pools, pid)
+		}
 	}
 	for bid, block := range s.blocks {
 		if block.EnvironmentID == id {
@@ -296,6 +308,73 @@ func (s *Store) DeleteEnvironment(id uuid.UUID) error {
 		}
 	}
 	delete(s.environments, id)
+	return nil
+}
+
+// Pool operations
+func (s *Store) CreatePool(pool *network.Pool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if pool.ID == uuid.Nil {
+		pool.ID = s.GenerateID()
+	}
+	s.pools[pool.ID] = pool
+	return nil
+}
+
+func (s *Store) GetPool(id uuid.UUID) (*network.Pool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	pool, exists := s.pools[id]
+	if !exists {
+		return nil, fmt.Errorf("pool not found")
+	}
+	return pool, nil
+}
+
+func (s *Store) ListPoolsByEnvironment(envID uuid.UUID) ([]*network.Pool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*network.Pool
+	for _, pool := range s.pools {
+		if pool.EnvironmentID == envID {
+			out = append(out, pool)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+func (s *Store) ListPoolsByOrganization(orgID uuid.UUID) ([]*network.Pool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*network.Pool
+	for _, pool := range s.pools {
+		if pool.OrganizationID == orgID {
+			out = append(out, pool)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+func (s *Store) UpdatePool(id uuid.UUID, pool *network.Pool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.pools[id]; !exists {
+		return fmt.Errorf("pool not found")
+	}
+	s.pools[id] = pool
+	return nil
+}
+
+func (s *Store) DeletePool(id uuid.UUID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.pools[id]; !exists {
+		return fmt.Errorf("pool not found")
+	}
+	delete(s.pools, id)
 	return nil
 }
 
@@ -321,13 +400,13 @@ func (s *Store) GetBlock(id uuid.UUID) (*network.Block, error) {
 }
 
 func (s *Store) ListBlocks() ([]*network.Block, error) {
-	blocks, _, err := s.ListBlocksFiltered("", nil, nil, false, 0, 0)
+	blocks, _, err := s.ListBlocksFiltered("", nil, nil, nil, false, 0, 0)
 	return blocks, err
 }
 
-// ListBlocksFiltered returns blocks matching name (substring), optionally environmentID, organizationID, and orphaned only.
+// ListBlocksFiltered returns blocks matching name (substring), optionally environmentID, poolID, organizationID, and orphaned only.
 // If organizationID != nil, only blocks in envs belonging to that org are returned. If limit <= 0, no limit is applied.
-func (s *Store) ListBlocksFiltered(name string, environmentID *uuid.UUID, organizationID *uuid.UUID, orphanedOnly bool, limit, offset int) ([]*network.Block, int, error) {
+func (s *Store) ListBlocksFiltered(name string, environmentID *uuid.UUID, poolID *uuid.UUID, organizationID *uuid.UUID, orphanedOnly bool, limit, offset int) ([]*network.Block, int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	nameLower := strings.ToLower(strings.TrimSpace(name))
@@ -337,6 +416,9 @@ func (s *Store) ListBlocksFiltered(name string, environmentID *uuid.UUID, organi
 			continue
 		}
 		if environmentID != nil && block.EnvironmentID != *environmentID {
+			continue
+		}
+		if poolID != nil && (block.PoolID == nil || *block.PoolID != *poolID) {
 			continue
 		}
 		if organizationID != nil {
@@ -374,6 +456,19 @@ func (s *Store) ListBlocksByEnvironment(envID uuid.UUID) ([]*network.Block, erro
 	var out []*network.Block
 	for _, block := range s.blocks {
 		if block.EnvironmentID == envID {
+			out = append(out, block)
+		}
+	}
+	return out, nil
+}
+
+// ListBlocksByPool returns all blocks assigned to the given pool.
+func (s *Store) ListBlocksByPool(poolID uuid.UUID) ([]*network.Block, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*network.Block
+	for _, block := range s.blocks {
+		if block.PoolID != nil && *block.PoolID == poolID {
 			out = append(out, block)
 		}
 	}
@@ -424,7 +519,7 @@ func (s *Store) ListAllocations() ([]*network.Allocation, error) {
 }
 
 // ListAllocationsFiltered returns allocations matching name (substring), optionally blockName, environmentID, and organizationID.
-// When organizationID != nil, only allocations in blocks belonging to envs in that org are returned.
+// When organizationID != nil, only allocations in blocks belonging to that org are returned (blocks in envs in that org, or orphan blocks with that organization_id).
 func (s *Store) ListAllocationsFiltered(name string, blockName string, environmentID uuid.UUID, organizationID *uuid.UUID, limit, offset int) ([]*network.Allocation, int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -448,12 +543,15 @@ func (s *Store) ListAllocationsFiltered(name string, blockName string, environme
 	} else if organizationID != nil {
 		blockNamesOK = make(map[string]bool)
 		for _, block := range s.blocks {
-			if block.EnvironmentID == uuid.Nil {
-				continue
-			}
-			env, exists := s.environments[block.EnvironmentID]
-			if !exists || env.OrganizationID != *organizationID {
-				continue
+			if block.EnvironmentID != uuid.Nil {
+				env, exists := s.environments[block.EnvironmentID]
+				if !exists || env.OrganizationID != *organizationID {
+					continue
+				}
+			} else {
+				if block.OrganizationID != *organizationID {
+					continue
+				}
 			}
 			blockNamesOK[strings.ToLower(strings.TrimSpace(block.Name))] = true
 		}

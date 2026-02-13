@@ -26,6 +26,12 @@ const loginPassword = process.env.LOGIN_PASSWORD || ''
 /** App pages to capture (user docs). Landing page is not in this list. */
 const captures = [
   { url: `${baseUrl}/#dashboard`, name: 'Dashboard', base: 'dashboard' },
+  {
+    url: `${baseUrl}/#dashboard`,
+    name: 'Resource graph',
+    base: 'resource-graph',
+    selector: '.graph-wrap',
+  },
   { url: `${baseUrl}/#networks`, name: 'Networks', base: 'networks' },
   { url: `${baseUrl}/#environments`, name: 'Environments', base: 'environments' },
   { url: `${baseUrl}/#reserved-blocks`, name: 'Reserved blocks', base: 'reserved-blocks' },
@@ -177,7 +183,18 @@ async function main() {
 
         const filename = `${base}-${theme}.png`
         const filepath = join(outDir, filename)
-        await page.screenshot({ path: filepath, fullPage: false })
+        const selector = capture.selector
+        if (selector) {
+          const el = page.locator(selector)
+          const visible = await el.isVisible().catch(() => false)
+          if (!visible) {
+            console.warn('Skipped (element not visible):', name, theme, '- ensure Dashboard has data so the resource graph is shown.')
+            continue
+          }
+          await el.screenshot({ path: filepath })
+        } else {
+          await page.screenshot({ path: filepath, fullPage: false })
+        }
         console.log('Captured:', name, theme, '->', filename)
       } catch (err) {
         console.error('Failed', name, theme, ':', err.message)

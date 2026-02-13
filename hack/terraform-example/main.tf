@@ -16,16 +16,29 @@ provider "ipam" {
   token    = var.ipam_token
 }
 
-# Create an environment, block, and allocation via the provider
+# Create an environment with one or more pools
 resource "ipam_environment" "hack" {
   name = "tf-hack-env"
+  pools = [
+    {
+      name = "tf-hack-pool"
+      cidr = "10.200.0.0/16"
+    }
+  ]
 }
 
-# IPv4 block and allocations
+# First pool ID comes from the environment's computed pool_ids (same order as pools)
+# Optional: use data "ipam_pools" to look up pools by name or list all pool details
+data "ipam_pools" "hack" {
+  environment_id = ipam_environment.hack.id
+}
+
+# IPv4 block in the pool (CIDR contained in pool 10.200.0.0/16)
 resource "ipam_block" "hack" {
   name           = "tf-hack-block"
   cidr           = "10.200.0.0/24"
   environment_id = ipam_environment.hack.id
+  pool_id        = ipam_environment.hack.pool_ids[0]
 }
 
 resource "ipam_allocation" "hack" {
@@ -56,6 +69,11 @@ resource "ipam_allocation" "hack_ula_subnet" {
 
 output "environment_id" {
   value = ipam_environment.hack.id
+}
+
+output "pool_id" {
+  value       = ipam_environment.hack.pool_ids[0]
+  description = "Initial pool created with the environment (used by ipam_block.hack)"
 }
 
 output "block_id" {

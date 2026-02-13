@@ -330,3 +330,101 @@ export function getMaxHostsPerNetwork(
     fits,
   })
 }
+
+// --- Per-pool capacity (each environment has its own pool; no sharing) ---
+
+/** Capacity for one pool = pool total IPs minus existing occupied in that pool. */
+function poolCapacityIPs(poolTotalIPs, existingOccupiedInPool = 0, version = 4) {
+  const total = typeof poolTotalIPs === 'bigint' ? Number(poolTotalIPs) : toNumber(poolTotalIPs, 0)
+  if (!Number.isFinite(total) || total <= 0) return 0
+  const occupied = toNumber(existingOccupiedInPool, 0)
+  return Math.max(0, total - occupied)
+}
+
+/**
+ * Max networks for an environment when it has a dedicated pool (capacity = pool size).
+ * Use when base CIDR is split evenly into one pool per environment.
+ */
+export function getMaxNetworksForPool(
+  poolCapacityIPsVal,
+  envId,
+  envOverride = null,
+  existingOccupiedInPool = 0,
+  version = 4,
+  environments = [],
+) {
+  const env = envOverride ?? (environments || []).find((e) => e?.id === envId) ?? null
+  if (!env) return MIN_NETWORKS
+
+  const capacity = poolCapacityIPs(poolCapacityIPsVal, existingOccupiedInPool, version)
+  if (capacity <= 0) return MIN_NETWORKS
+
+  const baseEnv = {
+    ...env,
+    hostsPerNetwork: normalizeHosts(env.hostsPerNetwork),
+    growthPercent: normalizeGrowthPercent(env.growthPercent),
+  }
+
+  const fits = (networks) =>
+    blockFitsCapacity({ ...baseEnv, networks }, capacity, version)
+  if (!fits(MIN_NETWORKS)) return MIN_NETWORKS
+
+  let hi = Math.max(MIN_NETWORKS, clampNetworks(env.networks))
+  while (fits(hi) && hi < capacity) {
+    const next = hi * 2
+    if (next <= hi) break
+    hi = Math.min(capacity, next)
+  }
+  if (!fits(hi)) {
+    return maxByBinarySearch({ min: MIN_NETWORKS, max: hi, step: 1, fits })
+  }
+  return hi
+}
+
+/**
+ * Max hosts per network for an environment when it has a dedicated pool.
+ */
+export function getMaxHostsPerNetworkForPool(
+  poolCapacityIPsVal,
+  envId,
+  envOverride = null,
+  existingOccupiedInPool = 0,
+  version = 4,
+  environments = [],
+) {
+  const env = envOverride ?? (environments || []).find((e) => e?.id === envId) ?? null
+  if (!env) return MIN_HOSTS
+
+  const capacity = poolCapacityIPs(poolCapacityIPsVal, existingOccupiedInPool, version)
+  if (capacity <= 0) return MIN_HOSTS
+
+  const baseEnv = {
+    ...env,
+    networks: clampNetworks(env.networks),
+    growthPercent: normalizeGrowthPercent(env.growthPercent),
+  }
+
+  const fits = (hostsPerNetwork) =>
+    blockFitsCapacity(
+      { ...baseEnv, hostsPerNetwork: normalizeHosts(hostsPerNetwork) },
+      capacity,
+      version,
+    )
+
+  if (!fits(MIN_HOSTS)) return MIN_HOSTS
+
+  let hi = Math.max(MIN_HOSTS, normalizeHosts(env.hostsPerNetwork))
+  while (fits(hi) && hi < MAX_HOST_SEARCH) {
+    const next = hi * 2
+    if (next <= hi) break
+    hi = Math.min(MAX_HOST_SEARCH, next)
+  }
+
+  if (fits(hi)) return hi
+  return maxByBinarySearch({
+    min: MIN_HOSTS,
+    max: hi,
+    step: HOST_STEP,
+    fits,
+  })
+}

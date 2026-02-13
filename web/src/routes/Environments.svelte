@@ -6,7 +6,7 @@
   import { cidrRange } from '../lib/cidr.js'
   import { formatBlockCount } from '../lib/blockCount.js'
   import { user, selectedOrgForGlobalAdmin, isGlobalAdmin } from '../lib/auth.js'
-  import { listEnvironments, listAllocations, createEnvironment, updateEnvironment, deleteEnvironment, getEnvironment } from '../lib/api.js'
+  import { listEnvironments, listAllocations, listPools, createEnvironment, createPool, updateEnvironment, updatePool, deleteEnvironment, deletePool, getEnvironment } from '../lib/api.js'
 
   export let openCreateFromQuery = false
   export let openEnvironmentId = null
@@ -31,8 +31,8 @@
     openedCreateFromQuery = false
   }
   let createName = ''
-  let initialBlockName = ''
-  let initialBlockCidr = ''
+  let initialPoolName = ''
+  let initialPoolCidr = ''
   let createSubmitting = false
   let createError = ''
 
@@ -40,6 +40,23 @@
   let editName = ''
   let editSubmitting = false
   let editError = ''
+
+  let expandedEnvPools = []
+  let expandedPoolId = null
+  let showAddPool = false
+  let newPoolName = ''
+  let newPoolCidr = ''
+  let newPoolSubmitting = false
+  let newPoolError = ''
+  let editingPoolId = null
+  let editPoolName = ''
+  let editPoolCidr = ''
+  let editPoolSubmitting = false
+  let editPoolError = ''
+  let deletePoolId = null
+  let deletePoolName = ''
+  let deletePoolSubmitting = false
+  let deletePoolError = ''
 
   let deleteConfirmId = null
   let deleteConfirmName = ''
@@ -90,15 +107,17 @@
     error = ''
     try {
       if (openEnvironmentId) {
-        const [detail, allocsRes] = await Promise.all([
+        const [detail, allocsRes, poolsRes] = await Promise.all([
           getEnvironment(openEnvironmentId),
           listAllocations(listOpts()),
+          listPools(openEnvironmentId),
         ])
         environments = [{ id: detail.id, name: detail.name }]
         envTotal = 1
         allocations = allocsRes.allocations
         expandedEnvId = detail.id
         expandedEnvBlocks = detail.blocks || []
+        expandedEnvPools = poolsRes.pools || []
       } else {
         const [envsRes, allocsRes] = await Promise.all([
           listEnvironments(listOpts({ limit: envPageSize, offset: envPage * envPageSize })),
@@ -109,6 +128,7 @@
         allocations = allocsRes.allocations
         expandedEnvId = null
         expandedEnvBlocks = []
+        expandedEnvPools = []
       }
     } catch (e) {
       error = e.message || 'Failed to load environments'
@@ -138,16 +158,27 @@
     if (expandedEnvId === env.id) {
       expandedEnvId = null
       expandedEnvBlocks = []
+      expandedEnvPools = []
+      expandedPoolId = null
       expandedBlockName = null
+      showAddPool = false
+      editingPoolId = null
       return
     }
     expandedEnvId = env.id
     expandedBlockName = null
+    showAddPool = false
+    editingPoolId = null
     try {
-      const detail = await getEnvironment(env.id)
+      const [detail, poolsRes] = await Promise.all([
+        getEnvironment(env.id),
+        listPools(env.id),
+      ])
       expandedEnvBlocks = detail.blocks || []
+      expandedEnvPools = poolsRes.pools || []
     } catch {
       expandedEnvBlocks = []
+      expandedEnvPools = []
     }
   }
 
@@ -161,24 +192,42 @@
     return allocations.filter((a) => (a.block_name || '').trim().toLowerCase() === name)
   }
 
+  function blocksForPool(poolId) {
+    if (!poolId || !expandedEnvBlocks.length) return []
+    const id = String(poolId)
+    return expandedEnvBlocks.filter((b) => b.pool_id && String(b.pool_id) === id)
+  }
+
+  $: blocksWithoutPool = expandedEnvBlocks.filter((b) => !b.pool_id)
+
+  function togglePoolRow(poolId) {
+    if (editingPoolId != null) return
+    expandedPoolId = expandedPoolId === poolId ? null : poolId
+    if (expandedPoolId !== poolId) expandedBlockName = null
+  }
+
   async function handleCreate() {
     const name = createName.trim()
+    const poolName = initialPoolName.trim()
+    const poolCidr = initialPoolCidr.trim()
     if (!name) {
       createError = 'Name is required'
+      errorModalMessage = createError
+      return
+    }
+    if (!poolName || !poolCidr) {
+      createError = 'Pool name and CIDR are required. Every environment must have a pool that blocks draw from.'
       errorModalMessage = createError
       return
     }
     createSubmitting = true
     createError = ''
     try {
-      const initialBlock =
-        initialBlockName.trim() && initialBlockCidr.trim()
-          ? { name: initialBlockName.trim(), cidr: initialBlockCidr.trim() }
-          : null
-      await createEnvironment(name, initialBlock, isGlobalAdmin($user) ? $selectedOrgForGlobalAdmin : null)
+      const pools = [{ name: poolName, cidr: poolCidr }]
+      await createEnvironment(name, pools, isGlobalAdmin($user) ? $selectedOrgForGlobalAdmin : null)
       createName = ''
-      initialBlockName = ''
-      initialBlockCidr = ''
+      initialPoolName = ''
+      initialPoolCidr = ''
       showCreate = false
       await load()
     } catch (e) {
@@ -192,8 +241,8 @@
   function openCreate() {
     showCreate = true
     createName = ''
-    initialBlockName = ''
-    initialBlockCidr = ''
+    initialPoolName = ''
+    initialPoolCidr = ''
     createError = ''
   }
 
@@ -265,6 +314,109 @@
       deleteSubmitting = false
     }
   }
+
+  async function loadPoolsForExpandedEnv() {
+    if (!expandedEnvId) return
+    try {
+      const res = await listPools(expandedEnvId)
+      expandedEnvPools = res.pools || []
+    } catch {
+      expandedEnvPools = []
+    }
+  }
+
+  function openAddPool() {
+    showAddPool = true
+    newPoolName = ''
+    newPoolCidr = ''
+    newPoolError = ''
+  }
+
+  async function handleAddPool() {
+    const name = newPoolName.trim()
+    const cidr = newPoolCidr.trim()
+    if (!name || !cidr) {
+      newPoolError = 'Name and CIDR are required'
+      return
+    }
+    if (!expandedEnvId) return
+    newPoolSubmitting = true
+    newPoolError = ''
+    try {
+      await createPool(expandedEnvId, name, cidr)
+      newPoolName = ''
+      newPoolCidr = ''
+      showAddPool = false
+      await loadPoolsForExpandedEnv()
+    } catch (e) {
+      newPoolError = e.message || 'Failed to create pool'
+    } finally {
+      newPoolSubmitting = false
+    }
+  }
+
+  function startEditPool(pool) {
+    editingPoolId = pool.id
+    editPoolName = pool.name
+    editPoolCidr = pool.cidr
+    editPoolError = ''
+  }
+
+  function cancelEditPool() {
+    editingPoolId = null
+    editPoolName = ''
+    editPoolCidr = ''
+    editPoolError = ''
+  }
+
+  async function handleUpdatePool() {
+    const name = editPoolName.trim()
+    const cidr = editPoolCidr.trim()
+    if (!name || !cidr) {
+      editPoolError = 'Name and CIDR are required'
+      return
+    }
+    if (!editingPoolId) return
+    editPoolSubmitting = true
+    editPoolError = ''
+    try {
+      await updatePool(editingPoolId, name, cidr)
+      cancelEditPool()
+      await loadPoolsForExpandedEnv()
+    } catch (e) {
+      editPoolError = e.message || 'Failed to update pool'
+    } finally {
+      editPoolSubmitting = false
+    }
+  }
+
+  function openDeletePoolConfirm(pool) {
+    deletePoolId = pool.id
+    deletePoolName = pool.name
+    deletePoolError = ''
+    deletePoolSubmitting = false
+  }
+
+  function closeDeletePoolConfirm() {
+    deletePoolId = null
+    deletePoolName = ''
+    deletePoolError = ''
+  }
+
+  async function handleDeletePool() {
+    if (!deletePoolId) return
+    deletePoolSubmitting = true
+    deletePoolError = ''
+    try {
+      await deletePool(deletePoolId)
+      closeDeletePoolConfirm()
+      await loadPoolsForExpandedEnv()
+    } catch (e) {
+      deletePoolError = e.message || 'Failed to delete pool'
+    } finally {
+      deletePoolSubmitting = false
+    }
+  }
 </script>
 
 <div class="environments">
@@ -284,17 +436,17 @@
           <span>Name</span>
           <input type="text" bind:value={createName} placeholder="e.g. production" disabled={createSubmitting} />
         </label>
-        <div class="initial-block">
-          <span class="initial-block-label">Initial network block (optional)</span>
-          <p class="initial-block-desc">Create the environment’s range as the first block.</p>
+        <div class="initial-pool">
+          <span class="initial-pool-label">Pool (required)</span>
+          <p class="initial-pool-desc">Every environment must have a pool: a CIDR range that network blocks in this environment can draw from.</p>
           <div class="form-row">
             <label>
-              <span>Block name</span>
-              <input type="text" bind:value={initialBlockName} placeholder="e.g. main-range" disabled={createSubmitting} />
+              <span>Pool name</span>
+              <input type="text" bind:value={initialPoolName} placeholder="e.g. default or prod-pool" disabled={createSubmitting} />
             </label>
             <label>
-              <span>CIDR</span>
-              <input type="text" bind:value={initialBlockCidr} placeholder="e.g. 10.0.0.0/8 or fd00::/64" disabled={createSubmitting} />
+              <span>Pool CIDR</span>
+              <input type="text" bind:value={initialPoolCidr} placeholder="e.g. 10.0.0.0/8 or fd00::/64" disabled={createSubmitting} />
             </label>
           </div>
         </div>
@@ -410,56 +562,203 @@
             {#if expandedEnvId === env.id}
               <tr class="detail-row">
                 <td colspan="3" class="detail-cell">
-                  <div class="blocks-summary">
-                    <h4 class="summary-title">Network blocks</h4>
-                    {#if expandedEnvBlocks.length === 0}
-                      <p class="summary-empty">No blocks in this environment.</p>
-                    {:else}
-                      <div class="block-list">
-                        {#each expandedEnvBlocks as block}
-                          {@const blockAllocs = allocationsForBlock(block.name)}
-                          <div
-                            class="block-item"
-                            class:expanded={expandedBlockName === block.name}
-                            role="button"
-                            tabindex="0"
-                            on:click|stopPropagation={() => toggleBlockRow(block.name)}
-                            on:keydown={(e) => e.key === 'Enter' && toggleBlockRow(block.name)}
-                          >
-                            <div class="block-item-header">
-                              <span class="block-name">{block.name}</span>
-                              <code class="block-cidr">{block.cidr}</code>
-                              {#if cidrRange(block.cidr)}
-                                <span class="block-range">{cidrRange(block.cidr).start} – {cidrRange(block.cidr).end}</span>
-                              {/if}
-                              <span class="block-ips">{formatBlockCount(block.total_ips)} IPs</span>
-                              <span class="block-expand"><Icon icon={expandedBlockName === block.name ? 'lucide:chevron-down' : 'lucide:chevron-right'} width="1em" height="1em" /></span>
+                  <div class="pools-summary">
+                    <div class="pools-section-header">
+                      <h4 class="summary-title">
+                        <span class="summary-title-icon" aria-hidden="true"><Icon icon="lucide:droplets" width="1em" height="1em" /></span>
+                        CIDR pools
+                        {#if expandedEnvPools.length > 0}
+                          <span class="summary-title-count">({expandedEnvPools.length})</span>
+                        {/if}
+                      </h4>
+                      {#if !showAddPool}
+                        <button type="button" class="btn btn-small btn-primary" on:click|stopPropagation={openAddPool}>Add pool</button>
+                      {/if}
+                    </div>
+                    <p class="summary-desc">Pools define the CIDR ranges that network blocks in this environment can draw from.</p>
+                    {#if showAddPool}
+                      <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+                      <div class="form-card-inline" on:click|stopPropagation on:keydown|stopPropagation>
+                        <form on:submit|preventDefault={handleAddPool}>
+                          <div class="form-row">
+                            <input type="text" bind:value={newPoolName} placeholder="Pool name" disabled={newPoolSubmitting} />
+                            <input type="text" bind:value={newPoolCidr} placeholder="e.g. 10.0.0.0/8" disabled={newPoolSubmitting} />
+                            <div class="inline-actions">
+                              <button type="button" class="btn btn-small" on:click={() => (showAddPool = false)} disabled={newPoolSubmitting}>Cancel</button>
+                              <button type="submit" class="btn btn-primary btn-small" disabled={newPoolSubmitting}>
+                                {newPoolSubmitting ? 'Adding…' : 'Add pool'}
+                              </button>
                             </div>
-                            {#if expandedBlockName === block.name}
-                              <div class="allocations-summary">
-                                <h5 class="allocations-title">Allocations</h5>
-                                {#if blockAllocs.length === 0}
-                                  <p class="summary-empty">No allocations in this block.</p>
-                                {:else}
-                                  <ul class="alloc-list">
-                                    {#each blockAllocs as alloc}
-                                      {@const allocRange = cidrRange(alloc.cidr)}
-                                      <li class="alloc-item">
-                                        <span class="alloc-name">{alloc.name}</span>
-                                        <code class="alloc-cidr">{alloc.cidr}</code>
-                                        {#if allocRange}
-                                          <span class="alloc-range">{allocRange.start} – {allocRange.end}</span>
+                          </div>
+                          {#if newPoolError}
+                            <p class="form-error">{newPoolError}</p>
+                          {/if}
+                        </form>
+                      </div>
+                    {/if}
+                    {#if !showAddPool || expandedEnvPools.length > 0}
+                    <div class="pools-list-wrap">
+                    {#if expandedEnvPools.length === 0 && !showAddPool}
+                      <p class="summary-empty">No pools yet. Add a pool to define a CIDR range for blocks.</p>
+                    {:else if expandedEnvPools.length > 0}
+                      <p class="summary-desc summary-desc-inlist">Click a pool to show its network blocks; click a block to show allocations.</p>
+                      <ul class="hierarchy-list pool-list">
+                        {#each expandedEnvPools as pool}
+                          {@const poolBlocks = blocksForPool(pool.id)}
+                          <li class="pool-node">
+                            {#if editingPoolId === pool.id}
+                              <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+                              <div class="pool-item pool-item-edit" on:click|stopPropagation on:keydown|stopPropagation>
+                                <form class="inline-edit" on:submit|preventDefault={handleUpdatePool}>
+                                  <input type="text" bind:value={editPoolName} placeholder="Name" disabled={editPoolSubmitting} />
+                                  <input type="text" bind:value={editPoolCidr} placeholder="CIDR" disabled={editPoolSubmitting} />
+                                  <div class="inline-actions">
+                                    <button type="button" class="btn btn-small" on:click={cancelEditPool} disabled={editPoolSubmitting}>Cancel</button>
+                                    <button type="submit" class="btn btn-primary btn-small" disabled={editPoolSubmitting}>
+                                      {editPoolSubmitting ? 'Saving…' : 'Save'}
+                                    </button>
+                                  </div>
+                                </form>
+                                {#if editPoolError}
+                                  <span class="form-error">{editPoolError}</span>
+                                {/if}
+                              </div>
+                            {:else}
+                              <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+                              <div
+                                class="pool-item pool-item-header"
+                                class:expanded={expandedPoolId === pool.id}
+                                role="button"
+                                tabindex="0"
+                                on:click|stopPropagation={() => togglePoolRow(pool.id)}
+                                on:keydown={(e) => e.key === 'Enter' && togglePoolRow(pool.id)}
+                              >
+                                <span class="expand-icon"><Icon icon={expandedPoolId === pool.id ? 'lucide:chevron-down' : 'lucide:chevron-right'} width="1em" height="1em" /></span>
+                                <span class="pool-name">{pool.name}</span>
+                                <code class="pool-cidr">{pool.cidr}</code>
+                                <span class="pool-block-count">{poolBlocks.length} block{poolBlocks.length === 1 ? '' : 's'}</span>
+                                <div class="pool-actions" on:click|stopPropagation>
+                                  <button type="button" class="btn btn-small" on:click|stopPropagation={() => startEditPool(pool)}>Edit</button>
+                                  <button type="button" class="btn btn-small btn-danger" on:click|stopPropagation={() => openDeletePoolConfirm(pool)}>Delete</button>
+                                </div>
+                              </div>
+                              {#if expandedPoolId === pool.id}
+                                <ul class="block-list-nested">
+                                  {#if poolBlocks.length === 0}
+                                    <li class="nested-empty">No network blocks in this pool.</li>
+                                  {:else}
+                                    {#each poolBlocks as block}
+                                      {@const blockAllocs = allocationsForBlock(block.name)}
+                                      <li class="block-node">
+                                        <div
+                                          class="block-item block-item-header"
+                                          class:expanded={expandedBlockName === block.name}
+                                          role="button"
+                                          tabindex="0"
+                                          on:click|stopPropagation={() => toggleBlockRow(block.name)}
+                                          on:keydown={(e) => e.key === 'Enter' && toggleBlockRow(block.name)}
+                                        >
+                                          <span class="expand-icon"><Icon icon={expandedBlockName === block.name ? 'lucide:chevron-down' : 'lucide:chevron-right'} width="1em" height="1em" /></span>
+                                          <span class="block-name">{block.name}</span>
+                                          <code class="block-cidr">{block.cidr}</code>
+                                          {#if cidrRange(block.cidr)}
+                                            <span class="block-range">{cidrRange(block.cidr).start} – {cidrRange(block.cidr).end}</span>
+                                          {/if}
+                                          <span class="block-ips">{formatBlockCount(block.total_ips)} IPs</span>
+                                          <span class="alloc-count">{blockAllocs.length} allocation{blockAllocs.length === 1 ? '' : 's'}</span>
+                                        </div>
+                                        {#if expandedBlockName === block.name}
+                                          <div class="allocations-summary">
+                                            <h5 class="allocations-title">Allocations</h5>
+                                            {#if blockAllocs.length === 0}
+                                              <p class="summary-empty">No allocations in this block.</p>
+                                            {:else}
+                                              <ul class="alloc-list">
+                                                {#each blockAllocs as alloc}
+                                                  {@const allocRange = cidrRange(alloc.cidr)}
+                                                  <li class="alloc-item">
+                                                    <span class="alloc-name">{alloc.name}</span>
+                                                    <code class="alloc-cidr">{alloc.cidr}</code>
+                                                    {#if allocRange}
+                                                      <span class="alloc-range">{allocRange.start} – {allocRange.end}</span>
+                                                    {/if}
+                                                  </li>
+                                                {/each}
+                                              </ul>
+                                            {/if}
+                                          </div>
                                         {/if}
                                       </li>
                                     {/each}
-                                  </ul>
-                                {/if}
-                              </div>
+                                  {/if}
+                                </ul>
+                              {/if}
                             {/if}
-                          </div>
+                          </li>
                         {/each}
-                      </div>
+                      </ul>
                     {/if}
+                    </div>
+                    {/if}
+                    {#if blocksWithoutPool.length > 0}
+                        <div class="blocks-without-pool">
+                          <div class="pools-section-header">
+                            <h4 class="summary-title">
+                              <span class="summary-title-icon" aria-hidden="true"><Icon icon="lucide:layers" width="1em" height="1em" /></span>
+                              Blocks without pool
+                              <span class="summary-title-count">({blocksWithoutPool.length})</span>
+                            </h4>
+                          </div>
+                          <p class="summary-desc">Network blocks in this environment that are not assigned to any pool. Click a block to show its allocations.</p>
+                          <div class="pools-list-wrap">
+                          <ul class="hierarchy-list blocks-without-pool-list">
+                            {#each blocksWithoutPool as block}
+                              {@const blockAllocs = allocationsForBlock(block.name)}
+                              <li class="block-node">
+                                <div
+                                  class="block-item block-item-header"
+                                  class:expanded={expandedBlockName === block.name}
+                                  role="button"
+                                  tabindex="0"
+                                  on:click|stopPropagation={() => toggleBlockRow(block.name)}
+                                  on:keydown={(e) => e.key === 'Enter' && toggleBlockRow(block.name)}
+                                >
+                                  <span class="expand-icon"><Icon icon={expandedBlockName === block.name ? 'lucide:chevron-down' : 'lucide:chevron-right'} width="1em" height="1em" /></span>
+                                  <span class="block-name">{block.name}</span>
+                                  <code class="block-cidr">{block.cidr}</code>
+                                  {#if cidrRange(block.cidr)}
+                                    <span class="block-range">{cidrRange(block.cidr).start} – {cidrRange(block.cidr).end}</span>
+                                  {/if}
+                                  <span class="block-ips">{formatBlockCount(block.total_ips)} IPs</span>
+                                  <span class="alloc-count">{blockAllocs.length} allocation{blockAllocs.length === 1 ? '' : 's'}</span>
+                                </div>
+                                {#if expandedBlockName === block.name}
+                                  <div class="allocations-summary">
+                                    <h5 class="allocations-title">Allocations</h5>
+                                    {#if blockAllocs.length === 0}
+                                      <p class="summary-empty">No allocations in this block.</p>
+                                    {:else}
+                                      <ul class="alloc-list">
+                                        {#each blockAllocs as alloc}
+                                          {@const allocRange = cidrRange(alloc.cidr)}
+                                          <li class="alloc-item">
+                                            <span class="alloc-name">{alloc.name}</span>
+                                            <code class="alloc-cidr">{alloc.cidr}</code>
+                                            {#if allocRange}
+                                              <span class="alloc-range">{allocRange.start} – {allocRange.end}</span>
+                                            {/if}
+                                          </li>
+                                        {/each}
+                                      </ul>
+                                    {/if}
+                                  </div>
+                                {/if}
+                              </li>
+                            {/each}
+                          </ul>
+                          </div>
+                        </div>
+                      {/if}
                   </div>
                 </td>
               </tr>
@@ -504,6 +803,26 @@
           <button type="button" class="btn" on:click={closeDeleteConfirm} disabled={deleteSubmitting}>Cancel</button>
           <button type="button" class="btn btn-danger" on:click={handleDelete} disabled={deleteSubmitting}>
             {deleteSubmitting ? 'Deleting…' : 'Delete environment'}
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  {#if deletePoolId}
+    <div class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="delete-pool-dialog-title">
+      <div class="modal">
+        <h3 id="delete-pool-dialog-title">Delete pool</h3>
+        <p class="modal-warning">
+          Delete pool <strong>{deletePoolName}</strong>? Blocks in this pool will be unassigned from the pool (not deleted).
+        </p>
+        {#if deletePoolError}
+          <p class="form-error">{deletePoolError}</p>
+        {/if}
+        <div class="modal-actions">
+          <button type="button" class="btn" on:click={closeDeletePoolConfirm} disabled={deletePoolSubmitting}>Cancel</button>
+          <button type="button" class="btn btn-danger" on:click={handleDeletePool} disabled={deletePoolSubmitting}>
+            {deletePoolSubmitting ? 'Deleting…' : 'Delete pool'}
           </button>
         </div>
       </div>
@@ -738,18 +1057,18 @@
     outline: none;
     border-color: var(--accent);
   }
-  .initial-block {
+  .initial-pool {
     margin: 1rem 0;
     padding: 1rem;
     background: rgba(0, 0, 0, 0.15);
     border-radius: var(--radius);
   }
-  .initial-block-label {
+  .initial-pool-label {
     font-size: 0.8rem;
     font-weight: 500;
     color: var(--text-muted);
   }
-  .initial-block-desc {
+  .initial-pool-desc {
     margin: 0.25rem 0 0.75rem 0;
     font-size: 0.8rem;
     color: var(--text-muted);
@@ -878,7 +1197,243 @@
     border-bottom: 1px solid var(--table-row-border);
   }
   .detail-cell {
-    padding: 1rem 1.5rem 1rem 3rem;
+    padding: 1.5rem 1.5rem 1rem 3rem;
+  }
+  .pools-summary {
+    margin-bottom: 1.5rem;
+    font-size: 0.9rem;
+  }
+  .pools-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 0.5rem;
+    margin-top: 0.25rem;
+  }
+  .pools-section-header .summary-title {
+    margin: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .summary-title-icon {
+    display: inline-flex;
+    color: var(--text-muted);
+    opacity: 0.9;
+  }
+  .summary-title-count {
+    font-weight: 500;
+    color: var(--text-muted);
+    opacity: 0.9;
+  }
+  .summary-desc {
+    margin: 0 0 0.75rem 0;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+  .summary-desc-inlist {
+    margin-bottom: 0.5rem;
+  }
+  .pools-list-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.75rem 1rem;
+    margin-top: 0.25rem;
+  }
+  .pools-list-wrap .summary-empty {
+    margin: 0;
+    padding: 0.5rem 0;
+  }
+  .hierarchy-list.pool-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .pool-node {
+    margin-bottom: 0.5rem;
+  }
+  .pool-node:last-child {
+    margin-bottom: 0;
+  }
+  .pool-item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+    padding: 0.6rem 0.85rem;
+    border-radius: var(--radius);
+    border: 1px solid transparent;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .pool-item-header {
+    cursor: pointer;
+    background: var(--bg);
+    border-color: var(--border);
+  }
+  .pool-item-header:hover {
+    background: var(--table-row-hover);
+  }
+  .pool-item-header.expanded {
+    background: rgba(88, 166, 255, 0.06);
+    border-color: rgba(88, 166, 255, 0.2);
+  }
+  .pool-item-edit {
+    border: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .expand-icon {
+    display: inline-flex;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+  .pool-name {
+    font-weight: 500;
+  }
+  .pool-cidr {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    padding: 0.15em 0.4em;
+    background: var(--bg);
+    border-radius: 3px;
+  }
+  .pool-block-count {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+  .pool-actions {
+    display: flex;
+    gap: 0.35rem;
+    margin-left: auto;
+  }
+  .block-list-nested {
+    list-style: none;
+    margin: 0.5rem 0 0 1.25rem;
+    padding: 0 0 0 0.75rem;
+    border-left: 2px solid var(--border);
+  }
+  .block-node {
+    margin-bottom: 0.5rem;
+  }
+  .block-node:last-child {
+    margin-bottom: 0;
+  }
+  .block-node .allocations-summary {
+    margin-left: 0.5rem;
+  }
+  .block-item-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+    padding: 0.4rem 0.6rem;
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .block-list-nested .block-item-header {
+    padding: 0.6rem 0.85rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+  }
+  .block-item-header:hover {
+    background: var(--table-row-hover);
+  }
+  .block-list-nested .block-item-header:hover {
+    background: var(--table-row-hover);
+  }
+  .block-item-header.expanded {
+    background: rgba(0, 0, 0, 0.04);
+  }
+  .block-list-nested .block-item-header.expanded {
+    background: rgba(88, 166, 255, 0.06);
+    border-color: rgba(88, 166, 255, 0.2);
+  }
+  .block-item-header .block-name {
+    font-weight: 500;
+  }
+  .block-item-header .block-cidr {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+  .block-item-header .block-range {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .block-item-header .alloc-count {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+  .nested-empty {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    padding: 0.5rem 0;
+  }
+  .blocks-without-pool {
+    margin-top: 1.5rem;
+  }
+  .blocks-without-pool .pools-section-header {
+    margin-bottom: 0.5rem;
+  }
+  .blocks-without-pool .summary-desc {
+    margin-bottom: 0.5rem;
+  }
+  .blocks-without-pool .pools-list-wrap {
+    margin-top: 0.25rem;
+  }
+  .hierarchy-list.blocks-without-pool-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .blocks-without-pool-list .block-node {
+    margin-bottom: 0.5rem;
+  }
+  .blocks-without-pool-list .block-node:last-child {
+    margin-bottom: 0;
+  }
+  .blocks-without-pool-list .block-item-header {
+    padding: 0.6rem 0.85rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+  }
+  .blocks-without-pool-list .block-item-header:hover {
+    background: var(--table-row-hover);
+  }
+  .blocks-without-pool-list .block-item-header.expanded {
+    background: rgba(88, 166, 255, 0.06);
+    border-color: rgba(88, 166, 255, 0.2);
+  }
+  .form-card-inline {
+    padding: 0.75rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin: 0.5rem 0 0 0;
+  }
+  .form-card-inline .form-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .form-card-inline input {
+    max-width: 180px;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--text);
+  }
+  .form-error {
+    margin: 0.35rem 0 0 0;
+    font-size: 0.85rem;
+    color: var(--danger);
   }
   .blocks-summary {
     font-size: 0.9rem;

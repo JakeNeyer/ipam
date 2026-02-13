@@ -128,11 +128,27 @@ func (c *Client) GetEnvironment(id string) (*EnvDetailResponse, error) {
 	return &out, nil
 }
 
-// CreateEnvironment creates an environment.
-func (c *Client) CreateEnvironment(name string, initialBlock *InitialBlock) (*EnvResponse, error) {
-	body := map[string]interface{}{"name": name}
-	if initialBlock != nil {
-		body["initial_block"] = map[string]string{"name": initialBlock.Name, "cidr": initialBlock.CIDR}
+// PoolInput is one pool when creating an environment.
+type PoolInput struct {
+	Name string
+	CIDR string
+}
+
+// CreateEnvironment creates an environment with one or more pools.
+func (c *Client) CreateEnvironment(name string, pools []PoolInput) (*EnvResponse, error) {
+	if len(pools) == 0 {
+		return nil, fmt.Errorf("at least one pool is required")
+	}
+	poolMaps := make([]map[string]string, 0, len(pools))
+	for _, p := range pools {
+		if p.Name == "" || p.CIDR == "" {
+			return nil, fmt.Errorf("each pool must have name and CIDR")
+		}
+		poolMaps = append(poolMaps, map[string]string{"name": p.Name, "cidr": p.CIDR})
+	}
+	body := map[string]interface{}{
+		"name":  name,
+		"pools": poolMaps,
 	}
 	var out EnvResponse
 	if err := c.post("/api/environments", body, &out); err != nil {
@@ -194,10 +210,13 @@ func (c *Client) GetBlock(id string) (*BlockResponse, error) {
 }
 
 // CreateBlock creates a network block.
-func (c *Client) CreateBlock(name, cidr, environmentID string) (*BlockResponse, error) {
+func (c *Client) CreateBlock(name, cidr, environmentID string, poolID *string) (*BlockResponse, error) {
 	body := map[string]interface{}{"name": name, "cidr": cidr}
 	if environmentID != "" {
 		body["environment_id"] = environmentID
+	}
+	if poolID != nil && *poolID != "" {
+		body["pool_id"] = *poolID
 	}
 	var out BlockResponse
 	if err := c.post("/api/blocks", body, &out); err != nil {
@@ -207,10 +226,13 @@ func (c *Client) CreateBlock(name, cidr, environmentID string) (*BlockResponse, 
 }
 
 // UpdateBlock updates a block.
-func (c *Client) UpdateBlock(id, name string, environmentID *string) (*BlockResponse, error) {
+func (c *Client) UpdateBlock(id, name string, environmentID, poolID *string) (*BlockResponse, error) {
 	body := map[string]interface{}{"name": name}
 	if environmentID != nil {
 		body["environment_id"] = *environmentID
+	}
+	if poolID != nil {
+		body["pool_id"] = *poolID
 	}
 	var out BlockResponse
 	if err := c.put("/api/blocks/"+url.PathEscape(id), body, &out); err != nil {
@@ -222,6 +244,50 @@ func (c *Client) UpdateBlock(id, name string, environmentID *string) (*BlockResp
 // DeleteBlock deletes a block.
 func (c *Client) DeleteBlock(id string) error {
 	return c.delete("/api/blocks/" + url.PathEscape(id))
+}
+
+// CreatePool creates an environment pool.
+func (c *Client) CreatePool(environmentID, name, cidr string) (*PoolResponse, error) {
+	body := map[string]string{"environment_id": environmentID, "name": name, "cidr": cidr}
+	var out PoolResponse
+	if err := c.post("/api/pools", body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetPool returns a pool by ID.
+func (c *Client) GetPool(id string) (*PoolResponse, error) {
+	var out PoolResponse
+	if err := c.get("/api/pools/"+url.PathEscape(id), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ListPools returns pools for an environment.
+func (c *Client) ListPools(environmentID string) (*PoolListResponse, error) {
+	path := "/api/pools?environment_id=" + url.QueryEscape(environmentID)
+	var out PoolListResponse
+	if err := c.get(path, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// UpdatePool updates a pool.
+func (c *Client) UpdatePool(id, name, cidr string) (*PoolResponse, error) {
+	body := map[string]string{"name": name, "cidr": cidr}
+	var out PoolResponse
+	if err := c.put("/api/pools/"+url.PathEscape(id), body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DeletePool deletes a pool.
+func (c *Client) DeletePool(id string) error {
+	return c.delete("/api/pools/" + url.PathEscape(id))
 }
 
 // ListAllocations returns allocations with optional filters.
@@ -321,8 +387,10 @@ func (c *Client) DeleteReservedBlock(id string) error {
 // API response types (match server JSON; use json tags for lowercase).
 
 type EnvResponse struct {
-	Id   string `json:"id"`
-	Name string `json:"name"`
+	Id            string   `json:"id"`
+	Name          string   `json:"name"`
+	InitialPoolID string   `json:"initial_pool_id,omitempty"`
+	PoolIDs       []string `json:"pool_ids,omitempty"`
 }
 
 type EnvListResponse struct {
@@ -347,25 +415,33 @@ type EnvDetailResponse struct {
 	Blocks []BlockRef `json:"blocks"`
 }
 
-type InitialBlock struct {
-	Name string
-	CIDR string
-}
-
 type BlockResponse struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	CIDR           string `json:"cidr"`
-	TotalIPs       string `json:"total_ips"`   // derive-only; string supports IPv6 /64 etc.
-	UsedIPs        string `json:"used_ips"`
-	Available      string `json:"available_ips"`
-	EnvironmentID  string `json:"environment_id,omitempty"`
-	OrganizationID string `json:"organization_id,omitempty"` // for orphan blocks
+	ID             string  `json:"id"`
+	Name           string  `json:"name"`
+	CIDR           string  `json:"cidr"`
+	TotalIPs       string  `json:"total_ips"`   // derive-only; string supports IPv6 /64 etc.
+	UsedIPs        string  `json:"used_ips"`
+	Available      string  `json:"available_ips"`
+	EnvironmentID  string  `json:"environment_id,omitempty"`
+	OrganizationID string  `json:"organization_id,omitempty"` // for orphan blocks
+	PoolID         *string `json:"pool_id,omitempty"`
 }
 
 type BlockListResponse struct {
 	Blocks []BlockResponse `json:"blocks"`
 	Total  int             `json:"total"`
+}
+
+type PoolResponse struct {
+	ID             string `json:"id"`
+	OrganizationID string `json:"organization_id"`
+	EnvironmentID  string `json:"environment_id"`
+	Name           string `json:"name"`
+	CIDR           string `json:"cidr"`
+}
+
+type PoolListResponse struct {
+	Pools []PoolResponse `json:"pools"`
 }
 
 type AllocationResponse struct {
