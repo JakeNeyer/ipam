@@ -6,7 +6,7 @@
 
 **IPAM** is an IP Address Management application. It provides a REST API, a web UI, and a Terraform provider so you can manage IP space from the dashboard or from infrastructure-as-code.
 
-This project is under actively development. APIs are subject to change.
+This project is under active development. APIs are subject to change.
 
 ## Quick start
 
