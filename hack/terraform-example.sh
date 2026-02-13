@@ -10,8 +10,10 @@
 #   IPAM_ENDPOINT - Base URL of the IPAM API (e.g. http://localhost:8011). Required.
 #   IPAM_TOKEN    - API token (create in Admin > API tokens). Required.
 #
-# Requires: Go, Terraform CLI. The script builds the provider from terraform-provider-ipam/
-# and uses a dev override so no provider install is needed.
+# Requires: Go, Terraform CLI. The script builds the provider from PROVIDER_DIR (default
+# ../terraform-provider-ipam if present, else terraform-provider-ipam/). Clone the provider
+# from https://github.com/JakeNeyer/terraform-provider-ipam next to the ipam repo, or set
+# PROVIDER_DIR. Uses a dev override so no provider install is needed.
 #
 # Example:
 #   IPAM_ENDPOINT=http://localhost:8011 IPAM_TOKEN=your-token ./hack/terraform-example.sh plan
@@ -21,7 +23,13 @@
 set -e
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PROVIDER_DIR="${REPO_ROOT}/terraform-provider-ipam"
+if [ -n "${PROVIDER_DIR}" ]; then
+  : # use PROVIDER_DIR as set
+elif [ -d "${REPO_ROOT}/../terraform-provider-ipam" ]; then
+  PROVIDER_DIR="${REPO_ROOT}/../terraform-provider-ipam"
+else
+  PROVIDER_DIR="${REPO_ROOT}/terraform-provider-ipam"
+fi
 EXAMPLE_DIR="${REPO_ROOT}/hack/terraform-example"
 ACTION="${1:-plan}"
 
@@ -39,7 +47,7 @@ fi
 # Build the provider binary (must satisfy main.tf version ">= 0.1")
 echo "Building IPAM provider..."
 if ! (cd "$PROVIDER_DIR" && go build -o terraform-provider-ipam_0.1.0 .); then
-  echo "Failed to build provider. Is Go installed and terraform-provider-ipam present?"
+  echo "Failed to build provider. Clone https://github.com/JakeNeyer/terraform-provider-ipam next to the ipam repo (e.g. ../terraform-provider-ipam) or set PROVIDER_DIR."
   exit 1
 fi
 

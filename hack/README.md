@@ -15,7 +15,7 @@ Requires: curl, python3. Create an API token in the IPAM UI under Admin > API to
 
 ## terraform-example.sh
 
-Runs Terraform (plan, apply, or destroy) against a running IPAM instance using the local `terraform-provider-ipam` from this repo.
+Runs Terraform (plan, apply, or destroy) against a running IPAM instance using the local [terraform-provider-ipam](https://github.com/JakeNeyer/terraform-provider-ipam) (clone that repo next to the ipam repo, e.g. `../terraform-provider-ipam`).
 
 ```bash
 IPAM_ENDPOINT=http://localhost:8011 IPAM_TOKEN=your-token ./hack/terraform-example.sh [plan|apply|destroy]
@@ -25,7 +25,7 @@ IPAM_ENDPOINT=http://localhost:8011 IPAM_TOKEN=your-token ./hack/terraform-examp
 - **apply** – creates the resources in IPAM.
 - **destroy** – removes the resources from IPAM.
 
-Requires: Go, Terraform CLI. The script builds the provider from `terraform-provider-ipam/` and uses a dev override so no provider install is needed.
+Requires: Go, Terraform CLI. The script builds the provider from `PROVIDER_DIR` (default: `../terraform-provider-ipam` if present, else `terraform-provider-ipam/`) and uses a dev override so no provider install is needed.
 
 ### Terraform fixtures
 

@@ -1,6 +1,0 @@
-terraform-provider-ipam
-terraform-provider-ipam_*
-*.tfstate*
-.terraform/
-*.tfplan
-.env
