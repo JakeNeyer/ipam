@@ -4,7 +4,7 @@
 [![Go](https://img.shields.io/badge/go-%2300ADD8.svg?style=for-the-badge&logo=go&logoColor=white)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
-**IPAM** is an IP Address Management application for tracking environments, **pools**, network blocks (CIDR ranges), and allocations. Hierarchy: **Environment → Pools → Blocks → Allocations**. Each environment has at least one pool (a CIDR range that blocks draw from). It provides a REST API, a web UI, and a Terraform provider so you can manage IP space from the dashboard or from infrastructure-as-code.
+**IPAM** is an IP Address Management application for tracking environments, pools, network blocks (CIDR ranges), and allocations. Hierarchy: **Environment → Pools → Blocks → Allocations**. Each environment has at least one pool (a CIDR range that blocks draw from). It provides a REST API, a web UI, and a Terraform provider so you can manage IP space from the dashboard or from infrastructure-as-code.
 
 ## Quick start
 
