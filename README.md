@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="web/public/images/logo.svg" alt="IPAM logo" width="120" />
+</div>
+
 # IPAM
 
 [![Test](https://img.shields.io/github/actions/workflow/status/JakeNeyer/ipam/test.yml?branch=main&style=for-the-badge)](https://github.com/JakeNeyer/ipam/actions/workflows/test.yml)
