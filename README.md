@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="web/public/images/logo.svg" alt="IPAM logo" width="120" />
+  <img src="web/public/images/logo-light.svg" alt="IPAM logo" width="120" />
 </div>
 
 # IPAM
