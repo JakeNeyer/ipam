@@ -1,8 +1,7 @@
 <div align="center">
-  <img src="web/public/images/logo-light.svg" alt="IPAM logo" width="120" />
+  <img src="web/public/images/logo-light.svg" alt="IPAM logo" width="240" />
 </div>
 
-# IPAM
 
 [![Test](https://img.shields.io/github/actions/workflow/status/JakeNeyer/ipam/test.yml?branch=main&style=for-the-badge)](https://github.com/JakeNeyer/ipam/actions/workflows/test.yml)
 [![Go](https://img.shields.io/badge/go-%2300ADD8.svg?style=for-the-badge&logo=go&logoColor=white)](https://go.dev/)
