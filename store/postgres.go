@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"embed"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"strings"
@@ -218,6 +219,10 @@ func (s *PostgresStore) DeleteOrganization(id uuid.UUID) error {
 	if err != nil {
 		return err
 	}
+	_, err = s.db.Exec(`DELETE FROM cloud_connections WHERE organization_id = $1`, id)
+	if err != nil {
+		return err
+	}
 	// Sessions and api_tokens are CASCADE when users are deleted
 	_, err = s.db.Exec(`DELETE FROM users WHERE organization_id = $1`, id)
 	if err != nil {
@@ -358,76 +363,127 @@ func uuidPtrOptional(p *uuid.UUID) interface{} {
 	return *p
 }
 
+func timePtrOptional(t *time.Time) interface{} {
+	if t == nil {
+		return nil
+	}
+	return *t
+}
+
+func scanPools(rows *sql.Rows) ([]*network.Pool, error) {
+	var out []*network.Pool
+	for rows.Next() {
+		var p network.Pool
+		var prov, extID sql.NullString
+		var connID, parentID nullUUID
+		if err := rows.Scan(&p.ID, &p.OrganizationID, &p.EnvironmentID, &p.Name, &p.CIDR, &prov, &extID, &connID, &parentID); err != nil {
+			return nil, err
+		}
+		if prov.Valid {
+			p.Provider = prov.String
+		}
+		if extID.Valid {
+			p.ExternalID = extID.String
+		}
+		if connID.Valid && connID.UUID != uuid.Nil {
+			p.ConnectionID = &connID.UUID
+		}
+		if parentID.Valid && parentID.UUID != uuid.Nil {
+			p.ParentPoolID = &parentID.UUID
+		}
+		out = append(out, &p)
+	}
+	return out, rows.Err()
+}
+
 func (s *PostgresStore) CreatePool(pool *network.Pool) error {
 	if pool.ID == uuid.Nil {
 		pool.ID = s.GenerateID()
 	}
+	provider := pool.Provider
+	if provider == "" {
+		provider = "native"
+	}
 	_, err := s.db.Exec(
-		`INSERT INTO pools (id, organization_id, environment_id, name, cidr) VALUES ($1, $2, $3, $4, $5)`,
-		pool.ID, pool.OrganizationID, pool.EnvironmentID, pool.Name, pool.CIDR,
+		`INSERT INTO pools (id, organization_id, environment_id, name, cidr, provider, external_id, connection_id, parent_pool_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		pool.ID, pool.OrganizationID, pool.EnvironmentID, pool.Name, pool.CIDR, provider, nullStr(pool.ExternalID), uuidPtrOptional(pool.ConnectionID), uuidPtrOptional(pool.ParentPoolID),
 	)
 	return err
 }
 
 func (s *PostgresStore) GetPool(id uuid.UUID) (*network.Pool, error) {
 	var p network.Pool
+	var prov, extID sql.NullString
+	var connID, parentID nullUUID
 	err := s.db.QueryRow(
-		`SELECT id, organization_id, environment_id, name, cidr FROM pools WHERE id = $1`,
+		`SELECT id, organization_id, environment_id, name, cidr, COALESCE(provider, 'native'), external_id, connection_id, parent_pool_id FROM pools WHERE id = $1 AND deleted_at IS NULL`,
 		id,
-	).Scan(&p.ID, &p.OrganizationID, &p.EnvironmentID, &p.Name, &p.CIDR)
+	).Scan(&p.ID, &p.OrganizationID, &p.EnvironmentID, &p.Name, &p.CIDR, &prov, &extID, &connID, &parentID)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("pool not found")
 	}
 	if err != nil {
 		return nil, err
 	}
+	if prov.Valid {
+		p.Provider = prov.String
+	}
+	if extID.Valid {
+		p.ExternalID = extID.String
+	}
+	if connID.Valid && connID.UUID != uuid.Nil {
+		p.ConnectionID = &connID.UUID
+	}
+	if parentID.Valid && parentID.UUID != uuid.Nil {
+		p.ParentPoolID = &parentID.UUID
+	}
 	return &p, nil
 }
 
 func (s *PostgresStore) ListPoolsByEnvironment(envID uuid.UUID) ([]*network.Pool, error) {
 	rows, err := s.db.Query(
-		`SELECT id, organization_id, environment_id, name, cidr FROM pools WHERE environment_id = $1 ORDER BY name`,
+		`SELECT id, organization_id, environment_id, name, cidr, COALESCE(provider, 'native'), external_id, connection_id, parent_pool_id FROM pools WHERE environment_id = $1 AND deleted_at IS NULL ORDER BY name`,
 		envID,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*network.Pool
-	for rows.Next() {
-		var p network.Pool
-		if err := rows.Scan(&p.ID, &p.OrganizationID, &p.EnvironmentID, &p.Name, &p.CIDR); err != nil {
-			return nil, err
-		}
-		out = append(out, &p)
-	}
-	return out, rows.Err()
+	return scanPools(rows)
 }
 
 func (s *PostgresStore) ListPoolsByOrganization(orgID uuid.UUID) ([]*network.Pool, error) {
 	rows, err := s.db.Query(
-		`SELECT id, organization_id, environment_id, name, cidr FROM pools WHERE organization_id = $1 ORDER BY name`,
+		`SELECT id, organization_id, environment_id, name, cidr, COALESCE(provider, 'native'), external_id, connection_id, parent_pool_id FROM pools WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY name`,
 		orgID,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*network.Pool
-	for rows.Next() {
-		var p network.Pool
-		if err := rows.Scan(&p.ID, &p.OrganizationID, &p.EnvironmentID, &p.Name, &p.CIDR); err != nil {
-			return nil, err
-		}
-		out = append(out, &p)
+	return scanPools(rows)
+}
+
+func (s *PostgresStore) ListPoolsByOrganizationIncludingDeleted(orgID uuid.UUID) ([]*network.Pool, error) {
+	rows, err := s.db.Query(
+		`SELECT id, organization_id, environment_id, name, cidr, COALESCE(provider, 'native'), external_id, connection_id, parent_pool_id FROM pools WHERE organization_id = $1 ORDER BY name`,
+		orgID,
+	)
+	if err != nil {
+		return nil, err
 	}
-	return out, rows.Err()
+	defer rows.Close()
+	return scanPools(rows)
 }
 
 func (s *PostgresStore) UpdatePool(id uuid.UUID, pool *network.Pool) error {
+	provider := pool.Provider
+	if provider == "" {
+		provider = "native"
+	}
 	res, err := s.db.Exec(
-		`UPDATE pools SET name = $1, cidr = $2 WHERE id = $3`,
-		pool.Name, pool.CIDR, id,
+		`UPDATE pools SET name = $1, cidr = $2, provider = $3, external_id = $4, connection_id = $5, parent_pool_id = $6, deleted_at = $7 WHERE id = $8`,
+		pool.Name, pool.CIDR, provider, nullStr(pool.ExternalID), uuidPtrOptional(pool.ConnectionID), uuidPtrOptional(pool.ParentPoolID), timePtrOptional(pool.DeletedAt), id,
 	)
 	if err != nil {
 		return err
@@ -451,27 +507,270 @@ func (s *PostgresStore) DeletePool(id uuid.UUID) error {
 	return nil
 }
 
+func (s *PostgresStore) SoftDeletePool(id uuid.UUID) error {
+	res, err := s.db.Exec(`UPDATE pools SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("pool not found")
+	}
+	return nil
+}
+
+func (s *PostgresStore) ListPoolsPendingCloudDelete(connID uuid.UUID) ([]*network.Pool, error) {
+	rows, err := s.db.Query(
+		`SELECT id, organization_id, environment_id, name, cidr, COALESCE(provider, 'native'), external_id, connection_id, parent_pool_id FROM pools WHERE connection_id = $1 AND external_id IS NOT NULL AND external_id != '' AND deleted_at IS NOT NULL ORDER BY name`,
+		connID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPools(rows)
+}
+
+// CloudConnection CRUD
+func (s *PostgresStore) CreateCloudConnection(c *CloudConnection) error {
+	if c.ID == uuid.Nil {
+		c.ID = s.GenerateID()
+	}
+	if c.CreatedAt.IsZero() {
+		c.CreatedAt = time.Now()
+	}
+	if c.UpdatedAt.IsZero() {
+		c.UpdatedAt = c.CreatedAt
+	}
+	config := c.Config
+	if config == nil {
+		config = []byte("{}")
+	}
+	syncMode, conflictRes := c.SyncMode, c.ConflictResolution
+	if syncMode == "" {
+		syncMode = "read_only"
+	}
+	if conflictRes == "" {
+		conflictRes = "cloud"
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO cloud_connections (id, organization_id, provider, name, config, credentials_ref, sync_interval_minutes, sync_mode, conflict_resolution, last_sync_at, last_sync_status, last_sync_error, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+		c.ID, c.OrganizationID, c.Provider, c.Name, config, c.CredentialsRef, c.SyncIntervalMinutes, syncMode, conflictRes, c.LastSyncAt, c.LastSyncStatus, c.LastSyncError, c.CreatedAt, c.UpdatedAt,
+	)
+	return err
+}
+
+func (s *PostgresStore) GetCloudConnection(id uuid.UUID) (*CloudConnection, error) {
+	var c CloudConnection
+	var config []byte
+	var credRef, lastStatus, lastErr sql.NullString
+	var lastSyncAt sql.NullTime
+	err := s.db.QueryRow(
+		`SELECT id, organization_id, provider, name, config, credentials_ref, sync_interval_minutes, sync_mode, conflict_resolution, last_sync_at, last_sync_status, last_sync_error, created_at, updated_at FROM cloud_connections WHERE id = $1`,
+		id,
+	).Scan(&c.ID, &c.OrganizationID, &c.Provider, &c.Name, &config, &credRef, &c.SyncIntervalMinutes, &c.SyncMode, &c.ConflictResolution, &lastSyncAt, &lastStatus, &lastErr, &c.CreatedAt, &c.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("cloud connection not found")
+	}
+	if err != nil {
+		return nil, err
+	}
+	c.Config = config
+	if credRef.Valid {
+		c.CredentialsRef = &credRef.String
+	}
+	if lastSyncAt.Valid {
+		c.LastSyncAt = &lastSyncAt.Time
+	}
+	if lastStatus.Valid {
+		c.LastSyncStatus = &lastStatus.String
+	}
+	if lastErr.Valid {
+		c.LastSyncError = &lastErr.String
+	}
+	if c.SyncMode == "" {
+		c.SyncMode = "read_only"
+	}
+	if c.ConflictResolution == "" {
+		c.ConflictResolution = "cloud"
+	}
+	return &c, nil
+}
+
+func (s *PostgresStore) ListCloudConnectionsByOrganization(orgID uuid.UUID) ([]*CloudConnection, error) {
+	rows, err := s.db.Query(
+		`SELECT id, organization_id, provider, name, config, credentials_ref, sync_interval_minutes, sync_mode, conflict_resolution, last_sync_at, last_sync_status, last_sync_error, created_at, updated_at FROM cloud_connections WHERE organization_id = $1 ORDER BY name`,
+		orgID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*CloudConnection
+	for rows.Next() {
+		var c CloudConnection
+		var config []byte
+		var credRef, lastStatus, lastErr sql.NullString
+		var lastSyncAt sql.NullTime
+		if err := rows.Scan(&c.ID, &c.OrganizationID, &c.Provider, &c.Name, &config, &credRef, &c.SyncIntervalMinutes, &c.SyncMode, &c.ConflictResolution, &lastSyncAt, &lastStatus, &lastErr, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			return nil, err
+		}
+		c.Config = config
+		if credRef.Valid {
+			c.CredentialsRef = &credRef.String
+		}
+		if lastSyncAt.Valid {
+			c.LastSyncAt = &lastSyncAt.Time
+		}
+		if lastStatus.Valid {
+			c.LastSyncStatus = &lastStatus.String
+		}
+		if lastErr.Valid {
+			c.LastSyncError = &lastErr.String
+		}
+		if c.SyncMode == "" {
+			c.SyncMode = "read_only"
+		}
+		if c.ConflictResolution == "" {
+			c.ConflictResolution = "cloud"
+		}
+		out = append(out, &c)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) UpdateCloudConnection(id uuid.UUID, c *CloudConnection) error {
+	c.UpdatedAt = time.Now()
+	config := c.Config
+	if config == nil {
+		config = []byte("{}")
+	}
+	syncMode, conflictRes := c.SyncMode, c.ConflictResolution
+	if syncMode == "" {
+		syncMode = "read_only"
+	}
+	if conflictRes == "" {
+		conflictRes = "cloud"
+	}
+	res, err := s.db.Exec(
+		`UPDATE cloud_connections SET name = $1, config = $2, credentials_ref = $3, sync_interval_minutes = $4, sync_mode = $5, conflict_resolution = $6, last_sync_at = $7, last_sync_status = $8, last_sync_error = $9, updated_at = $10 WHERE id = $11`,
+		c.Name, config, c.CredentialsRef, c.SyncIntervalMinutes, syncMode, conflictRes, c.LastSyncAt, c.LastSyncStatus, c.LastSyncError, c.UpdatedAt, id,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("cloud connection not found")
+	}
+	return nil
+}
+
+func (s *PostgresStore) ListCloudConnections() ([]*CloudConnection, error) {
+	rows, err := s.db.Query(
+		`SELECT id, organization_id, provider, name, config, credentials_ref, sync_interval_minutes, sync_mode, conflict_resolution, last_sync_at, last_sync_status, last_sync_error, created_at, updated_at FROM cloud_connections ORDER BY name`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*CloudConnection
+	for rows.Next() {
+		var c CloudConnection
+		var config []byte
+		var credRef, lastStatus, lastErr sql.NullString
+		var lastSyncAt sql.NullTime
+		if err := rows.Scan(&c.ID, &c.OrganizationID, &c.Provider, &c.Name, &config, &credRef, &c.SyncIntervalMinutes, &c.SyncMode, &c.ConflictResolution, &lastSyncAt, &lastStatus, &lastErr, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			return nil, err
+		}
+		c.Config = config
+		if credRef.Valid {
+			c.CredentialsRef = &credRef.String
+		}
+		if lastSyncAt.Valid {
+			c.LastSyncAt = &lastSyncAt.Time
+		}
+		if lastStatus.Valid {
+			c.LastSyncStatus = &lastStatus.String
+		}
+		if lastErr.Valid {
+			c.LastSyncError = &lastErr.String
+		}
+		if c.SyncMode == "" {
+			c.SyncMode = "read_only"
+		}
+		if c.ConflictResolution == "" {
+			c.ConflictResolution = "cloud"
+		}
+		out = append(out, &c)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) DeleteCloudConnection(id uuid.UUID) error {
+	res, err := s.db.Exec(`DELETE FROM cloud_connections WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("cloud connection not found")
+	}
+	return nil
+}
+
+// syncLockKey derives a bigint key from a connection UUID for pg_try_advisory_lock.
+// Uses lower 63 bits to avoid uint64->int64 overflow (G115).
+func syncLockKey(connectionID uuid.UUID) int64 {
+	return int64(binary.BigEndian.Uint64(connectionID[:8]) & 0x7FFFFFFFFFFFFFFF)
+}
+
+func (s *PostgresStore) WithSyncLock(ctx context.Context, connectionID uuid.UUID, fn func() error) (acquired bool, err error) {
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer conn.Close()
+	key := syncLockKey(connectionID)
+	var ok bool
+	if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", key).Scan(&ok); err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, nil
+	}
+	defer func() {
+		_, _ = conn.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", key)
+	}()
+	err = fn()
+	return true, err
+}
+
 func (s *PostgresStore) CreateBlock(block *network.Block) error {
 	if block.ID == uuid.Nil {
 		block.ID = s.GenerateID()
 	}
-	// Derive-only: store total_ips only when it fits in BIGINT (e.g. IPv4); API always derives from CIDR
+	provider := block.Provider
+	if provider == "" {
+		provider = "native"
+	}
 	total := network.CIDRAddressCountInt64(block.CIDR)
 	_, err := s.db.Exec(
-		`INSERT INTO blocks (id, name, cidr, environment_id, organization_id, pool_id, total_ips) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		block.ID, block.Name, block.CIDR, uuidPtr(block.EnvironmentID), uuidPtr(block.OrganizationID), uuidPtrOptional(block.PoolID), total,
+		`INSERT INTO blocks (id, name, cidr, environment_id, organization_id, pool_id, total_ips, provider, external_id, connection_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		block.ID, block.Name, block.CIDR, uuidPtr(block.EnvironmentID), uuidPtr(block.OrganizationID), uuidPtrOptional(block.PoolID), total, provider, nullStr(block.ExternalID), uuidPtrOptional(block.ConnectionID),
 	)
 	return err
 }
 
 func (s *PostgresStore) GetBlock(id uuid.UUID) (*network.Block, error) {
 	var name, cidr string
-	var envID, orgID, poolID nullUUID
+	var envID, orgID, poolID, connID nullUUID
 	var totalIPs int64
+	var prov, extID sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, name, cidr, environment_id, organization_id, pool_id, total_ips FROM blocks WHERE id = $1`,
+		`SELECT id, name, cidr, environment_id, organization_id, pool_id, total_ips, COALESCE(provider, 'native'), external_id, connection_id FROM blocks WHERE id = $1 AND deleted_at IS NULL`,
 		id,
-	).Scan(&id, &name, &cidr, &envID, &orgID, &poolID, &totalIPs)
+	).Scan(&id, &name, &cidr, &envID, &orgID, &poolID, &totalIPs, &prov, &extID, &connID)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("block not found")
 	}
@@ -490,25 +789,36 @@ func (s *PostgresStore) GetBlock(id uuid.UUID) (*network.Block, error) {
 	if poolID.Valid && poolID.UUID != uuid.Nil {
 		poolUUID = &poolID.UUID
 	}
-	t := int(totalIPs)
-	return &network.Block{
+	var connUUID *uuid.UUID
+	if connID.Valid && connID.UUID != uuid.Nil {
+		connUUID = &connID.UUID
+	}
+	b := &network.Block{
 		ID:             id,
 		Name:           name,
 		CIDR:           cidr,
 		EnvironmentID:  envUUID,
 		OrganizationID: orgUUID,
 		PoolID:         poolUUID,
-		Usage:          network.Usage{TotalIPs: t, UsedIPs: 0, AvailableIPs: t},
+		ConnectionID:   connUUID,
+		Usage:          network.Usage{TotalIPs: int(totalIPs), UsedIPs: 0, AvailableIPs: int(totalIPs)},
 		Children:       []network.Block{},
-	}, nil
+	}
+	if prov.Valid {
+		b.Provider = prov.String
+	}
+	if extID.Valid {
+		b.ExternalID = extID.String
+	}
+	return b, nil
 }
 
 func (s *PostgresStore) ListBlocks() ([]*network.Block, error) {
-	out, _, err := s.ListBlocksFiltered("", nil, nil, nil, false, 0, 0)
+	out, _, err := s.ListBlocksFiltered("", nil, nil, nil, false, "", nil, 0, 0)
 	return out, err
 }
 
-func (s *PostgresStore) ListBlocksFiltered(name string, environmentID *uuid.UUID, poolID *uuid.UUID, organizationID *uuid.UUID, orphanedOnly bool, limit, offset int) ([]*network.Block, int, error) {
+func (s *PostgresStore) ListBlocksFiltered(name string, environmentID *uuid.UUID, poolID *uuid.UUID, organizationID *uuid.UUID, orphanedOnly bool, provider string, connectionID *uuid.UUID, limit, offset int) ([]*network.Block, int, error) {
 	var countArgs []interface{}
 	countQ := `SELECT COUNT(*) FROM blocks WHERE 1=1`
 	idx := 1
@@ -540,11 +850,22 @@ func (s *PostgresStore) ListBlocksFiltered(name string, environmentID *uuid.UUID
 			idx++
 		}
 	}
+	if provider != "" {
+		countQ += fmt.Sprintf(` AND COALESCE(provider, 'native') = $%d`, idx)
+		countArgs = append(countArgs, provider)
+		idx++
+	}
+	if connectionID != nil {
+		countQ += fmt.Sprintf(` AND connection_id = $%d`, idx)
+		countArgs = append(countArgs, *connectionID)
+		idx++
+	}
+	countQ += ` AND deleted_at IS NULL`
 	var total int
 	if err := s.db.QueryRow(countQ, countArgs...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	selQ := `SELECT id, name, cidr, environment_id, organization_id, pool_id, total_ips FROM blocks WHERE 1=1`
+	selQ := `SELECT id, name, cidr, environment_id, organization_id, pool_id, total_ips, COALESCE(provider, 'native'), external_id, connection_id FROM blocks WHERE 1=1 AND deleted_at IS NULL`
 	selArgs := []interface{}{}
 	i := 1
 	if name != "" {
@@ -575,6 +896,16 @@ func (s *PostgresStore) ListBlocksFiltered(name string, environmentID *uuid.UUID
 			i++
 		}
 	}
+	if provider != "" {
+		selQ += fmt.Sprintf(` AND COALESCE(provider, 'native') = $%d`, i)
+		selArgs = append(selArgs, provider)
+		i++
+	}
+	if connectionID != nil {
+		selQ += fmt.Sprintf(` AND connection_id = $%d`, i)
+		selArgs = append(selArgs, *connectionID)
+		i++
+	}
 	selQ += ` ORDER BY name`
 	if limit > 0 {
 		// #nosec G202 -- placeholder indices only, no user input in query text
@@ -590,9 +921,10 @@ func (s *PostgresStore) ListBlocksFiltered(name string, environmentID *uuid.UUID
 	for rows.Next() {
 		var id uuid.UUID
 		var n, cidr string
-		var envID, orgID, poolID nullUUID
+		var envID, orgID, poolID, connID nullUUID
 		var totalIPs int64
-		if err := rows.Scan(&id, &n, &cidr, &envID, &orgID, &poolID, &totalIPs); err != nil {
+		var prov, extID sql.NullString
+		if err := rows.Scan(&id, &n, &cidr, &envID, &orgID, &poolID, &totalIPs, &prov, &extID, &connID); err != nil {
 			return nil, 0, err
 		}
 		envUUID := uuid.Nil
@@ -607,29 +939,40 @@ func (s *PostgresStore) ListBlocksFiltered(name string, environmentID *uuid.UUID
 		if poolID.Valid && poolID.UUID != uuid.Nil {
 			poolUUID = &poolID.UUID
 		}
-		t := int(totalIPs)
-		out = append(out, &network.Block{
+		var connUUID *uuid.UUID
+		if connID.Valid && connID.UUID != uuid.Nil {
+			connUUID = &connID.UUID
+		}
+		b := &network.Block{
 			ID:             id,
 			Name:           n,
 			CIDR:           cidr,
 			EnvironmentID:  envUUID,
 			OrganizationID: orgUUID,
 			PoolID:         poolUUID,
-			Usage:          network.Usage{TotalIPs: t, UsedIPs: 0, AvailableIPs: t},
+			ConnectionID:   connUUID,
+			Usage:          network.Usage{TotalIPs: int(totalIPs), UsedIPs: 0, AvailableIPs: int(totalIPs)},
 			Children:       []network.Block{},
-		})
+		}
+		if prov.Valid {
+			b.Provider = prov.String
+		}
+		if extID.Valid {
+			b.ExternalID = extID.String
+		}
+		out = append(out, b)
 	}
 	return out, total, rows.Err()
 }
 
 func (s *PostgresStore) ListBlocksByEnvironment(envID uuid.UUID) ([]*network.Block, error) {
-	blocks, _, err := s.ListBlocksFiltered("", &envID, nil, nil, false, 0, 0)
+	blocks, _, err := s.ListBlocksFiltered("", &envID, nil, nil, false, "", nil, 0, 0)
 	return blocks, err
 }
 
 func (s *PostgresStore) ListBlocksByPool(poolID uuid.UUID) ([]*network.Block, error) {
 	rows, err := s.db.Query(
-		`SELECT id, name, cidr, environment_id, organization_id, pool_id, total_ips FROM blocks WHERE pool_id = $1 ORDER BY name`,
+		`SELECT id, name, cidr, environment_id, organization_id, pool_id, total_ips, COALESCE(provider, 'native'), external_id, connection_id FROM blocks WHERE pool_id = $1 AND deleted_at IS NULL ORDER BY name`,
 		poolID,
 	)
 	if err != nil {
@@ -640,9 +983,10 @@ func (s *PostgresStore) ListBlocksByPool(poolID uuid.UUID) ([]*network.Block, er
 	for rows.Next() {
 		var id uuid.UUID
 		var n, cidr string
-		var envID, orgID, poolIDCol nullUUID
+		var envID, orgID, poolIDCol, connID nullUUID
 		var totalIPs int64
-		if err := rows.Scan(&id, &n, &cidr, &envID, &orgID, &poolIDCol, &totalIPs); err != nil {
+		var prov, extID sql.NullString
+		if err := rows.Scan(&id, &n, &cidr, &envID, &orgID, &poolIDCol, &totalIPs, &prov, &extID, &connID); err != nil {
 			return nil, err
 		}
 		envUUID := uuid.Nil
@@ -657,27 +1001,41 @@ func (s *PostgresStore) ListBlocksByPool(poolID uuid.UUID) ([]*network.Block, er
 		if poolIDCol.Valid && poolIDCol.UUID != uuid.Nil {
 			poolUUID = &poolIDCol.UUID
 		}
-		t := int(totalIPs)
-		out = append(out, &network.Block{
+		var connUUID *uuid.UUID
+		if connID.Valid && connID.UUID != uuid.Nil {
+			connUUID = &connID.UUID
+		}
+		b := &network.Block{
 			ID:             id,
 			Name:           n,
 			CIDR:           cidr,
 			EnvironmentID:  envUUID,
 			OrganizationID: orgUUID,
 			PoolID:         poolUUID,
-			Usage:          network.Usage{TotalIPs: t, UsedIPs: 0, AvailableIPs: t},
+			ConnectionID:   connUUID,
+			Usage:          network.Usage{TotalIPs: int(totalIPs), UsedIPs: 0, AvailableIPs: int(totalIPs)},
 			Children:       []network.Block{},
-		})
+		}
+		if prov.Valid {
+			b.Provider = prov.String
+		}
+		if extID.Valid {
+			b.ExternalID = extID.String
+		}
+		out = append(out, b)
 	}
 	return out, rows.Err()
 }
 
 func (s *PostgresStore) UpdateBlock(id uuid.UUID, block *network.Block) error {
-	// Derive-only: store total_ips only when it fits in BIGINT; API always derives from CIDR
+	provider := block.Provider
+	if provider == "" {
+		provider = "native"
+	}
 	total := network.CIDRAddressCountInt64(block.CIDR)
 	res, err := s.db.Exec(
-		`UPDATE blocks SET name = $1, cidr = $2, environment_id = $3, organization_id = $4, pool_id = $5, total_ips = $6 WHERE id = $7`,
-		block.Name, block.CIDR, uuidPtr(block.EnvironmentID), uuidPtr(block.OrganizationID), uuidPtrOptional(block.PoolID), total, id,
+		`UPDATE blocks SET name = $1, cidr = $2, environment_id = $3, organization_id = $4, pool_id = $5, total_ips = $6, provider = $7, external_id = $8, connection_id = $9, deleted_at = $10 WHERE id = $11`,
+		block.Name, block.CIDR, uuidPtr(block.EnvironmentID), uuidPtr(block.OrganizationID), uuidPtrOptional(block.PoolID), total, provider, nullStr(block.ExternalID), uuidPtrOptional(block.ConnectionID), timePtrOptional(block.DeletedAt), id,
 	)
 	if err != nil {
 		return err
@@ -701,72 +1059,325 @@ func (s *PostgresStore) DeleteBlock(id uuid.UUID) error {
 	return nil
 }
 
+func (s *PostgresStore) SoftDeleteBlock(id uuid.UUID) error {
+	res, err := s.db.Exec(`UPDATE blocks SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("block not found")
+	}
+	return nil
+}
+
+func (s *PostgresStore) ListBlocksPendingCloudDelete(connID uuid.UUID) ([]*network.Block, error) {
+	rows, err := s.db.Query(
+		`SELECT id, name, cidr, environment_id, organization_id, pool_id, total_ips, COALESCE(provider, 'native'), external_id, connection_id FROM blocks WHERE connection_id = $1 AND external_id IS NOT NULL AND external_id != '' AND deleted_at IS NOT NULL ORDER BY name`,
+		connID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*network.Block
+	for rows.Next() {
+		var id uuid.UUID
+		var n, cidr string
+		var envID, orgID, poolIDCol, connID nullUUID
+		var totalIPs int64
+		var prov, extID sql.NullString
+		if err := rows.Scan(&id, &n, &cidr, &envID, &orgID, &poolIDCol, &totalIPs, &prov, &extID, &connID); err != nil {
+			return nil, err
+		}
+		envUUID := uuid.Nil
+		if envID.Valid {
+			envUUID = envID.UUID
+		}
+		orgUUID := uuid.Nil
+		if orgID.Valid && orgID.UUID != uuid.Nil {
+			orgUUID = orgID.UUID
+		}
+		var poolUUID *uuid.UUID
+		if poolIDCol.Valid && poolIDCol.UUID != uuid.Nil {
+			poolUUID = &poolIDCol.UUID
+		}
+		var connUUID *uuid.UUID
+		if connID.Valid && connID.UUID != uuid.Nil {
+			connUUID = &connID.UUID
+		}
+		b := &network.Block{
+			ID:             id,
+			Name:           n,
+			CIDR:           cidr,
+			EnvironmentID:  envUUID,
+			OrganizationID: orgUUID,
+			PoolID:         poolUUID,
+			ConnectionID:   connUUID,
+			Usage:          network.Usage{TotalIPs: int(totalIPs), UsedIPs: 0, AvailableIPs: int(totalIPs)},
+			Children:       []network.Block{},
+		}
+		if prov.Valid {
+			b.Provider = prov.String
+		}
+		if extID.Valid {
+			b.ExternalID = extID.String
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) ListBlocksFilteredIncludingDeleted(name string, environmentID *uuid.UUID, poolID *uuid.UUID, organizationID *uuid.UUID, orphanedOnly bool, provider string, connectionID *uuid.UUID, limit, offset int) ([]*network.Block, int, error) {
+	// Same as ListBlocksFiltered but without deleted_at IS NULL (for sync to match cloud to soft-deleted rows)
+	var countArgs []interface{}
+	countQ := `SELECT COUNT(*) FROM blocks WHERE 1=1`
+	idx := 1
+	if name != "" {
+		countQ += fmt.Sprintf(` AND LOWER(name) LIKE $%d`, idx)
+		countArgs = append(countArgs, "%"+strings.ToLower(strings.TrimSpace(name))+"%")
+		idx++
+	}
+	if environmentID != nil {
+		countQ += fmt.Sprintf(` AND environment_id = $%d`, idx)
+		countArgs = append(countArgs, *environmentID)
+		idx++
+	}
+	if poolID != nil {
+		countQ += fmt.Sprintf(` AND pool_id = $%d`, idx)
+		countArgs = append(countArgs, *poolID)
+		idx++
+	}
+	if organizationID != nil {
+		countQ += fmt.Sprintf(` AND ((environment_id IN (SELECT id FROM environments WHERE organization_id = $%d)) OR (environment_id IS NULL AND organization_id = $%d))`, idx, idx)
+		countArgs = append(countArgs, *organizationID)
+		idx++
+	}
+	if orphanedOnly {
+		countQ += ` AND environment_id IS NULL`
+		if organizationID != nil {
+			countQ += fmt.Sprintf(` AND organization_id = $%d`, idx)
+			countArgs = append(countArgs, *organizationID)
+			idx++
+		}
+	}
+	if provider != "" {
+		countQ += fmt.Sprintf(` AND COALESCE(provider, 'native') = $%d`, idx)
+		countArgs = append(countArgs, provider)
+		idx++
+	}
+	if connectionID != nil {
+		countQ += fmt.Sprintf(` AND connection_id = $%d`, idx)
+		countArgs = append(countArgs, *connectionID)
+		idx++
+	}
+	var total int
+	if err := s.db.QueryRow(countQ, countArgs...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	selQ := `SELECT id, name, cidr, environment_id, organization_id, pool_id, total_ips, COALESCE(provider, 'native'), external_id, connection_id FROM blocks WHERE 1=1`
+	selArgs := []interface{}{}
+	i := 1
+	if name != "" {
+		selQ += fmt.Sprintf(` AND LOWER(name) LIKE $%d`, i)
+		selArgs = append(selArgs, "%"+strings.ToLower(strings.TrimSpace(name))+"%")
+		i++
+	}
+	if environmentID != nil {
+		selQ += fmt.Sprintf(` AND environment_id = $%d`, i)
+		selArgs = append(selArgs, *environmentID)
+		i++
+	}
+	if poolID != nil {
+		selQ += fmt.Sprintf(` AND pool_id = $%d`, i)
+		selArgs = append(selArgs, *poolID)
+		i++
+	}
+	if organizationID != nil {
+		selQ += fmt.Sprintf(` AND ((environment_id IN (SELECT id FROM environments WHERE organization_id = $%d)) OR (environment_id IS NULL AND organization_id = $%d))`, i, i)
+		selArgs = append(selArgs, *organizationID)
+		i++
+	}
+	if orphanedOnly {
+		selQ += ` AND environment_id IS NULL`
+		if organizationID != nil {
+			selQ += fmt.Sprintf(` AND organization_id = $%d`, i)
+			selArgs = append(selArgs, *organizationID)
+			i++
+		}
+	}
+	if provider != "" {
+		selQ += fmt.Sprintf(` AND COALESCE(provider, 'native') = $%d`, i)
+		selArgs = append(selArgs, provider)
+		i++
+	}
+	if connectionID != nil {
+		selQ += fmt.Sprintf(` AND connection_id = $%d`, i)
+		selArgs = append(selArgs, *connectionID)
+		i++
+	}
+	selQ += ` ORDER BY name`
+	if limit > 0 {
+		// #nosec G202 -- placeholder indices only, no user input in query text
+		selQ += fmt.Sprintf(` LIMIT $%d OFFSET $%d`, i, i+1)
+		selArgs = append(selArgs, limit, offset)
+	}
+	rows, err := s.db.Query(selQ, selArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var out []*network.Block
+	for rows.Next() {
+		var id uuid.UUID
+		var n, cidr string
+		var envID, orgID, poolIDCol, connID nullUUID
+		var totalIPs int64
+		var prov, extID sql.NullString
+		if err := rows.Scan(&id, &n, &cidr, &envID, &orgID, &poolIDCol, &totalIPs, &prov, &extID, &connID); err != nil {
+			return nil, 0, err
+		}
+		envUUID := uuid.Nil
+		if envID.Valid {
+			envUUID = envID.UUID
+		}
+		orgUUID := uuid.Nil
+		if orgID.Valid && orgID.UUID != uuid.Nil {
+			orgUUID = orgID.UUID
+		}
+		var poolUUID *uuid.UUID
+		if poolIDCol.Valid && poolIDCol.UUID != uuid.Nil {
+			poolUUID = &poolIDCol.UUID
+		}
+		var connUUID *uuid.UUID
+		if connID.Valid && connID.UUID != uuid.Nil {
+			connUUID = &connID.UUID
+		}
+		b := &network.Block{
+			ID:             id,
+			Name:           n,
+			CIDR:           cidr,
+			EnvironmentID:  envUUID,
+			OrganizationID: orgUUID,
+			PoolID:         poolUUID,
+			ConnectionID:   connUUID,
+			Usage:          network.Usage{TotalIPs: int(totalIPs), UsedIPs: 0, AvailableIPs: int(totalIPs)},
+			Children:       []network.Block{},
+		}
+		if prov.Valid {
+			b.Provider = prov.String
+		}
+		if extID.Valid {
+			b.ExternalID = extID.String
+		}
+		out = append(out, b)
+	}
+	return out, total, rows.Err()
+}
+
 func (s *PostgresStore) CreateAllocation(id uuid.UUID, alloc *network.Allocation) error {
+	provider := alloc.Provider
+	if provider == "" {
+		provider = "native"
+	}
 	_, err := s.db.Exec(
-		`INSERT INTO allocations (id, name, block_name, block_cidr) VALUES ($1, $2, $3, $4)`,
-		id, alloc.Name, alloc.Block.Name, alloc.Block.CIDR,
+		`INSERT INTO allocations (id, name, block_name, block_cidr, provider, external_id, connection_id) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		id, alloc.Name, alloc.Block.Name, alloc.Block.CIDR, provider, nullStr(alloc.ExternalID), uuidPtrOptional(alloc.ConnectionID),
 	)
 	return err
 }
 
 func (s *PostgresStore) GetAllocation(id uuid.UUID) (*network.Allocation, error) {
 	var name, blockName, blockCidr string
+	var prov sql.NullString
+	var extID sql.NullString
+	var connID nullUUID
 	err := s.db.QueryRow(
-		`SELECT id, name, block_name, block_cidr FROM allocations WHERE id = $1`,
+		`SELECT id, name, block_name, block_cidr, provider, external_id, connection_id FROM allocations WHERE id = $1 AND deleted_at IS NULL`,
 		id,
-	).Scan(&id, &name, &blockName, &blockCidr)
+	).Scan(&id, &name, &blockName, &blockCidr, &prov, &extID, &connID)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("allocation not found")
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &network.Allocation{
+	out := &network.Allocation{
 		Id:    id,
 		Name:  name,
 		Block: network.Block{Name: blockName, CIDR: blockCidr},
-	}, nil
+	}
+	if prov.Valid {
+		out.Provider = prov.String
+	}
+	if extID.Valid {
+		out.ExternalID = extID.String
+	}
+	if connID.Valid {
+		out.ConnectionID = &connID.UUID
+	}
+	return out, nil
 }
 
 func (s *PostgresStore) ListAllocations() ([]*network.Allocation, error) {
-	out, _, err := s.ListAllocationsFiltered("", "", uuid.Nil, nil, 0, 0)
+	out, _, err := s.ListAllocationsFiltered("", "", uuid.Nil, nil, "", nil, 0, 0)
 	return out, err
 }
 
-func (s *PostgresStore) ListAllocationsFiltered(name string, blockName string, environmentID uuid.UUID, organizationID *uuid.UUID, limit, offset int) ([]*network.Allocation, int, error) {
+func (s *PostgresStore) ListAllocationsFiltered(name string, blockName string, environmentID uuid.UUID, organizationID *uuid.UUID, provider string, connectionID *uuid.UUID, limit, offset int) ([]*network.Allocation, int, error) {
 	name = strings.TrimSpace(name)
 	blockName = strings.TrimSpace(blockName)
 	nameLower := strings.ToLower(name)
 	blockLower := strings.ToLower(blockName)
 	envFilter := environmentID != uuid.Nil
 	var total int
-	countQ := `SELECT COUNT(*) FROM allocations WHERE ($1 = '' OR LOWER(name) LIKE '%' || $1 || '%') AND ($2 = '' OR LOWER(block_name) = $2)`
+	countQ := `SELECT COUNT(*) FROM allocations WHERE ($1 = '' OR LOWER(name) LIKE '%' || $1 || '%') AND ($2 = '' OR LOWER(block_name) = $2) AND deleted_at IS NULL`
 	args := []interface{}{nameLower, blockLower}
 	idx := 3
 	if envFilter {
-		countQ += fmt.Sprintf(` AND LOWER(block_name) IN (SELECT LOWER(name) FROM blocks WHERE environment_id = $%d)`, idx)
+		countQ += fmt.Sprintf(` AND LOWER(block_name) IN (SELECT LOWER(name) FROM blocks WHERE environment_id = $%d AND deleted_at IS NULL)`, idx)
 		args = append(args, environmentID)
 		idx++
 	}
 	if organizationID != nil {
-		countQ += fmt.Sprintf(` AND LOWER(block_name) IN (SELECT LOWER(b.name) FROM blocks b LEFT JOIN environments e ON b.environment_id = e.id WHERE (e.organization_id = $%d OR (b.environment_id IS NULL AND b.organization_id = $%d)))`, idx, idx)
+		countQ += fmt.Sprintf(` AND LOWER(block_name) IN (SELECT LOWER(b.name) FROM blocks b LEFT JOIN environments e ON b.environment_id = e.id WHERE (e.organization_id = $%d OR (b.environment_id IS NULL AND b.organization_id = $%d)) AND b.deleted_at IS NULL)`, idx, idx)
 		args = append(args, *organizationID)
+		idx++
+	}
+	if provider != "" {
+		countQ += fmt.Sprintf(` AND provider = $%d`, idx)
+		args = append(args, provider)
+		idx++
+	}
+	if connectionID != nil {
+		countQ += fmt.Sprintf(` AND connection_id = $%d`, idx)
+		args = append(args, *connectionID)
 		idx++
 	}
 	if err := s.db.QueryRow(countQ, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	selQ := `SELECT id, name, block_name, block_cidr FROM allocations WHERE ($1 = '' OR LOWER(name) LIKE '%' || $1 || '%') AND ($2 = '' OR LOWER(block_name) = $2)`
+	selQ := `SELECT id, name, block_name, block_cidr, provider, external_id, connection_id FROM allocations WHERE ($1 = '' OR LOWER(name) LIKE '%' || $1 || '%') AND ($2 = '' OR LOWER(block_name) = $2) AND deleted_at IS NULL`
 	selArgs := []interface{}{nameLower, blockLower}
 	i := 3
 	if envFilter {
-		selQ += fmt.Sprintf(` AND LOWER(block_name) IN (SELECT LOWER(name) FROM blocks WHERE environment_id = $%d)`, i)
+		selQ += fmt.Sprintf(` AND LOWER(block_name) IN (SELECT LOWER(name) FROM blocks WHERE environment_id = $%d AND deleted_at IS NULL)`, i)
 		selArgs = append(selArgs, environmentID)
 		i++
 	}
 	if organizationID != nil {
-		selQ += fmt.Sprintf(` AND LOWER(block_name) IN (SELECT LOWER(b.name) FROM blocks b LEFT JOIN environments e ON b.environment_id = e.id WHERE (e.organization_id = $%d OR (b.environment_id IS NULL AND b.organization_id = $%d)))`, i, i)
+		selQ += fmt.Sprintf(` AND LOWER(block_name) IN (SELECT LOWER(b.name) FROM blocks b LEFT JOIN environments e ON b.environment_id = e.id WHERE (e.organization_id = $%d OR (b.environment_id IS NULL AND b.organization_id = $%d)) AND b.deleted_at IS NULL)`, i, i)
 		selArgs = append(selArgs, *organizationID)
+		i++
+	}
+	if provider != "" {
+		selQ += fmt.Sprintf(` AND provider = $%d`, i)
+		selArgs = append(selArgs, provider)
+		i++
+	}
+	if connectionID != nil {
+		selQ += fmt.Sprintf(` AND connection_id = $%d`, i)
+		selArgs = append(selArgs, *connectionID)
 		i++
 	}
 	selQ += ` ORDER BY name`
@@ -784,22 +1395,35 @@ func (s *PostgresStore) ListAllocationsFiltered(name string, blockName string, e
 	for rows.Next() {
 		var id uuid.UUID
 		var n, bn, bc string
-		if err := rows.Scan(&id, &n, &bn, &bc); err != nil {
+		var prov sql.NullString
+		var extID sql.NullString
+		var connID nullUUID
+		if err := rows.Scan(&id, &n, &bn, &bc, &prov, &extID, &connID); err != nil {
 			return nil, 0, err
 		}
-		out = append(out, &network.Allocation{
-			Id:    id,
-			Name:  n,
-			Block: network.Block{Name: bn, CIDR: bc},
-		})
+		a := &network.Allocation{Id: id, Name: n, Block: network.Block{Name: bn, CIDR: bc}}
+		if prov.Valid {
+			a.Provider = prov.String
+		}
+		if extID.Valid {
+			a.ExternalID = extID.String
+		}
+		if connID.Valid {
+			a.ConnectionID = &connID.UUID
+		}
+		out = append(out, a)
 	}
 	return out, total, rows.Err()
 }
 
 func (s *PostgresStore) UpdateAllocation(id uuid.UUID, alloc *network.Allocation) error {
+	provider := alloc.Provider
+	if provider == "" {
+		provider = "native"
+	}
 	res, err := s.db.Exec(
-		`UPDATE allocations SET name = $1, block_name = $2, block_cidr = $3 WHERE id = $4`,
-		alloc.Name, alloc.Block.Name, alloc.Block.CIDR, id,
+		`UPDATE allocations SET name = $1, block_name = $2, block_cidr = $3, provider = $4, external_id = $5, connection_id = $6, deleted_at = $7 WHERE id = $8`,
+		alloc.Name, alloc.Block.Name, alloc.Block.CIDR, provider, nullStr(alloc.ExternalID), uuidPtrOptional(alloc.ConnectionID), timePtrOptional(alloc.DeletedAt), id,
 	)
 	if err != nil {
 		return err
@@ -821,6 +1445,144 @@ func (s *PostgresStore) DeleteAllocation(id uuid.UUID) error {
 		return fmt.Errorf("allocation not found")
 	}
 	return nil
+}
+
+func (s *PostgresStore) SoftDeleteAllocation(id uuid.UUID) error {
+	res, err := s.db.Exec(`UPDATE allocations SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("allocation not found")
+	}
+	return nil
+}
+
+func (s *PostgresStore) ListAllocationsPendingCloudDelete(connID uuid.UUID) ([]*network.Allocation, error) {
+	rows, err := s.db.Query(
+		`SELECT id, name, block_name, block_cidr, provider, external_id, connection_id FROM allocations WHERE connection_id = $1 AND external_id IS NOT NULL AND external_id != '' AND deleted_at IS NOT NULL ORDER BY name`,
+		connID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*network.Allocation
+	for rows.Next() {
+		var id uuid.UUID
+		var n, bn, bc string
+		var prov sql.NullString
+		var extID sql.NullString
+		var connID nullUUID
+		if err := rows.Scan(&id, &n, &bn, &bc, &prov, &extID, &connID); err != nil {
+			return nil, err
+		}
+		a := &network.Allocation{Id: id, Name: n, Block: network.Block{Name: bn, CIDR: bc}}
+		if prov.Valid {
+			a.Provider = prov.String
+		}
+		if extID.Valid {
+			a.ExternalID = extID.String
+		}
+		if connID.Valid {
+			a.ConnectionID = &connID.UUID
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) ListAllocationsFilteredIncludingDeleted(name string, blockName string, environmentID uuid.UUID, organizationID *uuid.UUID, provider string, connectionID *uuid.UUID, limit, offset int) ([]*network.Allocation, int, error) {
+	name = strings.TrimSpace(name)
+	blockName = strings.TrimSpace(blockName)
+	nameLower := strings.ToLower(name)
+	blockLower := strings.ToLower(blockName)
+	envFilter := environmentID != uuid.Nil
+	var total int
+	countQ := `SELECT COUNT(*) FROM allocations WHERE ($1 = '' OR LOWER(name) LIKE '%' || $1 || '%') AND ($2 = '' OR LOWER(block_name) = $2)`
+	args := []interface{}{nameLower, blockLower}
+	idx := 3
+	if envFilter {
+		countQ += fmt.Sprintf(` AND LOWER(block_name) IN (SELECT LOWER(name) FROM blocks WHERE environment_id = $%d)`, idx)
+		args = append(args, environmentID)
+		idx++
+	}
+	if organizationID != nil {
+		countQ += fmt.Sprintf(` AND LOWER(block_name) IN (SELECT LOWER(b.name) FROM blocks b LEFT JOIN environments e ON b.environment_id = e.id WHERE (e.organization_id = $%d OR (b.environment_id IS NULL AND b.organization_id = $%d)))`, idx, idx)
+		args = append(args, *organizationID)
+		idx++
+	}
+	if provider != "" {
+		countQ += fmt.Sprintf(` AND provider = $%d`, idx)
+		args = append(args, provider)
+		idx++
+	}
+	if connectionID != nil {
+		countQ += fmt.Sprintf(` AND connection_id = $%d`, idx)
+		args = append(args, *connectionID)
+		idx++
+	}
+	if err := s.db.QueryRow(countQ, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	selQ := `SELECT id, name, block_name, block_cidr, provider, external_id, connection_id FROM allocations WHERE ($1 = '' OR LOWER(name) LIKE '%' || $1 || '%') AND ($2 = '' OR LOWER(block_name) = $2)`
+	selArgs := []interface{}{nameLower, blockLower}
+	i := 3
+	if envFilter {
+		selQ += fmt.Sprintf(` AND LOWER(block_name) IN (SELECT LOWER(name) FROM blocks WHERE environment_id = $%d)`, i)
+		selArgs = append(selArgs, environmentID)
+		i++
+	}
+	if organizationID != nil {
+		selQ += fmt.Sprintf(` AND LOWER(block_name) IN (SELECT LOWER(b.name) FROM blocks b LEFT JOIN environments e ON b.environment_id = e.id WHERE (e.organization_id = $%d OR (b.environment_id IS NULL AND b.organization_id = $%d)))`, i, i)
+		selArgs = append(selArgs, *organizationID)
+		i++
+	}
+	if provider != "" {
+		selQ += fmt.Sprintf(` AND provider = $%d`, i)
+		selArgs = append(selArgs, provider)
+		i++
+	}
+	if connectionID != nil {
+		selQ += fmt.Sprintf(` AND connection_id = $%d`, i)
+		selArgs = append(selArgs, *connectionID)
+		i++
+	}
+	selQ += ` ORDER BY name`
+	if limit > 0 {
+		// #nosec G202 -- placeholder indices only, no user input in query text
+		selQ += fmt.Sprintf(` LIMIT $%d OFFSET $%d`, i, i+1)
+		selArgs = append(selArgs, limit, offset)
+	}
+	rows, err := s.db.Query(selQ, selArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var out []*network.Allocation
+	for rows.Next() {
+		var id uuid.UUID
+		var n, bn, bc string
+		var prov sql.NullString
+		var extID sql.NullString
+		var connID nullUUID
+		if err := rows.Scan(&id, &n, &bn, &bc, &prov, &extID, &connID); err != nil {
+			return nil, 0, err
+		}
+		a := &network.Allocation{Id: id, Name: n, Block: network.Block{Name: bn, CIDR: bc}}
+		if prov.Valid {
+			a.Provider = prov.String
+		}
+		if extID.Valid {
+			a.ExternalID = extID.String
+		}
+		if connID.Valid {
+			a.ConnectionID = &connID.UUID
+		}
+		out = append(out, a)
+	}
+	return out, total, rows.Err()
 }
 
 func (s *PostgresStore) ListReservedBlocks(organizationID *uuid.UUID) ([]*ReservedBlock, error) {

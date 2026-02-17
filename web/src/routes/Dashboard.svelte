@@ -77,23 +77,42 @@
     return env?.name ?? null
   }
 
-  /** Per-pool: total IPs in pool (from CIDR), IPs used by blocks in pool (sum of block total_ips), and usage % */
-  $: poolUtilization = pools.map((pool) => {
-    const poolTotal = totalIPsForCidr(pool.cidr || '')
+  /** Used IPs for a pool = IPs in direct child pools (by CIDR) + IPs in blocks in this pool. */
+  function poolUsedIPs(pool) {
+    const childPools = pools.filter(
+      (p) => p.parent_pool_id != null && String(p.parent_pool_id).toLowerCase() === String(pool.id).toLowerCase()
+    )
+    const childPoolIPs = sumCounts(childPools.map((p) => totalIPsForCidr(p.cidr || '')))
     const poolBlocks = blocks.filter((b) => b.pool_id && String(b.pool_id).toLowerCase() === String(pool.id).toLowerCase())
     const blockIPs = sumCounts(poolBlocks.map((b) => b.total_ips))
-    const pct = utilPct(poolTotal, blockIPs)
+    return sumCounts([childPoolIPs, blockIPs])
+  }
+
+  /** Per-pool: total IPs (from CIDR), used IPs (child pools + blocks), usage %, and breakdown. */
+  $: poolUtilization = pools.map((pool) => {
+    const poolTotal = totalIPsForCidr(pool.cidr || '')
+    const usedIPs = poolUsedIPs(pool)
+    const childPools = pools.filter(
+      (p) => p.parent_pool_id != null && String(p.parent_pool_id).toLowerCase() === String(pool.id).toLowerCase()
+    )
+    const childPoolIPs = sumCounts(childPools.map((p) => totalIPsForCidr(p.cidr || '')))
+    const poolBlocks = blocks.filter((b) => b.pool_id && String(b.pool_id).toLowerCase() === String(pool.id).toLowerCase())
+    const blockIPs = sumCounts(poolBlocks.map((b) => b.total_ips))
+    const pct = utilPct(poolTotal, usedIPs)
     const pctDisplay =
       compareBlockCount(poolTotal, '0') <= 0
         ? 0
-        : pct < 1 && compareBlockCount(blockIPs, '0') > 0
+        : pct < 1 && compareBlockCount(usedIPs, '0') > 0
           ? '<1'
           : Math.round(pct)
     return {
       pool,
       poolTotal,
+      usedIPs,
+      childPoolIPs,
       blockIPs,
       pct: typeof pctDisplay === 'string' ? pctDisplay : pct,
+      childPoolCount: childPools.length,
       blockCount: poolBlocks.length,
     }
   })
@@ -154,7 +173,117 @@
   }
   const GRAPH_TEXT_CENTER_X_OFFSET = GRAPH_ICON_LEFT + GRAPH_ICON_SIZE + (GRAPH.nodeWidth - GRAPH_ICON_LEFT - GRAPH_ICON_SIZE) / 2
   const rowPitch = GRAPH.nodeHeight + GRAPH.rowGap
-  let graphHovered = null // { type: 'env'|'pool'|'block'|'alloc', id: string } | null
+  let graphHovered = null
+  let graphFullScreen = false
+  let graphZoom = 1
+  let graphPan = { x: 0, y: 0 }
+  let graphPanning = false
+  let graphPanStart = { clientX: 0, clientY: 0, panX: 0, panY: 0 }
+  let graphViewportEl = null
+
+  const GRAPH_ZOOM_MIN = 0.25
+  const GRAPH_ZOOM_MAX = 4
+  const GRAPH_ZOOM_SENSITIVITY = 0.002
+
+  function handleGraphKeydown(e) {
+    if (graphFullScreen && e.key === 'Escape') {
+      graphFullScreen = false
+      graphZoom = 1
+      graphPan = { x: 0, y: 0 }
+      e.preventDefault()
+    }
+  }
+
+  function exitGraphFullScreen() {
+    graphFullScreen = false
+    graphZoom = 1
+    graphPan = { x: 0, y: 0 }
+  }
+
+  function handleGraphWheel(e) {
+    if (!graphFullScreen || !graphViewportEl) return
+    e.preventDefault()
+    const rect = graphViewportEl.getBoundingClientRect()
+    const clientX = e.clientX - rect.left
+    const clientY = e.clientY - rect.top
+    const scaleFactor = 1 - e.deltaY * GRAPH_ZOOM_SENSITIVITY
+    const newZoom = Math.min(GRAPH_ZOOM_MAX, Math.max(GRAPH_ZOOM_MIN, graphZoom * scaleFactor))
+    const graphX = (clientX - graphPan.x) / graphZoom
+    const graphY = (clientY - graphPan.y) / graphZoom
+    graphZoom = newZoom
+    graphPan = {
+      x: clientX - graphX * graphZoom,
+      y: clientY - graphY * graphZoom,
+    }
+  }
+
+  function handleGraphPanStart(e) {
+    if (!graphFullScreen || e.button !== 0) return
+    if (e.target.closest('.graph-fullscreen-icon') || e.target.closest('.graph-node-wrap')) return
+    e.preventDefault()
+    graphPanning = true
+    graphPanStart = { clientX: e.clientX, clientY: e.clientY, panX: graphPan.x, panY: graphPan.y }
+  }
+
+  function handleGraphPanMove(e) {
+    if (!graphPanning) return
+    graphPan = {
+      x: graphPanStart.panX + (e.clientX - graphPanStart.clientX),
+      y: graphPanStart.panY + (e.clientY - graphPanStart.clientY),
+    }
+  }
+
+  function handleGraphPanEnd() {
+    graphPanning = false
+  }
+
+  /** Action: attach wheel listener with passive: false so preventDefault() works for zoom. */
+  function wheelNonPassive(node, handler) {
+    let current = handler
+    const h = (e) => current && current(e)
+    node.addEventListener('wheel', h, { passive: false })
+    return {
+      update(newHandler) {
+        current = newHandler
+      },
+      destroy() {
+        node.removeEventListener('wheel', h)
+      },
+    }
+  }
+
+  /** Truncate label for graph node (fits ~130px at 8px font). Full text remains in title. */
+  function truncateGraphLabel(str, maxLen = 14) {
+    if (!str || str.length <= maxLen) return str || ''
+    return str.slice(0, maxLen - 1) + '…'
+  } // { type: 'env'|'pool'|'block'|'alloc', id: string } | null
+
+  /** Order pools parent-first then children (for graph and hierarchy). */
+  function sortPoolsByHierarchy(poolList) {
+    if (!poolList.length) return []
+    const id = (p) => String(p.id).toLowerCase()
+    const parentId = (p) => (p.parent_pool_id != null && String(p.parent_pool_id).trim() !== '') ? String(p.parent_pool_id).toLowerCase() : null
+    const byId = new Map(poolList.map((p) => [id(p), p]))
+    const childrenMap = new Map()
+    poolList.forEach((p) => {
+      const pid = parentId(p)
+      if (!pid || !byId.has(pid)) return
+      const list = childrenMap.get(pid) || []
+      list.push(p)
+      childrenMap.set(pid, list)
+    })
+    childrenMap.forEach((list) => list.sort((a, b) => (a.name || '').localeCompare(b.name || '')))
+    const result = []
+    function visit(pool) {
+      result.push(pool)
+      ;(childrenMap.get(id(pool)) || []).forEach(visit)
+    }
+    const roots = poolList.filter((p) => !parentId(p) || !byId.has(parentId(p)))
+    roots.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+    roots.forEach(visit)
+    return result
+  }
+
   $: graphData = (() => {
     const envList = [...environments].sort((a, b) => (a.name || '').localeCompare(b.name || ''))
     const hasOrphaned = blocks.some(isOrphanedBlock)
@@ -180,7 +309,7 @@
       if (env.id === 'orphaned' || env.id === 'reserved') {
         poolOrder.push({ pool: { id: `no-pool-${env.id}`, name: '—', environment_id: env.id }, envId: env.id })
       } else {
-        const envPools = pools.filter((p) => envIdsMatch(p.environment_id, env.id))
+        const envPools = sortPoolsByHierarchy(pools.filter((p) => envIdsMatch(p.environment_id, env.id)))
         envPools.forEach((p) => poolOrder.push({ pool: p, envId: env.id }))
         const hasBlocksWithoutPool = envBlocks.some((b) => !b.pool_id)
         if (hasBlocksWithoutPool) poolOrder.push({ pool: { id: `no-pool-${env.id}`, name: '— No pool —', environment_id: env.id }, envId: env.id })
@@ -276,33 +405,49 @@
       blockEnvironmentId: item.blockEnvironmentId,
     }))
 
+    const idMatch = (a, b) => (a != null && b != null && String(a).toLowerCase() === String(b).toLowerCase())
     const poolRows = poolOrder.map(({ pool, envId }) => {
-      const poolBlocks = blockRows.filter((br) => br.poolId === pool.id && envKey(br.environmentId) === envKey(envId))
-      const y = poolBlocks.length > 0 ? (Math.min(...poolBlocks.map((b) => b.y)) + Math.max(...poolBlocks.map((b) => b.y))) / 2 : GRAPH.padding
-      return { id: pool.id, name: pool.name || pool.id || '—', cidr: pool.cidr || '', environmentId: envId, y }
-    })
-    envRows.forEach((env) => {
-      const envPools = poolRows.filter((pr) => envKey(pr.environmentId) === envKey(env.id))
-      if (envPools.length > 0) {
-        const minY = Math.min(...envPools.map((p) => p.y))
-        const maxY = Math.max(...envPools.map((p) => p.y))
-        env.y = (minY + maxY) / 2
+      const poolTotal = totalIPsForCidr(pool.cidr || '')
+      const usedIPs = poolUsedIPs(pool)
+      const usagePct = utilPct(poolTotal, usedIPs)
+      return {
+        id: pool.id,
+        name: pool.name || pool.id || '—',
+        cidr: pool.cidr || '',
+        environmentId: envId,
+        y: GRAPH.padding,
+        parentPoolId: pool.parent_pool_id != null && String(pool.parent_pool_id).trim() !== '' ? pool.parent_pool_id : null,
+        depth: 0,
+        usagePct: Math.min(100, Math.round(usagePct)),
+        usedIPs,
+        poolTotal,
       }
     })
-    envRows
-      .slice()
-      .sort((a, b) => a.y - b.y)
-      .forEach((env, i) => {
-        env.y = GRAPH.padding + i * rowPitch
+    const poolById = new Map(poolRows.map((pr) => [String(pr.id).toLowerCase(), pr]))
+    poolRows.forEach((pr) => { pr.depth = 0 })
+    let depthChanged = true
+    while (depthChanged) {
+      depthChanged = false
+      poolRows.forEach((pr) => {
+        if (!pr.parentPoolId) return
+        const parent = poolById.get(String(pr.parentPoolId).toLowerCase())
+        if (!parent) return
+        const d = parent.depth + 1
+        if (d > pr.depth) { pr.depth = d; depthChanged = true }
       })
-    poolRows.forEach((pr) => {
-      const poolBlocks = blockRows.filter((br) => br.poolId === pr.id)
-      if (poolBlocks.length > 0) {
-        const minY = Math.min(...poolBlocks.map((b) => b.y))
-        const maxY = Math.max(...poolBlocks.map((b) => b.y))
-        pr.y = (minY + maxY) / 2
-      }
-    })
+    }
+    const maxPoolDepth = poolRows.length ? Math.max(...poolRows.map((pr) => pr.depth)) : 0
+    const poolColWidth = GRAPH.nodeWidth + GRAPH.colGap
+    const col1X = GRAPH.padding
+    const col2X = GRAPH.padding + GRAPH.nodeWidth + GRAPH.colGap
+    const poolColX = (depth) => col2X + depth * poolColWidth
+    const blocksColX = col2X + (maxPoolDepth + 1) * poolColWidth
+    const allocsColX = blocksColX + poolColWidth
+
+    // Assign pool x by depth (parents left, children right)
+    poolRows.forEach((pr) => { pr.x = poolColX(pr.depth) })
+
+    // (Pool y and env y are assigned later, after block y.)
 
     allocRows.forEach((ar) => {
       const br = blockRows.find((b) => (b.name || '').toLowerCase() === (ar.blockName || '').toLowerCase())
@@ -310,39 +455,162 @@
       else ar.blockY = ar.y
     })
 
-    const col1X = GRAPH.padding
-    const col2X = GRAPH.padding + GRAPH.nodeWidth + GRAPH.colGap
-    const col3X = col2X + GRAPH.nodeWidth + GRAPH.colGap
-    const col4X = col3X + GRAPH.nodeWidth + GRAPH.colGap
-    envRows.forEach((r) => { r.x = col1X })
-    poolRows.forEach((r) => { r.x = col2X })
-    blockRows.forEach((r) => { r.x = col3X })
-    allocRows.forEach((r) => { r.x = col4X })
-
-    const edges = []
-    poolRows.forEach((pr) => {
-      const env = envRows.find((e) => envKey(e.id) === envKey(pr.environmentId))
-      if (env) {
-        const edgeType = env.id === 'orphaned' ? 'orphaned' : env.id === 'reserved' ? 'reserved' : null
-        edges.push({ from: { x: col1X + GRAPH.nodeWidth, y: env.y + GRAPH.nodeHeight / 2 }, to: { x: col2X, y: pr.y + GRAPH.nodeHeight / 2 }, envId: env.id, poolId: pr.id, blockId: null, allocId: null, edgeType })
+    // Strict hierarchy bands: each environment gets its own vertical band so separate hierarchies never overlap.
+    const poolBlockGap = rowPitch
+    const envBandGap = rowPitch * 4
+    const blockRowsByEnv = new Map()
+    blockRows.forEach((br) => {
+      const key = envKey(br.environmentId)
+      const list = blockRowsByEnv.get(key) || []
+      list.push(br)
+      blockRowsByEnv.set(key, list)
+    })
+    const envBandHeights = envRows.map((env) => {
+      const key = envKey(env.id)
+      const list = blockRowsByEnv.get(key) || []
+      let h = rowPitch
+      let lastPoolId = null
+      list.forEach((br) => {
+        if (lastPoolId != null && br.poolId !== lastPoolId) h += poolBlockGap
+        lastPoolId = br.poolId
+        const nAlloc = (allocsByBlock.get((br.name || '').toLowerCase()) || []).length
+        h += (1 + nAlloc) * rowPitch
+      })
+      const noBlockPools = poolRows.filter((pr) => envKey(pr.environmentId) === key && blockRows.filter((br) => idMatch(br.poolId, pr.id)).length === 0)
+      h += noBlockPools.length * rowPitch
+      return Math.max(h, rowPitch * 2)
+    })
+    let bandTop = GRAPH.padding
+    const envBandTops = envRows.map((env, i) => {
+      const top = bandTop
+      bandTop += envBandHeights[i] + envBandGap
+      return top
+    })
+    blockRows.forEach((br) => {
+      const key = envKey(br.environmentId)
+      const envIndex = envRows.findIndex((e) => envKey(e.id) === key)
+      if (envIndex < 0) return
+      const list = blockRowsByEnv.get(key) || []
+      const idx = list.indexOf(br)
+      if (idx < 0) return
+      let currentY = envBandTops[envIndex] + rowPitch
+      let lastPoolId = null
+      for (let j = 0; j < list.length; j++) {
+        const b = list[j]
+        if (lastPoolId != null && b.poolId !== lastPoolId) currentY += poolBlockGap
+        lastPoolId = b.poolId
+        if (b === br) {
+          br.y = currentY
+          return
+        }
+        const nAlloc = (allocsByBlock.get((b.name || '').toLowerCase()) || []).length
+        currentY += (1 + nAlloc) * rowPitch
       }
     })
+    const noBlockPoolYByEnv = new Map()
+    envRows.forEach((env, i) => {
+      const key = envKey(env.id)
+      const list = blockRowsByEnv.get(key) || []
+      if (list.length > 0) {
+        const last = list[list.length - 1]
+        const nAlloc = (allocsByBlock.get((last.name || '').toLowerCase()) || []).length
+        noBlockPoolYByEnv.set(key, last.y + (1 + nAlloc) * rowPitch)
+      } else {
+        noBlockPoolYByEnv.set(key, envBandTops[i] + rowPitch)
+      }
+    })
+    poolRows.forEach((pr) => {
+      const poolBlocks = blockRows.filter((br) => idMatch(br.poolId, pr.id))
+      if (poolBlocks.length > 0) {
+        const minY = Math.min(...poolBlocks.map((b) => b.y))
+        const maxY = Math.max(...poolBlocks.map((b) => b.y))
+        pr.y = (minY + maxY) / 2
+      } else {
+        const key = envKey(pr.environmentId)
+        const y = noBlockPoolYByEnv.get(key) ?? GRAPH.padding
+        noBlockPoolYByEnv.set(key, y + rowPitch)
+        pr.y = y
+      }
+    })
+    envRows.forEach((env, i) => {
+      env.y = envBandTops[i] + envBandHeights[i] / 2
+    })
+
+    // Position allocations under their block so they don't overlap.
+    let lastAllocBlockName = null
+    let allocIndexInBlock = 0
+    allocRows.forEach((ar) => {
+      const blockKey = (ar.blockName || '').toLowerCase()
+      const sameBlock = lastAllocBlockName != null && blockKey === lastAllocBlockName
+      if (!sameBlock) {
+        lastAllocBlockName = blockKey
+        allocIndexInBlock = 0
+      }
+      const br = blockRows.find((b) => (b.name || '').toLowerCase() === blockKey)
+      ar.y = br ? br.y + allocIndexInBlock * rowPitch : GRAPH.padding + allocIndexInBlock * rowPitch
+      if (br) ar.blockY = br.y
+      else ar.blockY = ar.y
+      allocIndexInBlock++
+    })
+
+    envRows.forEach((r) => { r.x = col1X })
+    blockRows.forEach((r) => { r.x = blocksColX })
+    allocRows.forEach((r) => { r.x = allocsColX })
+
+    const edges = []
+    // Env → depth-0 pools only: single exit point (center of right edge) so edges combine at source; orthogonal waypoint.
+    const envPoolWayX = (col1X + GRAPH.nodeWidth + col2X) / 2
+    envRows.forEach((env) => {
+      const list = poolRows.filter((pr) => pr.depth === 0 && envKey(pr.environmentId) === envKey(env.id))
+      list.forEach((pr) => {
+        const edgeType = env.id === 'orphaned' ? 'orphaned' : env.id === 'reserved' ? 'reserved' : null
+        edges.push({
+          from: { x: col1X + GRAPH.nodeWidth, y: env.y + GRAPH.nodeHeight / 2 },
+          to: { x: pr.x, y: pr.y + GRAPH.nodeHeight / 2 },
+          wayX: envPoolWayX,
+          envId: env.id,
+          poolId: pr.id,
+          blockId: null,
+          allocId: null,
+          edgeType,
+        })
+      })
+    })
+    // Parent pool → child pool: edge from right edge of parent to left edge of child.
+    poolRows.forEach((pr) => {
+      if (!pr.parentPoolId) return
+      const parent = poolRows.find((p) => idMatch(p.id, pr.parentPoolId))
+      if (!parent) return
+      edges.push({ from: { x: parent.x + GRAPH.nodeWidth, y: parent.y + GRAPH.nodeHeight / 2 }, to: { x: pr.x, y: pr.y + GRAPH.nodeHeight / 2 }, envId: null, poolId: pr.id, parentPoolId: parent.id, blockId: null, allocId: null, edgeType: null })
+    })
+    // Pool → block: single exit point (center of right edge) so edges combine at source; waypoint at blocks column so edge does not pass through pool nodes.
+    const poolBlockWayX = blocksColX
     blockRows.forEach((br) => {
       const pool = poolRows.find((p) => p.id === br.poolId)
       if (pool) {
         const edgeType = br.environmentId === 'orphaned' ? 'orphaned' : br.environmentId === 'reserved' ? 'reserved' : null
-        edges.push({ from: { x: col2X + GRAPH.nodeWidth, y: pool.y + GRAPH.nodeHeight / 2 }, to: { x: col3X, y: br.y + GRAPH.nodeHeight / 2 }, envId: null, poolId: pool.id, blockId: br.id, allocId: null, edgeType })
+        edges.push({
+          from: { x: pool.x + GRAPH.nodeWidth, y: pool.y + GRAPH.nodeHeight / 2 },
+          to: { x: blocksColX, y: br.y + GRAPH.nodeHeight / 2 },
+          wayX: poolBlockWayX,
+          envId: null,
+          poolId: pool.id,
+          blockId: br.id,
+          allocId: null,
+          edgeType,
+        })
       }
     })
+    // Block → allocation: single exit point (center of right edge) so edges combine at source.
     allocRows.forEach((ar) => {
       const br = blockRows.find((b) => (b.name || '').toLowerCase() === (ar.blockName || '').toLowerCase())
       if (br) {
         const edgeType = br.environmentId === 'orphaned' ? 'orphaned' : br.environmentId === 'reserved' ? 'reserved' : null
-        edges.push({ from: { x: col3X + GRAPH.nodeWidth, y: br.y + GRAPH.nodeHeight / 2 }, to: { x: col4X, y: ar.y + GRAPH.nodeHeight / 2 }, envId: null, poolId: null, blockId: br.id, allocId: ar.id, edgeType })
+        edges.push({ from: { x: blocksColX + GRAPH.nodeWidth, y: br.y + GRAPH.nodeHeight / 2 }, to: { x: allocsColX, y: ar.y + GRAPH.nodeHeight / 2 }, envId: null, poolId: null, blockId: br.id, allocId: ar.id, edgeType })
       }
     })
 
-    const width = col4X + GRAPH.nodeWidth + GRAPH.paddingRight
+    const width = allocsColX + GRAPH.nodeWidth + GRAPH.paddingRight
     const maxY = (rows) => (rows.length ? Math.max(...rows.map((r) => r.y)) + GRAPH.nodeHeight + GRAPH.padding : GRAPH.padding * 2)
     const height = Math.max(maxY(envRows), maxY(poolRows), maxY(blockRows), maxY(allocRows))
     return { envRows, poolRows, blockRows, allocRows, edges, width, height }
@@ -352,7 +620,7 @@
     if (!graphHovered) return false
     const id = (x) => (x != null ? String(x).toLowerCase() : '')
     if (graphHovered.type === 'env') return id(edge.envId) === id(graphHovered.id)
-    if (graphHovered.type === 'pool') return id(edge.poolId) === id(graphHovered.id)
+    if (graphHovered.type === 'pool') return id(edge.poolId) === id(graphHovered.id) || id(edge.parentPoolId) === id(graphHovered.id)
     if (graphHovered.type === 'block') return id(edge.blockId) === id(graphHovered.id)
     if (graphHovered.type === 'alloc') return id(edge.allocId) === id(graphHovered.id)
     return false
@@ -715,6 +983,12 @@
   $: $user, $selectedOrgForGlobalAdmin, $user && (!isGlobalAdmin($user) || $selectedOrgForGlobalAdmin) && load()
 </script>
 
+<svelte:window
+  on:keydown={handleGraphKeydown}
+  on:mousemove={handleGraphPanMove}
+  on:mouseup={handleGraphPanEnd}
+  on:mouseleave={handleGraphPanEnd}
+/>
 <div class="dashboard">
   <header class="page-header">
     <h1 class="page-title">Dashboard</h1>
@@ -841,8 +1115,8 @@
                 </div>
                 <span class="chart-pct">
                   {item.pct}%
-                  <span class="chart-pct-detail" title="Block IPs / pool total">
-                    ({formatBlockCount(item.blockIPs)} / {formatBlockCount(item.poolTotal)})
+                  <span class="chart-pct-detail" title="Used (child pools + blocks) / pool total. Child pools: {formatBlockCount(item.childPoolIPs)} IPs, blocks: {formatBlockCount(item.blockIPs)} IPs">
+                    ({formatBlockCount(item.usedIPs)} / {formatBlockCount(item.poolTotal)})
                   </span>
                 </span>
               </div>
@@ -901,7 +1175,7 @@
     {/if}
 
     {#if environments.length > 0 || blocks.length > 0 || allocations.length > 0 || reservedBlocks.length > 0}
-      <section class="graph-section">
+      <section class="graph-section" class:graph-fullscreen={graphFullScreen} role={graphFullScreen ? 'dialog' : undefined} aria-modal={graphFullScreen ? 'true' : undefined} aria-label={graphFullScreen ? 'Resource graph (full screen)' : undefined}>
         <div class="section-header">
           <h2 class="section-title">Resource graph</h2>
           <button
@@ -921,26 +1195,39 @@
           </button>
         </div>
         <div class="graph-wrap">
-          <svg
-            class="resource-graph"
-            viewBox="0 0 {graphData.width} {graphData.height}"
-            width="100%"
-            preserveAspectRatio="xMidYMid meet"
+          <button
+            type="button"
+            class="graph-fullscreen-icon"
+            on:click={() => (graphFullScreen ? exitGraphFullScreen() : (graphFullScreen = true))}
+            aria-label={graphFullScreen ? 'Exit full screen (Esc)' : 'Full screen'}
+            title={graphFullScreen ? 'Exit full screen (Esc)' : 'Full screen'}
           >
-            <!-- edges -->
-            {#each graphData.edges as edge, i}
-              <line
-                x1={edge.from.x}
-                y1={edge.from.y}
-                x2={edge.to.x}
-                y2={edge.to.y}
-                class="graph-edge"
-                class:graph-edge-orphaned={edge.edgeType === 'orphaned'}
-                class:graph-edge-reserved={edge.edgeType === 'reserved'}
-                class:graph-edge-highlight={graphHighlightedEdgeSet.has(i)}
-              />
-            {/each}
-            <!-- env nodes -->
+            <Icon icon={graphFullScreen ? 'lucide:minimize-2' : 'lucide:maximize-2'} width="1rem" height="1rem" aria-hidden="true" />
+          </button>
+          <div
+            class="graph-viewport"
+            class:graph-viewport-fullscreen={graphFullScreen}
+            role={graphFullScreen ? 'application' : undefined}
+            aria-label={graphFullScreen ? 'Resource graph (scroll to zoom, drag to pan)' : undefined}
+            bind:this={graphViewportEl}
+            use:wheelNonPassive={handleGraphWheel}
+            on:mousedown={handleGraphPanStart}
+            class:graph-panning={graphPanning}
+          >
+            <div
+              class="graph-transform"
+              class:graph-transform-fullscreen={graphFullScreen}
+              style={graphFullScreen ? `transform: translate(${graphPan.x}px, ${graphPan.y}px) scale(${graphZoom}); transform-origin: 0 0;` : ''}
+            >
+              <svg
+                class="resource-graph"
+                class:resource-graph-zoomed={graphFullScreen}
+                viewBox="0 0 {graphData.width} {graphData.height}"
+                width={graphFullScreen ? graphData.width : '100%'}
+                height={graphFullScreen ? graphData.height : undefined}
+                preserveAspectRatio={graphFullScreen ? 'none' : 'xMidYMid meet'}
+              >
+            <!-- env nodes (drawn first so edges render on top and do not show through) -->
             {#each graphData.envRows as node}
               <g
                 class="graph-node-wrap"
@@ -966,15 +1253,17 @@
                     <Icon icon={node.id === 'orphaned' ? 'lucide:alert-triangle' : node.id === 'reserved' ? 'lucide:shield-off' : 'lucide:layers'} width={GRAPH_ICON_SIZE} height={GRAPH_ICON_SIZE} />
                   </div>
                 </foreignObject>
-                <text x={node.x + GRAPH_TEXT_CENTER_X_OFFSET} y={node.y + GRAPH.nodeHeight / 2 + 1} class="graph-label" text-anchor="middle">{node.name}</text>
+                <text x={node.x + GRAPH_TEXT_CENTER_X_OFFSET} y={node.y + GRAPH.nodeHeight / 2 + 1} class="graph-label" text-anchor="middle">{truncateGraphLabel(node.name)}</text>
+                <title>{node.name}</title>
               </g>
             {/each}
             <!-- pool nodes -->
-            {#each graphData.poolRows as node}
+            {#each graphData.poolRows as node, poolIndex}
               <g
                 class="graph-node-wrap"
                 class:graph-node-orphaned-pool={node.environmentId === 'orphaned'}
                 class:graph-node-reserved-pool={node.environmentId === 'reserved'}
+                class:graph-node-pool-child={node.parentPoolId != null}
                 role="button"
                 tabindex="0"
                 on:mouseenter={() => (graphHovered = { type: 'pool', id: node.id })}
@@ -982,6 +1271,11 @@
                 on:click={() => node.environmentId !== 'orphaned' && node.environmentId !== 'reserved' && goToEnvironmentBlocks(node.environmentId, node.id)}
                 on:keydown={(e) => e.key === 'Enter' && node.environmentId !== 'orphaned' && node.environmentId !== 'reserved' && goToEnvironmentBlocks(node.environmentId, node.id)}
               >
+                <defs>
+                  <clipPath id="graph-pool-clip-{poolIndex}">
+                    <rect x={node.x} y={node.y} width={GRAPH.nodeWidth} height={GRAPH.nodeHeight} rx="4" />
+                  </clipPath>
+                </defs>
                 <rect
                   class="graph-node graph-node-pool"
                   class:graph-node-orphaned-pool-rect={node.environmentId === 'orphaned'}
@@ -997,8 +1291,11 @@
                     <Icon icon={node.environmentId === 'orphaned' ? 'lucide:alert-triangle' : node.environmentId === 'reserved' ? 'lucide:shield-off' : 'lucide:droplets'} width={GRAPH_ICON_SIZE} height={GRAPH_ICON_SIZE} />
                   </div>
                 </foreignObject>
-                <text x={node.x + GRAPH_TEXT_CENTER_X_OFFSET} y={node.y + (11 * GRAPH.nodeHeight) / 34} class="graph-label" text-anchor="middle">{node.name}</text>
-                <text x={node.x + GRAPH_TEXT_CENTER_X_OFFSET} y={node.y + (24 * GRAPH.nodeHeight) / 34} class="graph-label graph-label-cidr" text-anchor="middle">{node.cidr || '—'}</text>
+                <g clip-path="url(#graph-pool-clip-{poolIndex})">
+                  <title>{node.name}{node.cidr ? ` — ${node.cidr}` : ''}</title>
+                  <text x={node.x + GRAPH_TEXT_CENTER_X_OFFSET} y={node.y + (11 * GRAPH.nodeHeight) / 34} class="graph-label" text-anchor="middle">{truncateGraphLabel(node.name)}</text>
+                  <text x={node.x + GRAPH_TEXT_CENTER_X_OFFSET} y={node.y + (24 * GRAPH.nodeHeight) / 34} class="graph-label graph-label-cidr" text-anchor="middle">{truncateGraphLabel(node.cidr || '—', 16)}</text>
+                </g>
               </g>
             {/each}
             <!-- block nodes (name + cidr) -->
@@ -1031,9 +1328,9 @@
                     <Icon icon="lucide:network" width={GRAPH_ICON_SIZE} height={GRAPH_ICON_SIZE} />
                   </div>
                 </foreignObject>
-                <text x={node.x + GRAPH_TEXT_CENTER_X_OFFSET} y={node.y + (11 * GRAPH.nodeHeight) / 34} class="graph-label" text-anchor="middle">{node.name}</text>
-                <text x={node.x + GRAPH_TEXT_CENTER_X_OFFSET} y={node.y + (24 * GRAPH.nodeHeight) / 34} class="graph-label graph-label-cidr" text-anchor="middle">{node.cidr || '—'}</text>
-                <title>{[node.isUnused ? 'Unused (no allocations).' : '', node.cidr && cidrRange(node.cidr) ? `${node.cidr} → ${cidrRange(node.cidr).start} – ${cidrRange(node.cidr).end}` : ''].filter(Boolean).join(' ')}</title>
+                <text x={node.x + GRAPH_TEXT_CENTER_X_OFFSET} y={node.y + (11 * GRAPH.nodeHeight) / 34} class="graph-label" text-anchor="middle">{truncateGraphLabel(node.name)}</text>
+                <text x={node.x + GRAPH_TEXT_CENTER_X_OFFSET} y={node.y + (24 * GRAPH.nodeHeight) / 34} class="graph-label graph-label-cidr" text-anchor="middle">{truncateGraphLabel(node.cidr || '—', 16)}</text>
+                <title>{[node.name, node.cidr].filter(Boolean).join(' — ')}{node.isUnused ? ' Unused (no allocations).' : ''}{node.cidr && cidrRange(node.cidr) ? ` ${node.cidr} → ${cidrRange(node.cidr).start} – ${cidrRange(node.cidr).end}` : ''}</title>
               </g>
             {/each}
             <!-- allocation nodes -->
@@ -1063,14 +1360,38 @@
                     <Icon icon="lucide:git-branch" width={GRAPH_ICON_SIZE} height={GRAPH_ICON_SIZE} />
                   </div>
                 </foreignObject>
-                <text x={node.x + GRAPH_TEXT_CENTER_X_OFFSET} y={node.y + (11 * GRAPH.nodeHeight) / 34} class="graph-label graph-label-alloc" text-anchor="middle">{node.name}</text>
-                <text x={node.x + GRAPH_TEXT_CENTER_X_OFFSET} y={node.y + (24 * GRAPH.nodeHeight) / 34} class="graph-label graph-label-cidr" text-anchor="middle">{node.cidr || '—'}</text>
-                {#if node.cidr && cidrRange(node.cidr)}
-                  <title>{node.cidr} → {cidrRange(node.cidr).start} – {cidrRange(node.cidr).end}</title>
-                {/if}
+                <text x={node.x + GRAPH_TEXT_CENTER_X_OFFSET} y={node.y + (11 * GRAPH.nodeHeight) / 34} class="graph-label graph-label-alloc" text-anchor="middle">{truncateGraphLabel(node.name)}</text>
+                <text x={node.x + GRAPH_TEXT_CENTER_X_OFFSET} y={node.y + (24 * GRAPH.nodeHeight) / 34} class="graph-label graph-label-cidr" text-anchor="middle">{truncateGraphLabel(node.cidr || '—', 16)}</text>
+                <title>{node.name}{node.cidr ? ` — ${node.cidr}` : ''}{node.cidr && cidrRange(node.cidr) ? ` (${node.cidr} → ${cidrRange(node.cidr).start} – ${cidrRange(node.cidr).end})` : ''}</title>
               </g>
             {/each}
+            <!-- edges (drawn after nodes so they start at node boundary and are not visible through node) -->
+            {#each graphData.edges as edge, i}
+              {#if edge.wayX != null}
+                <path
+                  d="M {edge.from.x} {edge.from.y} L {edge.wayX} {edge.from.y} L {edge.wayX} {edge.to.y} L {edge.to.x} {edge.to.y}"
+                  fill="none"
+                  class="graph-edge"
+                  class:graph-edge-orphaned={edge.edgeType === 'orphaned'}
+                  class:graph-edge-reserved={edge.edgeType === 'reserved'}
+                  class:graph-edge-highlight={graphHighlightedEdgeSet.has(i)}
+                />
+              {:else}
+                <line
+                  x1={edge.from.x}
+                  y1={edge.from.y}
+                  x2={edge.to.x}
+                  y2={edge.to.y}
+                  class="graph-edge"
+                  class:graph-edge-orphaned={edge.edgeType === 'orphaned'}
+                  class:graph-edge-reserved={edge.edgeType === 'reserved'}
+                  class:graph-edge-highlight={graphHighlightedEdgeSet.has(i)}
+                />
+              {/if}
+            {/each}
           </svg>
+            </div>
+          </div>
         </div>
       </section>
     {/if}
@@ -1292,21 +1613,91 @@
     margin-top: 2.5rem;
     margin-bottom: 2.5rem;
   }
+  .graph-section.graph-fullscreen {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    margin: 0;
+    padding: 1rem 1.5rem;
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .graph-section.graph-fullscreen .graph-wrap {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .graph-section.graph-fullscreen .graph-viewport-fullscreen {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    position: relative;
+    cursor: grab;
+  }
+  .graph-section.graph-fullscreen .graph-viewport-fullscreen.graph-panning {
+    cursor: grabbing;
+  }
+  .graph-viewport {
+    display: contents;
+  }
+  .graph-viewport-fullscreen {
+    display: block;
+  }
+  .graph-transform {
+    display: contents;
+  }
+  .graph-transform-fullscreen {
+    display: block;
+    transform-origin: 0 0;
+  }
+  .graph-section.graph-fullscreen .resource-graph-zoomed {
+    display: block;
+  }
   .graph-wrap {
+    position: relative;
     background: var(--surface);
     border-radius: var(--radius);
     overflow: hidden;
     min-height: 140px;
     box-shadow: var(--shadow-sm);
   }
+  .graph-fullscreen-icon {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.2);
+    color: var(--text);
+    cursor: pointer;
+    opacity: 0.6;
+    transition: opacity 0.15s, background 0.15s;
+  }
+  .graph-fullscreen-icon:hover {
+    opacity: 1;
+    background: rgba(0, 0, 0, 0.35);
+  }
+  .graph-fullscreen-icon:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    opacity: 1;
+  }
   .resource-graph {
     display: block;
   }
   .graph-edge {
     stroke: var(--graph-edge-stroke);
-    stroke-width: 1.5;
-    transition: stroke 0.15s, stroke-width 0.15s;
-    pointer-events: none;
   }
   .graph-edge.graph-edge-highlight {
     stroke: var(--accent);

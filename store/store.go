@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"time"
 
 	"github.com/JakeNeyer/ipam/network"
@@ -33,28 +34,39 @@ type PoolStore interface {
 	GetPool(id uuid.UUID) (*network.Pool, error)
 	ListPoolsByEnvironment(envID uuid.UUID) ([]*network.Pool, error)
 	ListPoolsByOrganization(orgID uuid.UUID) ([]*network.Pool, error)
+	ListPoolsByOrganizationIncludingDeleted(orgID uuid.UUID) ([]*network.Pool, error) // for sync to match cloud pools to soft-deleted rows
 	UpdatePool(id uuid.UUID, pool *network.Pool) error
 	DeletePool(id uuid.UUID) error
+	// SoftDeletePool sets deleted_at so the pool is hidden and can be removed from the cloud on next sync (IPAM conflict).
+	SoftDeletePool(id uuid.UUID) error
+	// ListPoolsPendingCloudDelete returns soft-deleted pools for the connection that should be deleted in the cloud then removed.
+	ListPoolsPendingCloudDelete(connID uuid.UUID) ([]*network.Pool, error)
 }
 
 type BlockStore interface {
 	CreateBlock(block *network.Block) error
 	GetBlock(id uuid.UUID) (*network.Block, error)
 	ListBlocks() ([]*network.Block, error)
-	ListBlocksFiltered(name string, environmentID *uuid.UUID, poolID *uuid.UUID, organizationID *uuid.UUID, orphanedOnly bool, limit, offset int) ([]*network.Block, int, error)
+	ListBlocksFiltered(name string, environmentID *uuid.UUID, poolID *uuid.UUID, organizationID *uuid.UUID, orphanedOnly bool, provider string, connectionID *uuid.UUID, limit, offset int) ([]*network.Block, int, error)
+	ListBlocksFilteredIncludingDeleted(name string, environmentID *uuid.UUID, poolID *uuid.UUID, organizationID *uuid.UUID, orphanedOnly bool, provider string, connectionID *uuid.UUID, limit, offset int) ([]*network.Block, int, error)
 	ListBlocksByEnvironment(envID uuid.UUID) ([]*network.Block, error)
 	ListBlocksByPool(poolID uuid.UUID) ([]*network.Block, error)
 	UpdateBlock(id uuid.UUID, block *network.Block) error
 	DeleteBlock(id uuid.UUID) error
+	SoftDeleteBlock(id uuid.UUID) error
+	ListBlocksPendingCloudDelete(connID uuid.UUID) ([]*network.Block, error)
 }
 
 type AllocationStore interface {
 	CreateAllocation(id uuid.UUID, alloc *network.Allocation) error
 	GetAllocation(id uuid.UUID) (*network.Allocation, error)
 	ListAllocations() ([]*network.Allocation, error)
-	ListAllocationsFiltered(name string, blockName string, environmentID uuid.UUID, organizationID *uuid.UUID, limit, offset int) ([]*network.Allocation, int, error)
+	ListAllocationsFiltered(name string, blockName string, environmentID uuid.UUID, organizationID *uuid.UUID, provider string, connectionID *uuid.UUID, limit, offset int) ([]*network.Allocation, int, error)
+	ListAllocationsFilteredIncludingDeleted(name string, blockName string, environmentID uuid.UUID, organizationID *uuid.UUID, provider string, connectionID *uuid.UUID, limit, offset int) ([]*network.Allocation, int, error)
 	UpdateAllocation(id uuid.UUID, alloc *network.Allocation) error
 	DeleteAllocation(id uuid.UUID) error
+	SoftDeleteAllocation(id uuid.UUID) error
+	ListAllocationsPendingCloudDelete(connID uuid.UUID) ([]*network.Allocation, error)
 }
 
 type ReservedBlockStore interface {
@@ -102,6 +114,20 @@ type SignupInviteStore interface {
 	ListSignupInvites(createdBy uuid.UUID) ([]*SignupInvite, error)
 }
 
+// CloudConnectionStore is implemented by store/connection.go and used for integrations.
+type CloudConnectionStore interface {
+	CreateCloudConnection(c *CloudConnection) error
+	GetCloudConnection(id uuid.UUID) (*CloudConnection, error)
+	ListCloudConnectionsByOrganization(orgID uuid.UUID) ([]*CloudConnection, error)
+	ListCloudConnections() ([]*CloudConnection, error) // all connections, for background sync
+	UpdateCloudConnection(id uuid.UUID, c *CloudConnection) error
+	DeleteCloudConnection(id uuid.UUID) error
+	// WithSyncLock runs fn if this process can acquire the per-connection sync lock (e.g. PostgreSQL advisory lock).
+	// Returns (false, nil) if another instance holds the lock; (true, err) after running fn.
+	// Ensures only one sync runs per connection when multiple server instances are running.
+	WithSyncLock(ctx context.Context, connectionID uuid.UUID, fn func() error) (acquired bool, err error)
+}
+
 // Storer is the full IPAM persistence interface, composed from smaller store interfaces.
 // Implemented by the in-memory Store and PostgresStore.
 type Storer interface {
@@ -116,4 +142,5 @@ type Storer interface {
 	SessionStore
 	APITokenStore
 	SignupInviteStore
+	CloudConnectionStore
 }

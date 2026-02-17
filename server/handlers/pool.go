@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/JakeNeyer/ipam/internal/integrations"
+	"github.com/JakeNeyer/ipam/internal/integrations/aws"
 	"github.com/JakeNeyer/ipam/network"
 	"github.com/JakeNeyer/ipam/server/auth"
 	"github.com/JakeNeyer/ipam/store"
@@ -93,11 +95,38 @@ func NewCreatePoolUseCase(s store.Storer) usecase.Interactor {
 		if userOrg := auth.UserOrgForAccess(ctx, user); userOrg != uuid.Nil && env.OrganizationID != userOrg {
 			return status.Wrap(errors.New("environment not found"), status.NotFound)
 		}
+		var parentPool *network.Pool
+		if input.ParentPoolID != nil && *input.ParentPoolID != uuid.Nil {
+			parent, err := s.GetPool(*input.ParentPoolID)
+			if err != nil {
+				return status.Wrap(errors.New("parent pool not found"), status.NotFound)
+			}
+			if parent.EnvironmentID != input.EnvironmentID {
+				return status.Wrap(errors.New("parent pool must be in the same environment"), status.InvalidArgument)
+			}
+			if parent.OrganizationID != env.OrganizationID {
+				return status.Wrap(errors.New("parent pool not found"), status.NotFound)
+			}
+			contained, err := network.Contains(parent.CIDR, input.CIDR)
+			if err != nil {
+				return status.Wrap(err, status.Internal)
+			}
+			if !contained {
+				return status.Wrap(
+					fmt.Errorf("child pool CIDR %s must be contained in parent pool %q (%s)", input.CIDR, parent.Name, parent.CIDR),
+					status.InvalidArgument,
+				)
+			}
+			parentPool = parent
+		}
 		existingPools, err := s.ListPoolsByOrganization(env.OrganizationID)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
 		for _, other := range existingPools {
+			if parentPool != nil && other.ID == parentPool.ID {
+				continue // child CIDR is allowed to be contained in parent
+			}
 			overlap, err := network.Overlaps(input.CIDR, other.CIDR)
 			if err != nil {
 				return status.Wrap(err, status.Internal)
@@ -116,14 +145,66 @@ func NewCreatePoolUseCase(s store.Storer) usecase.Interactor {
 			Name:           input.Name,
 			CIDR:           input.CIDR,
 		}
+		if parentPool != nil {
+			pool.ParentPoolID = input.ParentPoolID
+		}
+		// Auto-select a read-write connection for this environment when client did not send connection_id
+		// (e.g. creating a pool from Networks/Environments UI so resources are pushed to AWS).
+		if input.ConnectionID == nil && env.OrganizationID != uuid.Nil {
+			conns, err := s.ListCloudConnectionsByOrganization(env.OrganizationID)
+			if err == nil {
+				var match *store.CloudConnection
+				for _, c := range conns {
+					if c.SyncMode != "read_write" {
+						continue
+					}
+					if c.Provider == "aws" {
+						cfg, _ := aws.ParseAWSConfig(c.Config)
+						if cfg != nil && cfg.EnvironmentID == input.EnvironmentID {
+							if match != nil {
+								match = nil // multiple matches; don't auto-select
+								break
+							}
+							match = c
+						}
+					}
+				}
+				if match != nil {
+					input.ConnectionID = &match.ID
+				}
+			}
+		}
+		if input.ConnectionID != nil {
+			conn, err := s.GetCloudConnection(*input.ConnectionID)
+			if err != nil {
+				return status.Wrap(errors.New("connection not found"), status.NotFound)
+			}
+			if conn.OrganizationID != env.OrganizationID {
+				return status.Wrap(errors.New("connection not in same organization"), status.InvalidArgument)
+			}
+			if conn.SyncMode == "read_write" {
+				prov := integrations.Get(conn.Provider)
+				if prov != nil {
+					if pushProv, ok := prov.(integrations.PushProvider); ok && pushProv.SupportsPush() {
+						parentExtID := ""
+						if parentPool != nil && parentPool.ExternalID != "" {
+							parentExtID = parentPool.ExternalID
+						}
+						extID, err := pushProv.CreatePoolInCloud(ctx, conn, pool, parentExtID)
+						if err != nil {
+							return status.Wrap(fmt.Errorf("push pool to cloud: %w", err), status.Internal)
+						}
+						pool.Provider = conn.Provider
+						pool.ExternalID = extID
+						pool.ConnectionID = input.ConnectionID
+					}
+				}
+			}
+		}
 		if err := s.CreatePool(pool); err != nil {
 			return status.Wrap(err, status.Internal)
 		}
-		output.ID = pool.ID
-		output.OrganizationID = pool.OrganizationID
-		output.EnvironmentID = pool.EnvironmentID
-		output.Name = pool.Name
-		output.CIDR = pool.CIDR
+		*output = *poolToOutput(pool)
 		return nil
 	})
 	u.SetTitle("Create Pool")
@@ -145,11 +226,7 @@ func NewGetPoolUseCase(s store.Storer) usecase.Interactor {
 				return status.Wrap(errors.New("pool not found"), status.NotFound)
 			}
 		}
-		output.ID = pool.ID
-		output.OrganizationID = pool.OrganizationID
-		output.EnvironmentID = pool.EnvironmentID
-		output.Name = pool.Name
-		output.CIDR = pool.CIDR
+		*output = *poolToOutput(pool)
 		return nil
 	})
 	u.SetTitle("Get Pool")
@@ -180,8 +257,8 @@ func NewListPoolsUseCase(s store.Storer) usecase.Interactor {
 						pools = append(pools, p)
 					}
 				}
-			} else {
-				pools = orgPools
+		} else {
+			pools = orgPools
 			}
 		} else if input.EnvironmentID != uuid.Nil {
 			env, err := s.GetEnvironment(input.EnvironmentID)
@@ -198,20 +275,32 @@ func NewListPoolsUseCase(s store.Storer) usecase.Interactor {
 		} else {
 			return status.Wrap(errors.New("environment_id or organization_id is required"), status.InvalidArgument)
 		}
+		// Optional filter by provider and connection_id
+		if input.Provider != "" || input.ConnectionID != uuid.Nil {
+			var filtered []*network.Pool
+			for _, p := range pools {
+				poolProvider := p.Provider
+				if poolProvider == "" {
+					poolProvider = "native"
+				}
+				if input.Provider != "" && poolProvider != input.Provider {
+					continue
+				}
+				if input.ConnectionID != uuid.Nil && (p.ConnectionID == nil || *p.ConnectionID != input.ConnectionID) {
+					continue
+				}
+				filtered = append(filtered, p)
+			}
+			pools = filtered
+		}
 		output.Pools = make([]*poolOutput, len(pools))
 		for i, p := range pools {
-			output.Pools[i] = &poolOutput{
-				ID:             p.ID,
-				OrganizationID: p.OrganizationID,
-				EnvironmentID:  p.EnvironmentID,
-				Name:           p.Name,
-				CIDR:           p.CIDR,
-			}
+			output.Pools[i] = poolToOutput(p)
 		}
 		return nil
 	})
 	u.SetTitle("List Pools")
-	u.SetDescription("Lists pools for an environment or for an organization")
+	u.SetDescription("Lists pools for an environment or for an organization. Optional query params: provider, connection_id to filter by cloud integration.")
 	u.SetExpectedErrors(status.InvalidArgument, status.NotFound, status.Internal)
 	return u
 }
@@ -256,11 +345,7 @@ func NewUpdatePoolUseCase(s store.Storer) usecase.Interactor {
 		if err := s.UpdatePool(input.ID, pool); err != nil {
 			return status.Wrap(err, status.Internal)
 		}
-		output.ID = pool.ID
-		output.OrganizationID = pool.OrganizationID
-		output.EnvironmentID = pool.EnvironmentID
-		output.Name = pool.Name
-		output.CIDR = pool.CIDR
+		*output = *poolToOutput(pool)
 		return nil
 	})
 	u.SetTitle("Update Pool")
@@ -269,7 +354,8 @@ func NewUpdatePoolUseCase(s store.Storer) usecase.Interactor {
 	return u
 }
 
-// DeletePool handler
+// DeletePool handler. When the pool is linked to a read-write integration with IPAM conflict resolution,
+// the pool is soft-deleted so the next sync will delete it in the cloud then remove the row.
 func NewDeletePoolUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input getPoolInput, output *struct{}) error {
 		pool, err := s.GetPool(input.ID)
@@ -282,6 +368,16 @@ func NewDeletePoolUseCase(s store.Storer) usecase.Interactor {
 				return status.Wrap(errors.New("pool not found"), status.NotFound)
 			}
 		}
+		// Soft-delete when pool has an external ID and is linked to a read-write connection with IPAM conflict resolution.
+		if pool.ConnectionID != nil && *pool.ConnectionID != uuid.Nil && pool.ExternalID != "" {
+			conn, err := s.GetCloudConnection(*pool.ConnectionID)
+			if err == nil && conn.SyncMode == "read_write" && conn.ConflictResolution == "ipam" {
+				if err := s.SoftDeletePool(input.ID); err != nil {
+					return status.Wrap(err, status.Internal)
+				}
+				return nil
+			}
+		}
 		if err := s.DeletePool(input.ID); err != nil {
 			return status.Wrap(errors.New("pool not found"), status.NotFound)
 		}
@@ -291,4 +387,19 @@ func NewDeletePoolUseCase(s store.Storer) usecase.Interactor {
 	u.SetDescription("Deletes a pool (blocks referencing it will have pool_id set to null)")
 	u.SetExpectedErrors(status.NotFound, status.Internal)
 	return u
+}
+
+func poolToOutput(p *network.Pool) *poolOutput {
+	out := &poolOutput{
+		ID:             p.ID,
+		OrganizationID: p.OrganizationID,
+		EnvironmentID:  p.EnvironmentID,
+		Name:           p.Name,
+		CIDR:           p.CIDR,
+		Provider:       p.Provider,
+		ExternalID:     p.ExternalID,
+		ConnectionID:   p.ConnectionID,
+		ParentPoolID:   p.ParentPoolID,
+	}
+	return out
 }

@@ -3,7 +3,7 @@
   import { get } from 'svelte/store'
   import Icon from '@iconify/svelte'
   import { theme } from './theme.js'
-  import { selectedOrgForGlobalAdmin, selectedOrgNameForGlobalAdmin, isGlobalAdmin, setSelectedOrgForGlobalAdmin } from './auth.js'
+  import { selectedOrgForGlobalAdmin, selectedOrgNameForGlobalAdmin, isGlobalAdmin, setSelectedOrgForGlobalAdmin, organizationsRefreshTrigger } from './auth.js'
   import { listOrganizations } from './api.js'
   export let current = 'dashboard'
   export let currentUser: { id?: string; email?: string; role?: string; organization_id?: string | null } | null = null
@@ -27,6 +27,9 @@
   }
   // Reset so we load again if user logs out and back in as global admin.
   $: if (!globalAdmin) orgsLoadedOnce = false
+  // Refetch orgs when Admin creates/updates/deletes an organization so the dropdown updates.
+  $: _refreshTrigger = $organizationsRefreshTrigger
+  $: if (globalAdmin && _refreshTrigger > 0) loadOrgs()
 
   async function loadOrgs() {
     if (!globalAdmin) return
@@ -167,6 +170,7 @@
           <button
             class="link"
             class:active={current === 'reserved-blocks'}
+            data-tour="tour-nav-reserved-blocks"
             on:click={() => dispatch('nav', 'reserved-blocks')}
             on:mouseenter={() => (hoveredLabel = collapsed ? 'Reserved blocks' : null)}
             on:mouseleave={() => (hoveredLabel = null)}
@@ -178,6 +182,25 @@
               <span class="label">Reserved blocks</span>
             {:else if hoveredLabel === 'Reserved blocks'}
               <span class="nav-tooltip" role="tooltip">Reserved blocks</span>
+            {/if}
+          </button>
+        </li>
+        <li>
+          <button
+            class="link"
+            class:active={current === 'integrations'}
+            data-tour="tour-nav-integrations"
+            on:click={() => dispatch('nav', 'integrations')}
+            on:mouseenter={() => (hoveredLabel = collapsed ? 'Integrations' : null)}
+            on:mouseleave={() => (hoveredLabel = null)}
+            title={collapsed ? 'Integrations' : ''}
+            aria-label="Integrations"
+          >
+            <span class="icon"><Icon icon="lucide:cloud" width="1.25em" height="1.25em" /></span>
+            {#if !collapsed}
+              <span class="label">Integrations</span>
+            {:else if hoveredLabel === 'Integrations'}
+              <span class="nav-tooltip" role="tooltip">Integrations</span>
             {/if}
           </button>
         </li>

@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"strings"
 
+	"github.com/JakeNeyer/ipam/internal/integrations"
 	"github.com/JakeNeyer/ipam/network"
 	"github.com/JakeNeyer/ipam/server/auth"
 	"github.com/JakeNeyer/ipam/store"
@@ -31,7 +32,7 @@ func derivedBlockUsage(s store.Storer, blockName string, blockCIDR string, orgID
 	var allocs []*network.Allocation
 	var listErr error
 	if orgID != nil {
-		allocs, _, listErr = s.ListAllocationsFiltered("", blockName, uuid.Nil, orgID, 0, 0)
+		allocs, _, listErr = s.ListAllocationsFiltered("", blockName, uuid.Nil, orgID, "", nil, 0, 0)
 	} else {
 		allocs, listErr = s.ListAllocations()
 	}
@@ -145,7 +146,7 @@ func NewCreateBlockUseCase(s store.Storer) usecase.Interactor {
 		if block.EnvironmentID != uuid.Nil {
 			existing, err = s.ListBlocksByEnvironment(block.EnvironmentID)
 		} else {
-			existing, _, err = s.ListBlocksFiltered("", nil, nil, &block.OrganizationID, true, 0, 0)
+			existing, _, err = s.ListBlocksFiltered("", nil, nil, &block.OrganizationID, true, "", nil, 0, 0)
 		}
 		if err != nil {
 			return status.Wrap(err, status.Internal)
@@ -181,6 +182,27 @@ func NewCreateBlockUseCase(s store.Storer) usecase.Interactor {
 			)
 		}
 
+		if block.PoolID != nil {
+			pool, err := s.GetPool(*block.PoolID)
+			if err == nil && pool.ConnectionID != nil && pool.ExternalID != "" {
+				conn, err := s.GetCloudConnection(*pool.ConnectionID)
+				if err == nil && conn.SyncMode == "read_write" {
+					prov := integrations.Get(conn.Provider)
+					if prov != nil {
+						if pushProv, ok := prov.(integrations.PushProvider); ok && pushProv.SupportsPush() {
+							extID, err := pushProv.AllocateBlockInCloud(ctx, conn, pool.ExternalID, block)
+							if err != nil {
+								return status.Wrap(fmt.Errorf("push block to cloud: %w", err), status.Internal)
+							}
+							block.Provider = conn.Provider
+							block.ExternalID = extID
+							block.ConnectionID = pool.ConnectionID
+						}
+					}
+				}
+			}
+		}
+
 		if err := s.CreateBlock(block); err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -195,6 +217,9 @@ func NewCreateBlockUseCase(s store.Storer) usecase.Interactor {
 		output.EnvironmentID = block.EnvironmentID
 		output.OrganizationID = block.OrganizationID
 		output.PoolID = block.PoolID
+		output.Provider = block.Provider
+		output.ExternalID = block.ExternalID
+		output.ConnectionID = block.ConnectionID
 		return nil
 	})
 
@@ -247,7 +272,11 @@ func NewListBlocksUseCase(s store.Storer) usecase.Interactor {
 		if offset < 0 {
 			offset = 0
 		}
-		blocks, total, err := s.ListBlocksFiltered(input.Name, envID, poolID, orgID, input.OrphanedOnly, limit, offset)
+		var blockConnID *uuid.UUID
+		if input.ConnectionID != uuid.Nil {
+			blockConnID = &input.ConnectionID
+		}
+		blocks, total, err := s.ListBlocksFiltered(input.Name, envID, poolID, orgID, input.OrphanedOnly, input.Provider, blockConnID, limit, offset)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -265,13 +294,16 @@ func NewListBlocksUseCase(s store.Storer) usecase.Interactor {
 				EnvironmentID:  block.EnvironmentID,
 				OrganizationID: block.OrganizationID,
 				PoolID:         block.PoolID,
+				Provider:       block.Provider,
+				ExternalID:     block.ExternalID,
+				ConnectionID:   block.ConnectionID,
 			}
 		}
 		return nil
 	})
 
 	u.SetTitle("List Blocks")
-	u.SetDescription("Lists network blocks with optional name/environment filter and pagination (limit, offset)")
+	u.SetDescription("Lists network blocks with optional name/environment/provider/connection_id filter and pagination (limit, offset)")
 	u.SetExpectedErrors(status.Internal)
 	return u
 }
@@ -305,6 +337,9 @@ func NewGetBlockUseCase(s store.Storer) usecase.Interactor {
 		output.EnvironmentID = block.EnvironmentID
 		output.OrganizationID = block.OrganizationID
 		output.PoolID = block.PoolID
+		output.Provider = block.Provider
+		output.ExternalID = block.ExternalID
+		output.ConnectionID = block.ConnectionID
 		return nil
 	})
 
@@ -374,7 +409,7 @@ func NewUpdateBlockUseCase(s store.Storer) usecase.Interactor {
 		if block.EnvironmentID != uuid.Nil {
 			existing, err = s.ListBlocksByEnvironment(block.EnvironmentID)
 		} else {
-			existing, _, err = s.ListBlocksFiltered("", nil, nil, &block.OrganizationID, true, 0, 0)
+			existing, _, err = s.ListBlocksFiltered("", nil, nil, &block.OrganizationID, true, "", nil, 0, 0)
 		}
 		if err != nil {
 			return status.Wrap(err, status.Internal)
@@ -432,6 +467,9 @@ func NewUpdateBlockUseCase(s store.Storer) usecase.Interactor {
 		output.EnvironmentID = block.EnvironmentID
 		output.OrganizationID = block.OrganizationID
 		output.PoolID = block.PoolID
+		output.Provider = block.Provider
+		output.ExternalID = block.ExternalID
+		output.ConnectionID = block.ConnectionID
 		return nil
 	})
 
@@ -441,7 +479,9 @@ func NewUpdateBlockUseCase(s store.Storer) usecase.Interactor {
 	return u
 }
 
-// DeleteBlock handler. Cascades: deletes all allocations in this block, then the block.
+// DeleteBlock handler. When the block is linked to a read-write integration with IPAM conflict resolution,
+// the block (and its allocations) are soft-deleted so the next sync will delete them in the cloud then remove the rows.
+// Otherwise cascades: deletes all allocations in this block, then the block.
 func NewDeleteBlockUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input getBlockInput, output *struct{}) error {
 		block, err := s.GetBlock(input.ID)
@@ -456,6 +496,25 @@ func NewDeleteBlockUseCase(s store.Storer) usecase.Interactor {
 			}
 			if userOrg := auth.UserOrgForAccess(ctx, user); userOrg != uuid.Nil && env.OrganizationID != userOrg {
 				return status.Wrap(errors.New("block not found"), status.NotFound)
+			}
+		}
+		// Soft-delete when block has an external ID and is linked to a read-write connection with IPAM conflict resolution.
+		if block.ConnectionID != nil && *block.ConnectionID != uuid.Nil && block.ExternalID != "" {
+			conn, err := s.GetCloudConnection(*block.ConnectionID)
+			if err == nil && conn.SyncMode == "read_write" && conn.ConflictResolution == "ipam" {
+				allocs, err := s.ListAllocations()
+				if err != nil {
+					return status.Wrap(err, status.Internal)
+				}
+				for _, a := range allocs {
+					if blockNamesMatch(a.Block.Name, block.Name) {
+						_ = s.SoftDeleteAllocation(a.Id)
+					}
+				}
+				if err := s.SoftDeleteBlock(input.ID); err != nil {
+					return status.Wrap(err, status.Internal)
+				}
+				return nil
 			}
 		}
 		allocs, err := s.ListAllocations()
@@ -537,7 +596,7 @@ func NewSuggestBlockCIDRUseCase(s store.Storer) usecase.Interactor {
 		}
 
 		orgID := auth.ResolveOrgID(ctx, user, uuid.Nil)
-		allocs, _, err := s.ListAllocationsFiltered("", block.Name, uuid.Nil, orgID, 0, 0)
+		allocs, _, err := s.ListAllocationsFiltered("", block.Name, uuid.Nil, orgID, "", nil, 0, 0)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}

@@ -1,6 +1,10 @@
 package handlers
 
-import "github.com/google/uuid"
+import (
+	"encoding/json"
+
+	"github.com/google/uuid"
+)
 
 // Environment Output Types
 type environmentOutput struct {
@@ -33,12 +37,16 @@ type environmentDetailOutput struct {
 
 // Pool Output Types
 type poolOutput struct {
-	ID             uuid.UUID `json:"id" format:"uuid"`
-	OrganizationID uuid.UUID `json:"organization_id" format:"uuid"`
-	EnvironmentID  uuid.UUID `json:"environment_id" format:"uuid"`
-	Name           string    `json:"name" minLength:"1" maxLength:"255"`
-	CIDR           string    `json:"cidr" minLength:"9" maxLength:"50"`
-	_              struct{}  `additionalProperties:"false"`
+	ID             uuid.UUID  `json:"id" format:"uuid"`
+	OrganizationID  uuid.UUID  `json:"organization_id" format:"uuid"`
+	EnvironmentID  uuid.UUID  `json:"environment_id" format:"uuid"`
+	Name           string     `json:"name" minLength:"1" maxLength:"255"`
+	CIDR           string     `json:"cidr" minLength:"9" maxLength:"50"`
+	Provider       string     `json:"provider,omitempty" minLength:"0" maxLength:"32"`        // "native", "aws", etc.; omitted if native
+	ExternalID     string     `json:"external_id,omitempty" minLength:"0" maxLength:"255"`   // provider resource ID
+	ConnectionID   *uuid.UUID `json:"connection_id,omitempty" format:"uuid"`                 // cloud connection used to sync
+	ParentPoolID   *uuid.UUID `json:"parent_pool_id,omitempty" format:"uuid"`                // for sub-pools (e.g. AWS IPAM nested pools)
+	_              struct{}   `additionalProperties:"false"`
 }
 
 type poolListOutput struct {
@@ -56,7 +64,10 @@ type blockOutput struct {
 	Available     string     `json:"available_ips"`
 	EnvironmentID  uuid.UUID  `json:"environment_id,omitempty" format:"uuid"`
 	OrganizationID uuid.UUID  `json:"organization_id,omitempty" format:"uuid"` // for orphan blocks
-	PoolID         *uuid.UUID `json:"pool_id,omitempty" format:"uuid"`        // optional
+	PoolID         *uuid.UUID `json:"pool_id,omitempty" format:"uuid"`          // optional
+	Provider       string     `json:"provider,omitempty" minLength:"0" maxLength:"32"`      // "native", "aws", etc.; omitted if native
+	ExternalID     string     `json:"external_id,omitempty" minLength:"0" maxLength:"255"`  // provider resource ID
+	ConnectionID   *uuid.UUID `json:"connection_id,omitempty" format:"uuid"`               // cloud connection used to sync
 	_              struct{}   `additionalProperties:"false"`
 }
 
@@ -77,11 +88,14 @@ type blockUsageOutput struct {
 
 // Allocation Output Types
 type allocationOutput struct {
-	Id        uuid.UUID `json:"id" format:"uuid"`
-	Name      string    `json:"name" minLength:"1" maxLength:"255"`
-	BlockName string    `json:"block_name" minLength:"1" maxLength:"255"`
-	CIDR      string    `json:"cidr" minLength:"9" maxLength:"50"`
-	_         struct{}  `additionalProperties:"false"`
+	Id           uuid.UUID  `json:"id" format:"uuid"`
+	Name         string     `json:"name" minLength:"1" maxLength:"255"`
+	BlockName    string     `json:"block_name" minLength:"1" maxLength:"255"`
+	CIDR         string     `json:"cidr" minLength:"9" maxLength:"50"`
+	Provider     string     `json:"provider,omitempty" maxLength:"32"`
+	ExternalID   string     `json:"external_id,omitempty" maxLength:"255"`
+	ConnectionID *uuid.UUID `json:"connection_id,omitempty" format:"uuid"`
+	_            struct{}   `additionalProperties:"false"`
 }
 
 type allocationListOutput struct {
@@ -103,4 +117,27 @@ type reservedBlockOutput struct {
 type reservedBlockListOutput struct {
 	ReservedBlocks []*reservedBlockOutput `json:"reserved_blocks"`
 	_              struct{}               `additionalProperties:"false"`
+}
+
+// Integration (cloud connection) output types
+type integrationOutput struct {
+	ID                  uuid.UUID       `json:"id" format:"uuid"`
+	OrganizationID      uuid.UUID       `json:"organization_id" format:"uuid"`
+	Provider            string          `json:"provider" minLength:"1" maxLength:"32"`
+	Name                string          `json:"name" minLength:"1" maxLength:"255"`
+	Config              json.RawMessage `json:"config"`
+	SyncIntervalMinutes int             `json:"sync_interval_minutes"` // 0=off; default 5
+	SyncMode            string          `json:"sync_mode"`               // "read_only" | "read_write"
+	ConflictResolution  string          `json:"conflict_resolution"`    // "cloud" | "ipam"
+	LastSyncAt          *string         `json:"last_sync_at,omitempty" format:"date-time"`
+	LastSyncStatus      *string         `json:"last_sync_status,omitempty"`
+	LastSyncError       *string         `json:"last_sync_error,omitempty"`
+	CreatedAt           string          `json:"created_at" format:"date-time"`
+	UpdatedAt           string          `json:"updated_at" format:"date-time"`
+	_                   struct{}        `additionalProperties:"false"`
+}
+
+type integrationListOutput struct {
+	Integrations []*integrationOutput `json:"integrations"`
+	_            struct{}             `additionalProperties:"false"`
 }

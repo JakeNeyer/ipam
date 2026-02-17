@@ -16,6 +16,7 @@
   import Signup from './routes/Signup.svelte'
   import Admin from './routes/Admin.svelte'
   import ReservedBlocks from './routes/ReservedBlocks.svelte'
+  import Integrations from './routes/Integrations.svelte'
   import SubnetCalculator from './routes/SubnetCalculator.svelte'
   import NetworkAdvisor from './routes/NetworkAdvisor.svelte'
   import Landing from './routes/Landing.svelte'
@@ -45,7 +46,7 @@
     routeBlockName = opts.block ?? null
     routeAllocationName = opts.allocation ?? null
     routeEnvironmentId = path === 'networks' ? null : environmentId
-    routePoolId = path === 'networks' && environmentId ? 'env:' + environmentId : (opts.pool ?? null)
+    routePoolId = path === 'networks' ? (opts.pool ?? (environmentId ? 'env:' + environmentId : null)) : null
     routeCreateEnv = opts.create === true
     routeCreateBlock = opts.createBlock === true
     routeCreateAllocation = opts.createAllocation === true
@@ -54,8 +55,9 @@
       window.location.hash = 'dashboard'
     } else if (path === 'networks') {
       const params = new URLSearchParams()
-      if (environmentId) params.set('pool', 'env:' + environmentId)
-      else if (opts.pool) params.set('pool', opts.pool)
+      if (environmentId) params.set('environment', String(environmentId))
+      if (opts.pool) params.set('pool', opts.pool)
+      else if (environmentId) params.set('pool', 'env:' + environmentId)
       if (opts.unused) params.set('unused', '1')
       if (opts.block) params.set('block', opts.block)
       if (opts.allocation) params.set('allocation', opts.allocation)
@@ -77,6 +79,8 @@
       window.location.hash = 'admin'
     } else if (path === 'reserved-blocks') {
       window.location.hash = 'reserved-blocks'
+    } else if (path === 'integrations') {
+      window.location.hash = 'integrations'
     } else if (path === 'subnet-calculator') {
       window.location.hash = 'subnet-calculator'
     } else if (path === 'network-advisor') {
@@ -125,13 +129,13 @@
       if (query) {
         const params = new URLSearchParams(query)
         if (path === 'networks') {
-          const envId = params.get('environment')
-          // Legacy: ?environment=id is represented as pool filter "Environment: X"
-          if (envId) routePoolId = 'env:' + envId
-          else {
-            const poolId = params.get('pool')
-            routePoolId = poolId || null
-          }
+          const envId = params.get('environment') || null
+          const poolId = params.get('pool') || null
+          routeEnvironmentId = envId
+          // Specific pool takes precedence; else legacy ?environment=id → "Environment: X" pool filter
+          if (poolId) routePoolId = poolId
+          else if (envId) routePoolId = 'env:' + envId
+          else routePoolId = null
           routeOrphanedOnly = params.get('orphaned') === '1' || params.get('orphaned') === 'true'
           routeUnusedOnly = params.get('unused') === '1' || params.get('unused') === 'true'
           const blockName = params.get('block')
@@ -159,6 +163,8 @@
       selectedOrgNameForGlobalAdmin.set(null)
     } else if (path === 'reserved-blocks') {
       route = 'reserved-blocks'
+    } else if (path === 'integrations') {
+      route = 'integrations'
     } else if (path === 'subnet-calculator') {
       route = 'subnet-calculator'
     } else if (path === 'network-advisor') {
@@ -186,6 +192,7 @@
     else if (path === 'docs') go('docs', null, { page: (e.detail && e.detail.page) || '' })
     else if (path === 'admin') go('admin')
     else if (path === 'reserved-blocks') go('reserved-blocks')
+    else if (path === 'integrations') go('integrations')
     else if (path === 'subnet-calculator') go('subnet-calculator')
     else if (path === 'network-advisor') go('network-advisor')
   }
@@ -341,6 +348,8 @@
         <Admin />
       {:else if route === 'reserved-blocks'}
         <ReservedBlocks />
+      {:else if route === 'integrations'}
+        <Integrations />
       {:else if route === 'subnet-calculator'}
         <SubnetCalculator />
       {:else if route === 'network-advisor'}

@@ -3,7 +3,7 @@
   import Icon from '@iconify/svelte'
   import '../lib/theme.js'
   import { listUsers, listTokens, deleteToken, listSignupInvites, revokeSignupInvite, updateUserRole, updateUserOrganization, deleteUser, listOrganizations, createOrganization, updateOrganization, deleteOrganization } from '../lib/api.js'
-  import { user, oauthEnabled } from '../lib/auth.js'
+  import { user, oauthEnabled, organizationsRefreshTrigger } from '../lib/auth.js'
   import ApiTokensModal from '../lib/ApiTokensModal.svelte'
   import AddUserModal from '../lib/AddUserModal.svelte'
   import SignupInviteModal from '../lib/SignupInviteModal.svelte'
@@ -275,6 +275,7 @@
     try {
       await createOrganization(name)
       await loadOrganizations()
+      organizationsRefreshTrigger.update((n) => n + 1)
       closeCreateOrgForm()
     } catch (e) {
       createOrgError = e?.message || 'Failed to create organization'
@@ -302,6 +303,7 @@
     try {
       const data = await updateOrganization(orgId, trimmed)
       organizations = organizations.map((o) => (o.id === orgId ? { ...o, name: data.organization?.name ?? trimmed, created_at: o.created_at } : o))
+      organizationsRefreshTrigger.update((n) => n + 1)
       cancelEditOrg()
     } catch (e) {
       organizationsError = e?.message || 'Failed to update organization'
@@ -324,6 +326,7 @@
     try {
       await deleteOrganization(orgId)
       organizations = organizations.filter((o) => o.id !== orgId)
+      organizationsRefreshTrigger.update((n) => n + 1)
     } catch (e) {
       organizationsError = e?.message || 'Failed to delete organization'
     } finally {

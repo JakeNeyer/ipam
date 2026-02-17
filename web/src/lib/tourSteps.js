@@ -28,6 +28,42 @@ export const tourSteps = [
     body: 'Browse blocks and allocations, filter by environment, and create new blocks or IP allocations.',
   },
   {
+    id: 'nav-network-advisor',
+    targetId: 'tour-nav-network-advisor',
+    title: 'Network Advisor',
+    body: 'Get AI-assisted suggestions for subnet sizing and placement.',
+  },
+  {
+    id: 'nav-subnet-calculator',
+    targetId: 'tour-nav-subnet-calculator',
+    title: 'Subnet calculator',
+    body: 'Calculate subnets, CIDR ranges, and IP availability.',
+  },
+  {
+    id: 'nav-reserved-blocks',
+    targetId: 'tour-nav-reserved-blocks',
+    title: 'Reserved blocks',
+    body: 'View and manage reserved CIDR blocks that are excluded from allocation (admin only).',
+  },
+  {
+    id: 'nav-integrations',
+    targetId: 'tour-nav-integrations',
+    title: 'Integrations',
+    body: 'Connect cloud providers to sync pools and blocks from AWS or other sources (admin only).',
+  },
+  {
+    id: 'nav-admin',
+    targetId: 'tour-nav-admin',
+    title: 'Admin',
+    body: 'Manage users, API tokens, organizations, and app settings (admin only).',
+  },
+  {
+    id: 'nav-global-admin-dashboard',
+    targetId: 'tour-nav-global-admin-dashboard',
+    title: 'Global Admin Dashboard',
+    body: 'Switch organizations and view cross-org overview (global admin only).',
+  },
+  {
     id: 'command-palette',
     targetId: 'tour-command-palette',
     title: 'Command palette',

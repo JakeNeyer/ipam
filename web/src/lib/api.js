@@ -88,20 +88,18 @@ export async function listEnvironments(opts = {}) {
 }
 
 /**
- * Create an environment. Requires an initial pool (CIDR range blocks in this environment can draw from).
+ * Create an environment. Pools are optional; use empty array for integration-only envs (pools added by cloud sync).
  * @param {string} name
- * @param {{ name: string, cidr: string }} initialPool - required pool name and CIDR for the environment
- * @param {{ name: string, cidr: string }[]} pools - At least one pool (name and cidr each required)
+ * @param {{ name: string, cidr: string }[]} pools - Zero or more pools (each needs name and cidr)
  * @param {string | null} [organizationId] - Global admin: create env in this org
  */
 export async function createEnvironment(name, pools, organizationId = null) {
-  if (!Array.isArray(pools) || pools.length === 0) {
-    throw new Error('At least one pool is required')
-  }
-  const poolList = pools.map((p) => {
-    if (!p || !p.name || !p.cidr) throw new Error('Each pool must have name and cidr')
-    return { name: p.name, cidr: p.cidr }
-  })
+  const poolList = Array.isArray(pools)
+    ? pools.map((p) => {
+        if (!p || !p.name || !p.cidr) throw new Error('Each pool must have name and cidr')
+        return { name: p.name, cidr: p.cidr }
+      })
+    : []
   const body = { name, pools: poolList }
   if (organizationId != null && organizationId !== '') body.organization_id = organizationId
   return post('/environments', body)
@@ -144,8 +142,10 @@ export async function listPoolsByOrganization(organizationId) {
   return { pools: data.pools ?? [] }
 }
 
-export async function createPool(environmentId, name, cidr) {
-  return post('/pools', { environment_id: environmentId, name, cidr })
+export async function createPool(environmentId, name, cidr, parentPoolId = null) {
+  const body = { environment_id: environmentId, name, cidr }
+  if (parentPoolId != null && parentPoolId !== '') body.parent_pool_id = parentPoolId
+  return post('/pools', body)
 }
 
 export async function getPool(id) {
@@ -226,7 +226,7 @@ export async function suggestPoolBlockCidr(poolId, prefix) {
 }
 
 /**
- * @param {{ limit?: number, offset?: number, name?: string, block_name?: string, environment_id?: string, organization_id?: string }} opts
+ * @param {{ limit?: number, offset?: number, name?: string, block_name?: string, environment_id?: string, organization_id?: string, provider?: string, connection_id?: string }} opts
  * @returns {{ allocations: Array, total: number }}
  */
 export async function listAllocations(opts = {}) {
@@ -236,6 +236,8 @@ export async function listAllocations(opts = {}) {
   if (opts.block_name != null && opts.block_name !== '') params.block_name = opts.block_name
   if (opts.environment_id != null && opts.environment_id !== '') params.environment_id = opts.environment_id
   if (opts.organization_id != null && opts.organization_id !== '') params.organization_id = opts.organization_id
+  if (opts.provider != null && opts.provider !== '') params.provider = opts.provider
+  if (opts.connection_id != null && opts.connection_id !== '') params.connection_id = opts.connection_id
   const data = await get('/allocations', params)
   return { allocations: data.allocations ?? [], total: data.total ?? 0 }
 }
@@ -382,6 +384,92 @@ export async function deleteReservedBlock(id) {
  */
 export async function updateReservedBlock(id, name) {
   return put('/reserved-blocks/' + encodeURIComponent(String(id)), { name: String(name ?? '') })
+}
+
+/**
+ * List cloud integrations (connections) for the organization.
+ * @param {{ organization_id?: string }} opts - optional; global admin can pass organization_id
+ * @returns {{ integrations: Array<{ id: string, organization_id: string, provider: string, name: string, config: object, last_sync_at?: string, last_sync_status?: string, last_sync_error?: string, created_at: string, updated_at: string }> }}
+ */
+export async function listIntegrations(opts = {}) {
+  const params = {}
+  if (opts.organization_id != null && opts.organization_id !== '') params.organization_id = opts.organization_id
+  const data = await (Object.keys(params).length ? get('/integrations', params) : get('/integrations'))
+  return { integrations: data.integrations ?? [] }
+}
+
+/**
+ * Create a cloud integration (connection). Config is provider-specific (e.g. AWS: region, ipam_scope_id, environment_id).
+ * organizationId is optional for org-scoped users (server uses auth); required for global admin (select org first).
+ * syncIntervalMinutes: 0 = off; 1–1440 = minutes; default 5.
+ * syncMode: "read_only" | "read_write"; default "read_only".
+ * conflictResolution: "cloud" | "ipam"; default "cloud".
+ * @param {string | null} [organizationId] - UUID
+ * @param {string} provider - e.g. "aws"
+ * @param {string} name - user-facing label
+ * @param {object} config - provider-specific config
+ * @param {number | null} [syncIntervalMinutes=5] - 0 = off; default 5
+ * @param {string | null} [syncMode='read_only'] - "read_only" | "read_write"
+ * @param {string | null} [conflictResolution='cloud'] - "cloud" | "ipam"
+ */
+export async function createIntegration(organizationId, provider, name, config = {}, syncIntervalMinutes = 5, syncMode = 'read_only', conflictResolution = 'cloud') {
+  const body = { provider, name, config }
+  if (organizationId != null && String(organizationId).trim() !== '') {
+    body.organization_id = organizationId
+  }
+  if (syncIntervalMinutes != null && typeof syncIntervalMinutes === 'number') {
+    body.sync_interval_minutes = Math.max(0, Math.min(1440, Math.floor(syncIntervalMinutes)))
+  }
+  if (syncMode === 'read_write' || syncMode === 'read_only') {
+    body.sync_mode = syncMode
+  }
+  if (conflictResolution === 'cloud' || conflictResolution === 'ipam') {
+    body.conflict_resolution = conflictResolution
+  }
+  return post('/integrations', body)
+}
+
+/**
+ * Get a cloud integration by ID.
+ */
+export async function getIntegration(id) {
+  return get('/integrations/' + encodeURIComponent(String(id)))
+}
+
+/**
+ * Update a cloud integration (name, config, sync_interval_minutes, sync_mode, conflict_resolution).
+ * Omit optional params to leave unchanged.
+ * @param {number | null} [syncIntervalMinutes] - 0 = off; 1–1440 = minutes
+ * @param {string | null} [syncMode] - "read_only" | "read_write"
+ * @param {string | null} [conflictResolution] - "cloud" | "ipam"
+ */
+export async function updateIntegration(id, name, config, syncIntervalMinutes, syncMode, conflictResolution) {
+  const body = { name }
+  if (config !== undefined) body.config = config
+  if (syncIntervalMinutes !== undefined && syncIntervalMinutes !== null && typeof syncIntervalMinutes === 'number') {
+    body.sync_interval_minutes = Math.max(0, Math.min(1440, Math.floor(syncIntervalMinutes)))
+  }
+  if (syncMode === 'read_write' || syncMode === 'read_only') {
+    body.sync_mode = syncMode
+  }
+  if (conflictResolution === 'cloud' || conflictResolution === 'ipam') {
+    body.conflict_resolution = conflictResolution
+  }
+  return put('/integrations/' + encodeURIComponent(String(id)), body)
+}
+
+/**
+ * Delete a cloud integration.
+ */
+export async function deleteIntegration(id) {
+  return del('/integrations/' + encodeURIComponent(String(id)))
+}
+
+/**
+ * Trigger sync for a cloud integration (pools + blocks). Returns updated integration with last_sync_*.
+ */
+export async function syncIntegration(id) {
+  return post('/integrations/' + encodeURIComponent(String(id)) + '/sync', {})
 }
 
 /**

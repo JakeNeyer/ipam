@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/JakeNeyer/ipam/network"
 	"github.com/JakeNeyer/ipam/server/auth"
@@ -19,9 +20,6 @@ func NewCreateEnvironmentUseCase(s store.Storer) usecase.Interactor {
 		if input.Name == "" {
 			return status.Wrap(errors.New("name is required"), status.InvalidArgument)
 		}
-		if len(input.Pools) == 0 {
-			return status.Wrap(errors.New("at least one pool is required"), status.InvalidArgument)
-		}
 		user := auth.UserFromContext(ctx)
 		if user == nil {
 			return status.Wrap(errors.New("unauthorized"), status.Unauthenticated)
@@ -32,44 +30,45 @@ func NewCreateEnvironmentUseCase(s store.Storer) usecase.Interactor {
 		}
 		orgID := *orgIDPtr
 
-		for i, p := range input.Pools {
-			if p.Name == "" || p.CIDR == "" {
-				return status.Wrap(fmt.Errorf("pool at index %d: name and cidr are required", i), status.InvalidArgument)
-			}
-			if valid := network.ValidateCIDR(p.CIDR); !valid {
-				return status.Wrap(fmt.Errorf("pool %q: invalid CIDR format", p.Name), status.InvalidArgument)
-			}
-		}
-		for i := 0; i < len(input.Pools); i++ {
-			for j := i + 1; j < len(input.Pools); j++ {
-				overlap, err := network.Overlaps(input.Pools[i].CIDR, input.Pools[j].CIDR)
-				if err != nil {
-					return status.Wrap(err, status.InvalidArgument)
+		if len(input.Pools) > 0 {
+			for i, p := range input.Pools {
+				if p.Name == "" || p.CIDR == "" {
+					return status.Wrap(fmt.Errorf("pool at index %d: name and cidr are required", i), status.InvalidArgument)
 				}
-				if overlap {
-					return status.Wrap(
-						fmt.Errorf("pools %q and %q overlap", input.Pools[i].Name, input.Pools[j].Name),
-						status.InvalidArgument,
-					)
+				if valid := network.ValidateCIDR(p.CIDR); !valid {
+					return status.Wrap(fmt.Errorf("pool %q: invalid CIDR format", p.Name), status.InvalidArgument)
 				}
 			}
-		}
-
-		existingPools, err := s.ListPoolsByOrganization(orgID)
-		if err != nil {
-			return status.Wrap(err, status.Internal)
-		}
-		for _, newPool := range input.Pools {
-			for _, other := range existingPools {
-				overlap, err := network.Overlaps(newPool.CIDR, other.CIDR)
-				if err != nil {
-					return status.Wrap(err, status.Internal)
+			for i := 0; i < len(input.Pools); i++ {
+				for j := i + 1; j < len(input.Pools); j++ {
+					overlap, err := network.Overlaps(input.Pools[i].CIDR, input.Pools[j].CIDR)
+					if err != nil {
+						return status.Wrap(err, status.InvalidArgument)
+					}
+					if overlap {
+						return status.Wrap(
+							fmt.Errorf("pools %q and %q overlap", input.Pools[i].Name, input.Pools[j].Name),
+							status.InvalidArgument,
+						)
+					}
 				}
-				if overlap {
-					return status.Wrap(
-						fmt.Errorf("pool CIDR %s overlaps with existing pool %q (%s) in this organization", newPool.CIDR, other.Name, other.CIDR),
-						status.InvalidArgument,
-					)
+			}
+			existingPools, err := s.ListPoolsByOrganization(orgID)
+			if err != nil {
+				return status.Wrap(err, status.Internal)
+			}
+			for _, newPool := range input.Pools {
+				for _, other := range existingPools {
+					overlap, err := network.Overlaps(newPool.CIDR, other.CIDR)
+					if err != nil {
+						return status.Wrap(err, status.Internal)
+					}
+					if overlap {
+						return status.Wrap(
+							fmt.Errorf("pool CIDR %s overlaps with existing pool %q (%s) in this organization", newPool.CIDR, other.Name, other.CIDR),
+							status.InvalidArgument,
+						)
+					}
 				}
 			}
 		}
@@ -190,6 +189,9 @@ func NewGetEnvironmentUseCase(s store.Storer) usecase.Interactor {
 				EnvironmentID:  b.EnvironmentID,
 				OrganizationID: blockOrgID,
 				PoolID:         b.PoolID,
+				Provider:       b.Provider,
+				ExternalID:     b.ExternalID,
+				ConnectionID:   b.ConnectionID,
 			}
 		}
 		return nil
@@ -204,6 +206,14 @@ func NewGetEnvironmentUseCase(s store.Storer) usecase.Interactor {
 // UpdateEnvironment handler
 func NewUpdateEnvironmentUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input updateEnvironmentInput, output *environmentOutput) error {
+		name := strings.TrimSpace(input.Name)
+		if name == "" {
+			return status.Wrap(errors.New("name is required"), status.InvalidArgument)
+		}
+		if len(name) > 255 {
+			return status.Wrap(errors.New("name must be at most 255 characters"), status.InvalidArgument)
+		}
+
 		env, err := s.GetEnvironment(input.ID)
 		if err != nil {
 			return status.Wrap(errors.New("environment not found"), status.NotFound)
@@ -213,7 +223,7 @@ func NewUpdateEnvironmentUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(errors.New("environment not found"), status.NotFound)
 		}
 
-		env.Name = input.Name
+		env.Name = name
 		if err := s.UpdateEnvironment(input.ID, env); err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -225,7 +235,7 @@ func NewUpdateEnvironmentUseCase(s store.Storer) usecase.Interactor {
 
 	u.SetTitle("Update Environment")
 	u.SetDescription("Updates an existing environment")
-	u.SetExpectedErrors(status.NotFound, status.Internal)
+	u.SetExpectedErrors(status.InvalidArgument, status.NotFound, status.Internal)
 	return u
 }
 

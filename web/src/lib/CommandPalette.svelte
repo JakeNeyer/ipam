@@ -23,7 +23,12 @@
   ]
 
   $: baseCommands = currentUser?.role === 'admin'
-    ? [...STATIC_COMMANDS, { type: 'nav', id: 'reserved-blocks', label: 'Go to Reserved blocks', keywords: 'reserved blocks blacklist' }, { type: 'nav', id: 'admin', label: 'Go to Admin', keywords: 'admin users' }]
+    ? [
+        ...STATIC_COMMANDS,
+        { type: 'nav', id: 'reserved-blocks', label: 'Go to Reserved blocks', keywords: 'reserved blocks blacklist' },
+        { type: 'nav', id: 'integrations', label: 'Go to Integrations', keywords: 'integrations cloud aws sync' },
+        { type: 'nav', id: 'admin', label: 'Go to Admin', keywords: 'admin users' },
+      ]
     : STATIC_COMMANDS
 
   function matchCommand(c, q) {
@@ -247,7 +252,7 @@
         {/if}
       </div>
       <div class="palette-footer">
-        <span class="palette-footer-hint">Search: environments, pools, blocks, allocations</span>
+        <span class="palette-footer-hint">Search: environments, pools, blocks, allocations{currentUser?.role === 'admin' ? ', integrations' : ''}</span>
         <span class="palette-footer-keys">
           <kbd><Icon icon="lucide:chevron-up" width="0.75em" height="0.75em" inline /></kbd>
           <kbd><Icon icon="lucide:chevron-down" width="0.75em" height="0.75em" inline /></kbd>
