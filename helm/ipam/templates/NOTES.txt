@@ -1,0 +1,13 @@
+1. Get the application URL:
+{{- if .Values.ingress.enabled }}
+{{- range $host := .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ $host.host }}{{ (index $host.paths 0).path }}
+{{- end }}
+{{- else }}
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "ipam.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+  Then open http://localhost:{{ .Values.service.port }}
+{{- end }}
+
+2. API docs (Swagger): add /docs to the URL above.
+
+3. For production, set DATABASE_URL via existingSecret or database.url. Without a database, IPAM uses an in-memory store (data is lost on restart).

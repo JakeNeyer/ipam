@@ -1,0 +1,117 @@
+# Default values for ipam.
+# Deploy IPAM into Kubernetes; requires PostgreSQL when not using in-memory store.
+
+replicaCount: 1
+
+image:
+  repository: ipam
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Override the app's default port (container listens on this)
+service:
+  type: ClusterIP
+  port: 8080
+
+# Optional: use existing secret for DATABASE_URL and/or OAuth (keys: database-url, github-client-id, github-client-secret, initial-admin-email, initial-admin-password)
+existingSecret: ""
+
+# In-memory store if DATABASE_URL is not set (not recommended for production)
+# Set existingSecret, database.url, or postgresql.enabled to use PostgreSQL
+database:
+  # url: "postgresql://user:password@host:5432/dbname?sslmode=disable"
+
+# Optional: deploy PostgreSQL as a subchart (enabled = install Bitnami PostgreSQL and wire DATABASE_URL)
+# When enabled, IPAM uses this instance unless existingSecret or database.url is set.
+postgresql:
+  enabled: false
+  auth:
+    postgresPassword: ""   # required when enabled; used for "postgres" user
+    username: ""           # optional custom user (else postgres)
+    password: ""           # required if username is set
+    database: ipam          # database name to create
+  primary:
+    persistence:
+      enabled: true
+      size: 8Gi
+
+# Server config (env)
+config:
+  # Public URL of the frontend (OAuth redirects, signup links). Leave empty to serve static from app.
+  appOrigin: ""
+  # Enable OpenTelemetry (stdout traces)
+  enableOtel: false
+  # Initial admin (only created when no users exist). Prefer existingSecret for passwords.
+  initialAdminEmail: ""
+  initialAdminPassword: ""
+  # GitHub OAuth. Prefer existingSecret for client secret.
+  enableGitHubOAuth: false
+  githubClientId: ""
+  githubClientSecret: ""
+
+# Ingress (optional)
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: ipam.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Liveness/readiness
+livenessProbe:
+  httpGet:
+    path: /docs
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+readinessProbe:
+  httpGet:
+    path: /docs
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  timeoutSeconds: 3
+
+# Autoscaling (HPA)
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+
+# Node selector, tolerations, affinity
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Pod security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  fsGroup: 65534
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop:
+      - ALL
+
+# Service account (optional)
+serviceAccount:
+  create: false
+  name: ""
+  annotations: {}

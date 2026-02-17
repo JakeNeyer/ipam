@@ -1,0 +1,112 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ipam.fullname" . }}
+  labels:
+    {{- include "ipam.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "ipam.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ipam.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          env:
+            - name: PORT
+              value: {{ .Values.service.port | quote }}
+            {{- if .Values.config.appOrigin }}
+            - name: APP_ORIGIN
+              value: {{ .Values.config.appOrigin | quote }}
+            {{- end }}
+            - name: ENABLE_OTEL
+              value: {{ .Values.config.enableOtel | quote }}
+            {{- if .Values.config.initialAdminEmail }}
+            - name: INITIAL_ADMIN_EMAIL
+              value: {{ .Values.config.initialAdminEmail | quote }}
+            {{- end }}
+            {{- if .Values.config.enableGitHubOAuth }}
+            - name: ENABLE_GITHUB_OAUTH
+              value: "true"
+            {{- end }}
+            {{- if .Values.config.githubClientId }}
+            - name: GITHUB_CLIENT_ID
+              value: {{ .Values.config.githubClientId | quote }}
+            {{- end }}
+            {{- if .Values.existingSecret }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret }}
+                  key: database-url
+                  optional: true
+            - name: INITIAL_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret }}
+                  key: initial-admin-password
+                  optional: true
+            - name: GITHUB_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret }}
+                  key: github-client-secret
+                  optional: true
+            {{- else if and .Values.database .Values.database.url }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ipam.fullname" . }}-db
+                  key: url
+            {{- else if and .Values.postgresql.enabled (not .Values.existingSecret) (not (and .Values.database .Values.database.url)) }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ipam.fullname" . }}-postgresql-url
+                  key: url
+            {{- end }}
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.serviceAccount.create }}
+      serviceAccountName: {{ include "ipam.serviceAccountName" . }}
+      {{- end }}

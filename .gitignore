@@ -23,6 +23,9 @@ Thumbs.db
 *.swp
 *~
 
+# Helm dependency build output
+helm/**/charts/
+
 # Terraform (covered per-directory too)
 *.tfstate
 *.tfstate.*
