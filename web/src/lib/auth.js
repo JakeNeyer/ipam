@@ -37,6 +37,13 @@ function setPersistedSelectedOrg(id, name) {
 }
 
 /**
+ * Incremented when organizations list changes (create/update/delete on Admin page).
+ * Nav subscribes and refetches organizations when this changes so the org dropdown updates.
+ * @type {import('svelte/store').Writable<number>}
+ */
+export const organizationsRefreshTrigger = writable(0)
+
+/**
  * Selected organization ID for global admin "switch org" context.
  * When set, list/create calls scope to this org. When null, global admin sees all orgs.
  * Persisted so it survives page refresh.

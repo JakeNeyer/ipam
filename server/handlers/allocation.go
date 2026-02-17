@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/JakeNeyer/ipam/internal/integrations"
 	"github.com/JakeNeyer/ipam/network"
 	"github.com/JakeNeyer/ipam/server/auth"
 	"github.com/JakeNeyer/ipam/store"
@@ -34,7 +35,7 @@ func NewCreateAllocationUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(errors.New("unauthorized"), status.Unauthenticated)
 		}
 		orgID := auth.ResolveOrgID(ctx, user, uuid.Nil)
-		blocks, _, err := s.ListBlocksFiltered(input.BlockName, nil, nil, orgID, false, 0, 0)
+		blocks, _, err := s.ListBlocksFiltered(input.BlockName, nil, nil, orgID, false, "", nil, 0, 0)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -63,7 +64,7 @@ func NewCreateAllocationUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(errors.New("allocation CIDR must fall within the parent block's CIDR range"), status.InvalidArgument)
 		}
 
-		allAllocs, _, err := s.ListAllocationsFiltered("", input.BlockName, uuid.Nil, orgID, 0, 0)
+		allAllocs, _, err := s.ListAllocationsFiltered("", input.BlockName, uuid.Nil, orgID, "", nil, 0, 0)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -101,6 +102,24 @@ func NewCreateAllocationUseCase(s store.Storer) usecase.Interactor {
 			},
 		}
 
+		if parentBlock.ConnectionID != nil && parentBlock.ExternalID != "" {
+			conn, err := s.GetCloudConnection(*parentBlock.ConnectionID)
+			if err == nil && conn.SyncMode == "read_write" {
+				prov := integrations.Get(conn.Provider)
+				if prov != nil {
+					if pushProv, ok := prov.(integrations.PushProvider); ok && pushProv.SupportsPush() {
+						extID, err := pushProv.CreateAllocationInCloud(ctx, conn, parentBlock.ExternalID, allocation)
+						if err != nil {
+							return status.Wrap(fmt.Errorf("push allocation to cloud: %w", err), status.Internal)
+						}
+						allocation.Provider = conn.Provider
+						allocation.ExternalID = extID
+						allocation.ConnectionID = parentBlock.ConnectionID
+					}
+				}
+			}
+		}
+
 		if err := s.CreateAllocation(id, allocation); err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -109,6 +128,9 @@ func NewCreateAllocationUseCase(s store.Storer) usecase.Interactor {
 		output.Name = allocation.Name
 		output.BlockName = allocation.Block.Name
 		output.CIDR = allocation.Block.CIDR
+		output.Provider = allocation.Provider
+		output.ExternalID = allocation.ExternalID
+		output.ConnectionID = allocation.ConnectionID
 		return nil
 	})
 
@@ -133,7 +155,7 @@ func NewAutoAllocateUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(errors.New("unauthorized"), status.Unauthenticated)
 		}
 		orgID := auth.ResolveOrgID(ctx, user, uuid.Nil)
-		blocks, _, err := s.ListBlocksFiltered(input.BlockName, nil, nil, orgID, false, 0, 0)
+		blocks, _, err := s.ListBlocksFiltered(input.BlockName, nil, nil, orgID, false, "", nil, 0, 0)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -148,7 +170,7 @@ func NewAutoAllocateUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(errors.New("block not found"), status.NotFound)
 		}
 
-		allAllocs, _, err := s.ListAllocationsFiltered("", input.BlockName, uuid.Nil, orgID, 0, 0)
+		allAllocs, _, err := s.ListAllocationsFiltered("", input.BlockName, uuid.Nil, orgID, "", nil, 0, 0)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -191,6 +213,24 @@ func NewAutoAllocateUseCase(s store.Storer) usecase.Interactor {
 			},
 		}
 
+		if parentBlock.ConnectionID != nil && parentBlock.ExternalID != "" {
+			conn, err := s.GetCloudConnection(*parentBlock.ConnectionID)
+			if err == nil && conn.SyncMode == "read_write" {
+				prov := integrations.Get(conn.Provider)
+				if prov != nil {
+					if pushProv, ok := prov.(integrations.PushProvider); ok && pushProv.SupportsPush() {
+						extID, err := pushProv.CreateAllocationInCloud(ctx, conn, parentBlock.ExternalID, allocation)
+						if err != nil {
+							return status.Wrap(fmt.Errorf("push allocation to cloud: %w", err), status.Internal)
+						}
+						allocation.Provider = conn.Provider
+						allocation.ExternalID = extID
+						allocation.ConnectionID = parentBlock.ConnectionID
+					}
+				}
+			}
+		}
+
 		if err := s.CreateAllocation(id, allocation); err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -199,6 +239,9 @@ func NewAutoAllocateUseCase(s store.Storer) usecase.Interactor {
 		output.Name = allocation.Name
 		output.BlockName = allocation.Block.Name
 		output.CIDR = allocation.Block.CIDR
+		output.Provider = allocation.Provider
+		output.ExternalID = allocation.ExternalID
+		output.ConnectionID = allocation.ConnectionID
 		return nil
 	})
 
@@ -235,7 +278,11 @@ func NewListAllocationsUseCase(s store.Storer) usecase.Interactor {
 		if offset < 0 {
 			offset = 0
 		}
-		allocations, total, err := s.ListAllocationsFiltered(input.Name, input.BlockName, input.EnvironmentID, orgID, limit, offset)
+		var connectionID *uuid.UUID
+		if input.ConnectionID != uuid.Nil {
+			connectionID = &input.ConnectionID
+		}
+		allocations, total, err := s.ListAllocationsFiltered(input.Name, input.BlockName, input.EnvironmentID, orgID, input.Provider, connectionID, limit, offset)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -243,10 +290,13 @@ func NewListAllocationsUseCase(s store.Storer) usecase.Interactor {
 		output.Allocations = make([]*allocationOutput, len(allocations))
 		for i, alloc := range allocations {
 			output.Allocations[i] = &allocationOutput{
-				Id:        alloc.Id,
-				Name:      alloc.Name,
-				BlockName: alloc.Block.Name,
-				CIDR:      alloc.Block.CIDR,
+				Id:           alloc.Id,
+				Name:         alloc.Name,
+				BlockName:    alloc.Block.Name,
+				CIDR:         alloc.Block.CIDR,
+				Provider:     alloc.Provider,
+				ExternalID:   alloc.ExternalID,
+				ConnectionID: alloc.ConnectionID,
 			}
 		}
 		return nil
@@ -263,7 +313,7 @@ func allocationInOrg(s store.Storer, orgID uuid.UUID, alloc *network.Allocation)
 	if orgID == uuid.Nil {
 		return true
 	}
-	blocks, _, err := s.ListBlocksFiltered(strings.TrimSpace(alloc.Block.Name), nil, nil, &orgID, false, 1, 0)
+	blocks, _, err := s.ListBlocksFiltered(strings.TrimSpace(alloc.Block.Name), nil, nil, &orgID, false, "", nil, 1, 0)
 	if err != nil || len(blocks) == 0 {
 		return false
 	}
@@ -300,6 +350,9 @@ func NewGetAllocationUseCase(s store.Storer) usecase.Interactor {
 		output.Name = alloc.Name
 		output.BlockName = alloc.Block.Name
 		output.CIDR = alloc.Block.CIDR
+		output.Provider = alloc.Provider
+		output.ExternalID = alloc.ExternalID
+		output.ConnectionID = alloc.ConnectionID
 		return nil
 	})
 
@@ -324,7 +377,7 @@ func NewUpdateAllocationUseCase(s store.Storer) usecase.Interactor {
 		alloc.Name = input.Name
 
 		orgID := auth.ResolveOrgID(ctx, user, uuid.Nil)
-		allAllocs, _, err := s.ListAllocationsFiltered("", alloc.Block.Name, uuid.Nil, orgID, 0, 0)
+		allAllocs, _, err := s.ListAllocationsFiltered("", alloc.Block.Name, uuid.Nil, orgID, "", nil, 0, 0)
 		if err != nil {
 			return status.Wrap(err, status.Internal)
 		}
@@ -355,6 +408,9 @@ func NewUpdateAllocationUseCase(s store.Storer) usecase.Interactor {
 		output.Name = alloc.Name
 		output.BlockName = alloc.Block.Name
 		output.CIDR = alloc.Block.CIDR
+		output.Provider = alloc.Provider
+		output.ExternalID = alloc.ExternalID
+		output.ConnectionID = alloc.ConnectionID
 		return nil
 	})
 
@@ -364,7 +420,8 @@ func NewUpdateAllocationUseCase(s store.Storer) usecase.Interactor {
 	return u
 }
 
-// DeleteAllocation handler
+// DeleteAllocation handler. When the allocation is linked to a read-write integration with IPAM conflict resolution,
+// the allocation is soft-deleted so the next sync will delete it in the cloud then remove the row.
 func NewDeleteAllocationUseCase(s store.Storer) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input struct {
 		Id uuid.UUID `path:"id"`
@@ -376,6 +433,16 @@ func NewDeleteAllocationUseCase(s store.Storer) usecase.Interactor {
 		user := auth.UserFromContext(ctx)
 		if user != nil && !allocationInEffectiveOrg(ctx, s, user, alloc) {
 			return status.Wrap(errors.New("allocation not found"), status.NotFound)
+		}
+		// Soft-delete when allocation has an external ID and is linked to a read-write connection with IPAM conflict resolution.
+		if alloc.ConnectionID != nil && *alloc.ConnectionID != uuid.Nil && alloc.ExternalID != "" {
+			conn, err := s.GetCloudConnection(*alloc.ConnectionID)
+			if err == nil && conn.SyncMode == "read_write" && conn.ConflictResolution == "ipam" {
+				if err := s.SoftDeleteAllocation(input.Id); err != nil {
+					return status.Wrap(err, status.Internal)
+				}
+				return nil
+			}
 		}
 		if err := s.DeleteAllocation(input.Id); err != nil {
 			return status.Wrap(errors.New("allocation not found"), status.NotFound)

@@ -4,8 +4,10 @@
   import Icon from '@iconify/svelte'
   import ErrorModal from '../lib/ErrorModal.svelte'
   import { cidrRange } from '../lib/cidr.js'
-  import { formatBlockCount } from '../lib/blockCount.js'
+  import { formatBlockCount, compareBlockCount } from '../lib/blockCount.js'
+  import { poolUsedIPs, poolUtilizationPercent } from '../lib/poolUsage.js'
   import { user, selectedOrgForGlobalAdmin, isGlobalAdmin } from '../lib/auth.js'
+  import SearchableSelect from '../lib/SearchableSelect.svelte'
   import { listEnvironments, listAllocations, listPools, createEnvironment, createPool, updateEnvironment, updatePool, deleteEnvironment, deletePool, getEnvironment } from '../lib/api.js'
 
   export let openCreateFromQuery = false
@@ -46,6 +48,7 @@
   let showAddPool = false
   let newPoolName = ''
   let newPoolCidr = ''
+  let newPoolParentId = ''
   let newPoolSubmitting = false
   let newPoolError = ''
   let editingPoolId = null
@@ -200,6 +203,47 @@
 
   $: blocksWithoutPool = expandedEnvBlocks.filter((b) => !b.pool_id)
 
+  /** Order pools parent-first then children (for hierarchy display). */
+  /** Nesting depth of a pool (0 = root, 1 = child of root, 2 = grandchild, …). */
+  function getPoolDepth(pool, poolList) {
+    if (!pool || !poolList) return 0
+    let d = 0
+    let p = pool
+    const idMatch = (a, b) => a != null && b != null && String(a).toLowerCase() === String(b).toLowerCase()
+    while (p && p.parent_pool_id != null && String(p.parent_pool_id).trim() !== '') {
+      const parent = poolList.find((x) => idMatch(x.id, p.parent_pool_id))
+      if (!parent) break
+      d += 1
+      p = parent
+    }
+    return d
+  }
+  function sortPoolsByHierarchy(poolList) {
+    if (!poolList.length) return []
+    const id = (p) => String(p.id).toLowerCase()
+    const parentId = (p) => (p.parent_pool_id != null && String(p.parent_pool_id).trim() !== '') ? String(p.parent_pool_id).toLowerCase() : null
+    const byId = new Map(poolList.map((p) => [id(p), p]))
+    const childrenMap = new Map()
+    poolList.forEach((p) => {
+      const pid = parentId(p)
+      if (!pid || !byId.has(pid)) return
+      const list = childrenMap.get(pid) || []
+      list.push(p)
+      childrenMap.set(pid, list)
+    })
+    childrenMap.forEach((list) => list.sort((a, b) => (a.name || '').localeCompare(b.name || '')))
+    const result = []
+    function visit(pool) {
+      result.push(pool)
+      ;(childrenMap.get(id(pool)) || []).forEach(visit)
+    }
+    const roots = poolList.filter((p) => !parentId(p) || !byId.has(parentId(p)))
+    roots.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+    roots.forEach(visit)
+    return result
+  }
+  $: expandedEnvPoolsOrdered = sortPoolsByHierarchy(expandedEnvPools)
+
   function togglePoolRow(poolId) {
     if (editingPoolId != null) return
     expandedPoolId = expandedPoolId === poolId ? null : poolId
@@ -329,6 +373,7 @@
     showAddPool = true
     newPoolName = ''
     newPoolCidr = ''
+    newPoolParentId = ''
     newPoolError = ''
   }
 
@@ -343,9 +388,10 @@
     newPoolSubmitting = true
     newPoolError = ''
     try {
-      await createPool(expandedEnvId, name, cidr)
+      await createPool(expandedEnvId, name, cidr, newPoolParentId?.trim() || null)
       newPoolName = ''
       newPoolCidr = ''
+      newPoolParentId = ''
       showAddPool = false
       await loadPoolsForExpandedEnv()
     } catch (e) {
@@ -578,9 +624,20 @@
                     <p class="summary-desc">Pools define the CIDR ranges that network blocks in this environment can draw from.</p>
                     {#if showAddPool}
                       <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-                      <div class="form-card-inline" on:click|stopPropagation on:keydown|stopPropagation>
+                      <div class="form-card-inline" role="group" aria-label="Add pool form" on:click|stopPropagation on:keydown|stopPropagation>
                         <form on:submit|preventDefault={handleAddPool}>
                           <div class="form-row">
+                            <div class="add-pool-parent-label">
+                              <span>Parent pool (optional)</span>
+                              <SearchableSelect
+                                options={[
+                                  { value: '', label: '— None (top-level) —' },
+                                  ...expandedEnvPoolsOrdered.map((p) => ({ value: String(p.id), label: `${p.name} (${p.cidr || '—'})` }))
+                                ]}
+                                bind:value={newPoolParentId}
+                                placeholder="Select parent for child pool"
+                              />
+                            </div>
                             <input type="text" bind:value={newPoolName} placeholder="Pool name" disabled={newPoolSubmitting} />
                             <input type="text" bind:value={newPoolCidr} placeholder="e.g. 10.0.0.0/8" disabled={newPoolSubmitting} />
                             <div class="inline-actions">
@@ -590,25 +647,32 @@
                               </button>
                             </div>
                           </div>
+                          {#if newPoolParentId && expandedEnvPoolsOrdered.find((p) => String(p.id) === newPoolParentId)}
+                            <p class="form-hint add-pool-hint" role="status">Child pool CIDR must be contained in the parent pool's CIDR.</p>
+                          {/if}
                           {#if newPoolError}
                             <p class="form-error">{newPoolError}</p>
                           {/if}
                         </form>
                       </div>
                     {/if}
-                    {#if !showAddPool || expandedEnvPools.length > 0}
+                    {#if !showAddPool || expandedEnvPoolsOrdered.length > 0}
                     <div class="pools-list-wrap">
-                    {#if expandedEnvPools.length === 0 && !showAddPool}
+                    {#if expandedEnvPoolsOrdered.length === 0 && !showAddPool}
                       <p class="summary-empty">No pools yet. Add a pool to define a CIDR range for blocks.</p>
-                    {:else if expandedEnvPools.length > 0}
+                    {:else if expandedEnvPoolsOrdered.length > 0}
                       <p class="summary-desc summary-desc-inlist">Click a pool to show its network blocks; click a block to show allocations.</p>
                       <ul class="hierarchy-list pool-list">
-                        {#each expandedEnvPools as pool}
+                        {#each expandedEnvPoolsOrdered as pool}
                           {@const poolBlocks = blocksForPool(pool.id)}
-                          <li class="pool-node">
+                          {@const poolDepth = getPoolDepth(pool, expandedEnvPoolsOrdered)}
+                          {@const isChildPool = poolDepth > 0}
+                          {@const used = poolUsedIPs(pool, expandedEnvPoolsOrdered, expandedEnvBlocks)}
+                          {@const pct = poolUtilizationPercent(pool, expandedEnvPoolsOrdered, expandedEnvBlocks)}
+                          <li class="pool-node" class:pool-node-child={isChildPool} style="margin-left: {poolDepth * 1.25}rem">
                             {#if editingPoolId === pool.id}
                               <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-                              <div class="pool-item pool-item-edit" on:click|stopPropagation on:keydown|stopPropagation>
+                              <div class="pool-item pool-item-edit" role="group" aria-label="Edit pool form" on:click|stopPropagation on:keydown|stopPropagation>
                                 <form class="inline-edit" on:submit|preventDefault={handleUpdatePool}>
                                   <input type="text" bind:value={editPoolName} placeholder="Name" disabled={editPoolSubmitting} />
                                   <input type="text" bind:value={editPoolCidr} placeholder="CIDR" disabled={editPoolSubmitting} />
@@ -627,6 +691,7 @@
                               <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
                               <div
                                 class="pool-item pool-item-header"
+                                class:pool-item-child={isChildPool}
                                 class:expanded={expandedPoolId === pool.id}
                                 role="button"
                                 tabindex="0"
@@ -634,10 +699,12 @@
                                 on:keydown={(e) => e.key === 'Enter' && togglePoolRow(pool.id)}
                               >
                                 <span class="expand-icon"><Icon icon={expandedPoolId === pool.id ? 'lucide:chevron-down' : 'lucide:chevron-right'} width="1em" height="1em" /></span>
+                                {#if isChildPool}<span class="pool-name-indent" aria-hidden="true" title="Nested level {poolDepth}"><Icon icon="lucide:corner-down-right" width="1em" height="1em" /></span>{/if}
                                 <span class="pool-name">{pool.name}</span>
                                 <code class="pool-cidr">{pool.cidr}</code>
                                 <span class="pool-block-count">{poolBlocks.length} block{poolBlocks.length === 1 ? '' : 's'}</span>
-                                <div class="pool-actions" on:click|stopPropagation>
+                                <span class="pool-usage" title="Used (child pools + blocks): {formatBlockCount(used)}">{pct < 1 && compareBlockCount(used, '0') > 0 ? '<1' : Math.round(pct)}% used</span>
+                                <div class="pool-actions" role="group" aria-label="Pool actions" on:click|stopPropagation on:keydown|stopPropagation>
                                   <button type="button" class="btn btn-small" on:click|stopPropagation={() => startEditPool(pool)}>Edit</button>
                                   <button type="button" class="btn btn-small btn-danger" on:click|stopPropagation={() => openDeletePoolConfirm(pool)}>Delete</button>
                                 </div>
@@ -1288,6 +1355,15 @@
     color: var(--text-muted);
     flex-shrink: 0;
   }
+  .pool-name-indent {
+    display: inline-flex;
+    margin-right: 0.25rem;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+  .pool-node-child .pool-item-header {
+    padding-left: 0.5rem;
+  }
   .pool-name {
     font-weight: 500;
   }
@@ -1302,6 +1378,11 @@
   .pool-block-count {
     font-size: 0.85rem;
     color: var(--text-muted);
+  }
+  .pool-usage {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-left: 0.5rem;
   }
   .pool-actions {
     display: flex;
@@ -1430,13 +1511,26 @@
     background: var(--bg);
     color: var(--text);
   }
+  .form-card-inline .add-pool-parent-label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 180px;
+  }
+  .form-card-inline .add-pool-parent-label span {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--text-muted);
+  }
+  .form-card-inline .add-pool-hint {
+    margin-top: 0.35rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+  }
   .form-error {
     margin: 0.35rem 0 0 0;
     font-size: 0.85rem;
     color: var(--danger);
-  }
-  .blocks-summary {
-    font-size: 0.9rem;
   }
   .summary-title {
     margin: 0 0 0.75rem 0;
@@ -1450,11 +1544,6 @@
     margin: 0;
     font-size: 0.85rem;
     color: var(--text-muted);
-  }
-  .block-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
   }
   .block-item {
     border: 1px solid var(--border);
@@ -1493,11 +1582,6 @@
   }
   .block-ips {
     font-size: 0.8rem;
-    color: var(--text-muted);
-  }
-  .block-expand {
-    margin-left: auto;
-    font-size: 0.7rem;
     color: var(--text-muted);
   }
   .allocations-summary {

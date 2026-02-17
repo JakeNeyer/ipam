@@ -48,6 +48,8 @@ func main() {
 	setup.EnsureInitialAdmin(st, oauthEnabled)
 	setup.EnsureDemoFixtures(st)
 
+	handlers.StartBackgroundSync(st)
+
 	s := server.NewServer(st, serverCfg)
 
 	handler := middleware.SecurityHeaders(s)

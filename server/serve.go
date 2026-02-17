@@ -108,6 +108,19 @@ func NewServer(s store.Storer, cfg *config.Config) *web.Service {
 	deletePoolUC := handlers.NewDeletePoolUseCase(s)
 	svc.Delete("/api/pools/{id}", deletePoolUC)
 
+	listIntegrationsUC := handlers.NewListIntegrationsUseCase(s)
+	svc.Get("/api/integrations", listIntegrationsUC)
+	createIntegrationUC := handlers.NewCreateIntegrationUseCase(s)
+	svc.Post("/api/integrations", createIntegrationUC)
+	getIntegrationUC := handlers.NewGetIntegrationUseCase(s)
+	svc.Get("/api/integrations/{id}", getIntegrationUC)
+	updateIntegrationUC := handlers.NewUpdateIntegrationUseCase(s)
+	svc.Put("/api/integrations/{id}", updateIntegrationUC)
+	deleteIntegrationUC := handlers.NewDeleteIntegrationUseCase(s)
+	svc.Delete("/api/integrations/{id}", deleteIntegrationUC)
+	syncIntegrationUC := handlers.NewSyncIntegrationUseCase(s)
+	svc.Post("/api/integrations/{id}/sync", syncIntegrationUC)
+
 	createBlockUC := handlers.NewCreateBlockUseCase(s)
 	svc.Post("/api/blocks", createBlockUC)
 

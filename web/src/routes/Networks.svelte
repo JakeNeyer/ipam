@@ -9,6 +9,7 @@
   import SearchableSelect from '../lib/SearchableSelect.svelte'
   import { cidrRange, parseCidrToInt } from '../lib/cidr.js'
   import { formatBlockCount, compareBlockCount, utilizationPercent as utilPct } from '../lib/blockCount.js'
+  import { totalIPsForCidr, poolUsedIPs, poolUtilizationPercent } from '../lib/poolUsage.js'
   import { user, selectedOrgForGlobalAdmin, isGlobalAdmin } from '../lib/auth.js'
   import { listEnvironments, listPools, listPoolsByOrganization, listBlocks, listAllocations, createPool, createBlock, createAllocation, getPool, updatePool, updateBlock, updateAllocation, deletePool, deleteBlock, deleteAllocation } from '../lib/api.js'
   import { get } from 'svelte/store'
@@ -25,6 +26,16 @@
 
   const POOL_FILTER_NONE = '__none__' // value for "No pool" (blocks without pool_id)
   const POOL_FILTER_ENV_PREFIX = 'env:' // value prefix for "Environment: X" (filter blocks by environment)
+
+  const PROVIDER_ICONS = {
+    aws: 'simple-icons:amazonaws',
+    azure: 'simple-icons:microsoftazure',
+    gcp: 'simple-icons:googlecloud',
+  }
+  function getProviderIcon(providerId) {
+    if (!providerId) return null
+    return PROVIDER_ICONS[String(providerId).toLowerCase()] || null
+  }
 
   let loading = true
   let error = ''
@@ -84,6 +95,7 @@
   let poolName = ''
   let poolCidr = ''
   let createPoolEnvId = ''
+  let createPoolParentId = ''
   let poolSubmitting = false
   let poolError = ''
   let editingPoolId = null
@@ -331,6 +343,54 @@
           : envIdForApi
             ? allPools.filter((p) => envIdsMatch(p.environment_id, envIdForApi))
             : allPools
+
+  /** Nesting depth of a pool (0 = root, 1 = child of root, 2 = grandchild, …). */
+  function getPoolDepth(pool, poolList) {
+    if (!pool || !poolList) return 0
+    let d = 0
+    let p = pool
+    const idMatch = (a, b) => a != null && b != null && String(a).toLowerCase() === String(b).toLowerCase()
+    while (p && p.parent_pool_id != null && String(p.parent_pool_id).trim() !== '') {
+      const parent = poolList.find((x) => idMatch(x.id, p.parent_pool_id))
+      if (!parent) break
+      d += 1
+      p = parent
+    }
+    return d
+  }
+  /** Order pools parent-first then children (for tables and hierarchy display). */
+  function sortPoolsByHierarchy(poolList) {
+    if (!poolList.length) return []
+    const id = (p) => String(p.id).toLowerCase()
+    const parentId = (p) => (p.parent_pool_id != null && String(p.parent_pool_id).trim() !== '') ? String(p.parent_pool_id).toLowerCase() : null
+    const byId = new Map(poolList.map((p) => [id(p), p]))
+    const childrenMap = new Map()
+    poolList.forEach((p) => {
+      const pid = parentId(p)
+      if (!pid || !byId.has(pid)) return
+      const list = childrenMap.get(pid) || []
+      list.push(p)
+      childrenMap.set(pid, list)
+    })
+    childrenMap.forEach((list) => list.sort((a, b) => (a.name || '').localeCompare(b.name || '')))
+    const result = []
+    function visit(pool) {
+      result.push(pool)
+      ;(childrenMap.get(id(pool)) || []).forEach(visit)
+    }
+    const roots = poolList.filter((p) => !parentId(p) || !byId.has(parentId(p)))
+    roots.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+    roots.forEach(visit)
+    return result
+  }
+  $: displayedPoolsOrdered = sortPoolsByHierarchy(displayedPools)
+
+  $: createPoolParentOptions = [
+    { value: '', label: '— None (top-level) —' },
+    ...allPools
+      .filter((p) => String(p.environment_id) === String(createPoolEnvId))
+      .map((p) => ({ value: String(p.id), label: `${p.name} (${p.cidr || '—'})` }))
+  ]
 
   $: effectiveFilter = unusedOnly ? 'unused' : orphanedOnly ? 'orphaned' : (environmentId ?? blockFilter)
 
@@ -612,9 +672,10 @@
     poolSubmitting = true
     poolError = ''
     try {
-      await createPool(envId, name, cidr)
+      await createPool(envId, name, cidr, createPoolParentId?.trim() || null)
       poolName = ''
       poolCidr = ''
+      createPoolParentId = ''
       showCreatePool = false
       await load()
     } catch (e) {
@@ -916,7 +977,7 @@
     <section class="section">
       <div class="section-header">
         <h2>Pools</h2>
-        <button class="btn btn-primary" on:click={() => { showCreatePool = true; poolError = ''; poolName = ''; poolCidr = ''; createPoolEnvId = envIdForApi || '' }}>Create pool</button>
+        <button class="btn btn-primary" on:click={() => { showCreatePool = true; poolError = ''; poolName = ''; poolCidr = ''; createPoolEnvId = envIdForApi || ''; createPoolParentId = '' }}>Create pool</button>
       </div>
       {#if showCreatePool}
         <div class="form-card">
@@ -931,6 +992,15 @@
                   placeholder="Select environment"
                 />
               </label>
+              <label for="create-pool-parent">
+                <span>Parent pool (optional)</span>
+                <SearchableSelect
+                  options={createPoolParentOptions}
+                  bind:value={createPoolParentId}
+                  placeholder={createPoolEnvId ? 'Select parent for child pool' : 'Select environment first'}
+                  disabled={!createPoolEnvId}
+                />
+              </label>
               <label for="create-pool-name">
                 <span>Name</span>
                 <input id="create-pool-name" type="text" bind:value={poolName} placeholder="e.g. prod-pool" disabled={poolSubmitting} />
@@ -940,6 +1010,11 @@
                 <input id="create-pool-cidr" type="text" bind:value={poolCidr} placeholder="e.g. 10.0.0.0/8" disabled={poolSubmitting} />
               </label>
             </div>
+            {#if !createPoolEnvId}
+              <p class="form-hint" role="status">Select an environment above to choose a parent pool.</p>
+            {:else if createPoolParentId && allPools.find((p) => String(p.id) === createPoolParentId)}
+              <p class="form-hint" role="status">Child pool CIDR must be contained in the parent pool’s CIDR.</p>
+            {/if}
             <div class="form-actions">
               <button type="button" class="btn" on:click={() => (showCreatePool = false)} disabled={poolSubmitting}>Cancel</button>
               <button type="submit" class="btn btn-primary" disabled={poolSubmitting}>
@@ -952,21 +1027,31 @@
           {/if}
         </div>
       {/if}
-      {#if displayedPools.length > 0}
+      {#if displayedPoolsOrdered.length > 0}
+        <div class="pools-table-wrap">
         <DataTable>
           <svelte:fragment slot="header">
             <tr>
-              <th>Environment</th>
               <th>Name</th>
+              <th>Environment</th>
               <th>CIDR</th>
+              <th class="num">Total IPs</th>
+              <th class="num">Used</th>
+              <th class="num">Available</th>
+              <th>Usage</th>
               <th class="actions">Actions</th>
             </tr>
           </svelte:fragment>
           <svelte:fragment slot="body">
-            {#each displayedPools as pool}
-              <tr>
+            {#each displayedPoolsOrdered as pool}
+              {@const poolTotal = totalIPsForCidr(pool.cidr)}
+              {@const used = poolUsedIPs(pool, allPools, blocks)}
+              {@const pct = poolUtilizationPercent(pool, allPools, blocks)}
+              {@const available = (() => { try { const t = BigInt(poolTotal || '0'); const u = BigInt(used || '0'); return t >= u ? (t - u).toString() : '0'; } catch { return '0'; } })()}
+              {@const poolDepth = getPoolDepth(pool, allPools)}
+              <tr class:pool-child-row={poolDepth > 0} class:pool-depth-0={poolDepth === 0} class:pool-depth-1={poolDepth === 1} class:pool-depth-2={poolDepth === 2} class:pool-depth-3={poolDepth >= 3}>
                 {#if editingPoolId === pool.id}
-                  <td colspan="3" class="edit-cell">
+                  <td colspan="7" class="edit-cell">
                     <form class="inline-edit" on:submit|preventDefault={handleUpdatePool}>
                       <input type="text" bind:value={editPoolName} placeholder="Name" disabled={editPoolSubmitting} />
                       <input type="text" bind:value={editPoolCidr} placeholder="CIDR" disabled={editPoolSubmitting} />
@@ -983,9 +1068,35 @@
                   </td>
                   <td class="actions"></td>
                 {:else}
+                  <td class="name cell-pool-name" style="padding-left: {1 + poolDepth * 1.25}rem">
+                    <div class="pool-name-cell-content">
+                      {#if poolDepth > 0}
+                        <span class="pool-name-indent" aria-hidden="true"><Icon icon="lucide:corner-down-right" width="1em" height="1em" /></span>
+                      {/if}
+                      {#if pool.provider && pool.provider !== 'native' && getProviderIcon(pool.provider)}
+                        <span class="provider-icon provider-icon-pool" title={"Synced from " + pool.provider} aria-hidden="true"><Icon icon={getProviderIcon(pool.provider)} width="1.1em" height="1.1em" /></span>
+                      {/if}
+                      <span class="pool-name-text">{pool.name}</span>
+                    </div>
+                  </td>
                   <td class="environment"><span class="tag tag-env">{getEnvironmentName(pool.environment_id) ?? '—'}</span></td>
-                  <td class="name">{pool.name}</td>
                   <td class="cidr"><code>{pool.cidr}</code></td>
+                  <td class="num">{formatBlockCount(poolTotal)}</td>
+                  <td class="num">{formatBlockCount(used)}</td>
+                  <td class="num">{formatBlockCount(available)}</td>
+                  <td>
+                    <div class="usage-cell" title="Used (child pools + blocks): {formatBlockCount(used)} / {formatBlockCount(poolTotal)}">
+                      <div class="bar-wrap">
+                        <div
+                          class="bar"
+                          class:high={pct >= 80}
+                          class:mid={pct >= 50 && pct < 80}
+                          style="width: {pct < 1 && compareBlockCount(used, '0') > 0 ? 1 : Math.min(100, Math.round(pct))}%"
+                        ></div>
+                      </div>
+                      <span class="pct">{pct < 1 && compareBlockCount(used, '0') > 0 ? '<1' : Math.round(pct)}%</span>
+                    </div>
+                  </td>
                   <td class="actions">
                     <div class="actions-menu-wrap" role="group">
                       <button type="button" class="menu-trigger" aria-haspopup="true" aria-expanded={openPoolMenuId === pool.id} on:click|stopPropagation={(e) => {
@@ -1001,7 +1112,7 @@
                         <div class="menu-dropdown menu-dropdown-fixed" role="menu" style="position:fixed;left:{poolDropdownStyle.left}px;top:{poolDropdownStyle.top}px;transform:translateX(-100%);z-index:1000">
                           <button type="button" role="menuitem" on:click|stopPropagation={() => { startEditPool(pool); openPoolMenuId = null }}>Edit</button>
                           {#if effectiveFilterIsEnv}
-                            <button type="button" role="menuitem" on:click|stopPropagation={() => { showCreatePool = true; poolError = ''; poolName = ''; poolCidr = ''; openPoolMenuId = null }}>Add pool</button>
+                            <button type="button" role="menuitem" on:click|stopPropagation={() => { showCreatePool = true; poolError = ''; poolName = ''; poolCidr = ''; createPoolEnvId = envIdForApi || ''; createPoolParentId = ''; openPoolMenuId = null }}>Add pool</button>
                           {/if}
                           <button type="button" role="menuitem" class="menu-item-danger" on:click|stopPropagation={() => { openDeletePoolConfirm(pool); openPoolMenuId = null }}>Delete</button>
                         </div>
@@ -1011,9 +1122,10 @@
                 {/if}
               </tr>
             {/each}
-          </svelte:fragment>
-        </DataTable>
-      {:else if !showCreatePool}
+            </svelte:fragment>
+          </DataTable>
+        </div>
+      {:else if displayedPoolsOrdered.length === 0 && !showCreatePool}
         <p class="table-empty-cell">
           {#if effectiveFilter === 'orphaned' || effectiveFilter === 'unused'}
             Pools belong to environments. Select an environment above to see and manage pools.
@@ -1202,7 +1314,12 @@
                     </td>
                     <td class="actions"></td>
                   {:else}
-                    <td class="name">{block.name}</td>
+                    <td class="name">
+                      {#if block.provider && block.provider !== 'native' && getProviderIcon(block.provider)}
+                        <span class="provider-icon provider-icon-block" title={"Synced from " + block.provider} aria-hidden="true"><Icon icon={getProviderIcon(block.provider)} width="1.1em" height="1.1em" /></span>
+                      {/if}
+                      {block.name}
+                    </td>
                     <td class="pool">
                       {#if !isOrphanedBlock(block)}
                         <span class="tag tag-pool">{getPoolName(block.pool_id) ?? '—'}</span>
@@ -1393,8 +1510,13 @@
                     </td>
                     <td class="actions"></td>
                   {:else}
-                    <td class="name">{alloc.name}</td>
-                    <td>{alloc.block_name}</td>
+                    <td class="name">
+                      {#if alloc.provider && alloc.provider !== 'native' && getProviderIcon(alloc.provider)}
+                        <span class="provider-icon provider-icon-alloc" title={"Synced from " + alloc.provider} aria-hidden="true"><Icon icon={getProviderIcon(alloc.provider)} width="1.15em" height="1.15em" /></span>
+                      {/if}
+                      {alloc.name}
+                    </td>
+                    <td><span class="tag tag-block" title={"Block: " + (alloc.block_name || '—')}>{alloc.block_name || '—'}</span></td>
                     <td class="cidr">
                       <code>{alloc.cidr}</code>
                       {#if allocRange}
@@ -1402,25 +1524,29 @@
                       {/if}
                     </td>
                     <td class="actions">
-                      <div class="actions-menu-wrap" role="group">
-                        <button type="button" class="menu-trigger" aria-haspopup="true" aria-expanded={openAllocMenuId === alloc.id} on:click|stopPropagation={(e) => {
-                          if (openAllocMenuId === alloc.id) {
-                            openAllocMenuId = null;
-                            allocMenuTriggerEl = null;
-                          } else {
-                            allocMenuTriggerEl = e.currentTarget;
-                            const r = e.currentTarget.getBoundingClientRect();
-                            allocDropdownStyle = { left: r.right, top: r.bottom + 2 };
-                            openAllocMenuId = alloc.id;
-                          }
-                        }} title="Actions"><Icon icon="lucide:ellipsis-vertical" width="1.25em" height="1.25em" /></button>
-                        {#if openAllocMenuId === alloc.id}
-                          <div class="menu-dropdown menu-dropdown-fixed" role="menu" style="position:fixed;left:{allocDropdownStyle.left}px;top:{allocDropdownStyle.top}px;transform:translateX(-100%);z-index:1000">
-                            <button type="button" role="menuitem" on:click|stopPropagation={() => { startEditAllocation(alloc); openAllocMenuId = null }}>Edit</button>
-                            <button type="button" role="menuitem" class="menu-item-danger" on:click|stopPropagation={() => { openDeleteAllocConfirm(alloc); openAllocMenuId = null }}>Delete</button>
-                          </div>
-                        {/if}
-                      </div>
+                      {#if alloc.provider && alloc.provider !== 'native'}
+                        <span class="synced-hint" title="Synced from cloud; edit/delete in cloud provider">—</span>
+                      {:else}
+                        <div class="actions-menu-wrap" role="group">
+                          <button type="button" class="menu-trigger" aria-haspopup="true" aria-expanded={openAllocMenuId === alloc.id} on:click|stopPropagation={(e) => {
+                            if (openAllocMenuId === alloc.id) {
+                              openAllocMenuId = null;
+                              allocMenuTriggerEl = null;
+                            } else {
+                              allocMenuTriggerEl = e.currentTarget;
+                              const r = e.currentTarget.getBoundingClientRect();
+                              allocDropdownStyle = { left: r.right, top: r.bottom + 2 };
+                              openAllocMenuId = alloc.id;
+                            }
+                          }} title="Actions"><Icon icon="lucide:ellipsis-vertical" width="1.25em" height="1.25em" /></button>
+                          {#if openAllocMenuId === alloc.id}
+                            <div class="menu-dropdown menu-dropdown-fixed" role="menu" style="position:fixed;left:{allocDropdownStyle.left}px;top:{allocDropdownStyle.top}px;transform:translateX(-100%);z-index:1000">
+                              <button type="button" role="menuitem" on:click|stopPropagation={() => { startEditAllocation(alloc); openAllocMenuId = null }}>Edit</button>
+                              <button type="button" role="menuitem" class="menu-item-danger" on:click|stopPropagation={() => { openDeleteAllocConfirm(alloc); openAllocMenuId = null }}>Delete</button>
+                            </div>
+                          {/if}
+                        </div>
+                      {/if}
                     </td>
                   {/if}
                 </tr>
@@ -1524,18 +1650,6 @@
   .filter-label :global(.searchable-select) {
     min-width: 160px;
   }
-  .form-card .form-label-wrap {
-    display: block;
-    flex: 1;
-    min-width: 140px;
-  }
-  .form-card .form-label-wrap span {
-    display: block;
-    font-size: 0.8rem;
-    font-weight: 500;
-    color: var(--text-muted);
-    margin-bottom: 0.35rem;
-  }
   .pagination {
     display: flex;
     align-items: center;
@@ -1587,6 +1701,16 @@
     font-weight: 500;
     color: var(--text-muted);
   }
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    padding: 1rem;
+  }
   .modal-backdrop {
     position: fixed;
     inset: 0;
@@ -1627,6 +1751,11 @@
     display: flex;
     justify-content: flex-end;
     gap: 0.5rem;
+  }
+  .form-hint {
+    margin: 0 0 1rem 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
   }
   .form-warn {
     margin: 0 0 1rem 0;
@@ -1802,6 +1931,29 @@
   .name {
     font-weight: 500;
   }
+  .pools-table-wrap :global(th:first-child),
+  .pools-table-wrap :global(td.name.cell-pool-name) {
+    min-width: 10rem;
+    max-width: 28rem;
+  }
+  .pool-name-cell-content {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    min-width: 0;
+  }
+  .pool-name-text {
+    min-width: 0;
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+  .pool-name-indent {
+    display: inline-flex;
+    margin-right: 0.35rem;
+    color: var(--text-muted);
+    vertical-align: middle;
+  }
   .tag {
     display: inline-block;
     padding: 0.15rem 0.5rem;
@@ -1832,6 +1984,34 @@
     background: rgba(107, 114, 128, 0.2);
     border: 1px solid var(--text-muted);
     color: var(--text-muted);
+  }
+  .provider-icon {
+    display: inline-flex;
+    align-items: center;
+    vertical-align: middle;
+    color: var(--text-muted);
+    opacity: 0.85;
+  }
+  .provider-icon :global(svg) {
+    flex-shrink: 0;
+  }
+  .provider-icon-pool {
+    margin-right: 0.3rem;
+  }
+  .provider-icon-block {
+    margin-right: 0.35rem;
+  }
+  .provider-icon-alloc {
+    margin-right: 0.35rem;
+  }
+  .tag-block {
+    background: rgba(88, 166, 255, 0.15);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+  }
+  .synced-hint {
+    color: var(--text-muted);
+    font-size: 0.85rem;
   }
   .cidr {
     vertical-align: top;
