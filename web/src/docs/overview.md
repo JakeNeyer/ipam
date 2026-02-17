@@ -1,6 +1,6 @@
 # IPAM User Guide
 
-IPAM is an IP Address Management application for tracking **environments**, **pools**, **network blocks**, and **allocations**. Hierarchy: **Environment → Pools → Blocks → Allocations**. Pools are CIDR ranges that blocks in an environment draw from; every environment has at least one pool. The app organizes enterprise networks in one place and works with infrastructure tooling such as Terraform.
+IPAM is an IP Address Management application for tracking **environments**, pools, **network blocks**, and **allocations**. Hierarchy: **Environment** → Pools → **Blocks** → **Allocations**. Pools are CIDR ranges that blocks in an environment draw from; every environment has at least one pool. The app organizes enterprise networks in one place and works with infrastructure tooling such as Terraform.
 
 ## Data model
 
@@ -18,16 +18,12 @@ The IPAM data model has four main resource types, arranged in a hierarchy:
 
 **Orphaned blocks** are network blocks that are not assigned to any environment or pool. They can be created when you add a block without selecting a pool; they still belong to an organization and can contain allocations. Orphaned blocks appear in a separate “Orphaned” section on the Dashboard resource graph and can be filtered on the Networks page. Assigning a block to a pool moves it into an environment and removes it from the orphaned set.
 
-The diagram below shows the hierarchy: one environment contains pools; each pool can contain blocks; each block can contain allocations.
-
-<img src="/images/resource-graph-light.png" alt="IPAM data model: Environment → Pools → Network blocks → Allocations (resource graph from Dashboard)" class="docs-data-model screenshot-light" />
-<img src="/images/resource-graph-dark.png" alt="IPAM data model: Environment → Pools → Network blocks → Allocations (resource graph from Dashboard)" class="docs-data-model screenshot-dark" />
-
 ## Sections
 
 - [Getting started](#docs/getting-started) — Docker setup, REST API, and Terraform examples.
 - [Environments](#docs/environments) — Manage environments and their pools.
 - [Networks](#docs/networks) — Manage pools, network blocks, and allocations.
+- [Integrations](#docs/integrations) — Connect cloud providers and sync pools, blocks, and allocations. See [AWS](#docs/integrations/aws) for the AWS data model.
 - [Command palette](#docs/command-palette) — Quick search and navigation (`⌘K` / `Ctrl+K`).
 - [CIDR wizard](#docs/cidr-wizard) — Suggested CIDR ranges for blocks (based on pool) and allocations.
 - [Network Advisor](#docs/network-advisor) — Plan and generate an IP strategy.

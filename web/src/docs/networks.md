@@ -1,6 +1,6 @@
 # Networks
 
-The Networks page is where you manage **pools**, network blocks, and allocations day-to-day. Hierarchy: **Pool → Blocks → Allocations** (pools belong to an environment).
+The Networks page is where you manage pools, network blocks, and allocations day-to-day. Hierarchy: Pool → **Blocks** → **Allocations** (pools belong to an environment).
 
 <p class="docs-screenshot">
 <img src="/images/networks-light.png" alt="Networks page (light mode)" class="screenshot-light" />

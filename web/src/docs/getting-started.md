@@ -31,7 +31,7 @@ bash setup.sh
 ## Concepts
 
 - **Environments** — Logical groupings (e.g. `Production`, `Staging`) that contain pools and network blocks.
-- **Pools** — CIDR ranges (e.g. `10.0.0.0/8`) that define the address space for an environment. Blocks in that environment must have a CIDR contained within a pool. Every environment has at least one pool.
+- Pools — CIDR ranges (e.g. `10.0.0.0/8`) that define the address space for an environment. Blocks in that environment must have a CIDR contained within a pool. Every environment has at least one pool.
 - **Network blocks** — CIDR ranges (e.g. `10.0.0.0/16`) that define a block of IP addresses; each block is optionally assigned to a pool.
 - **Allocations** — Subnets carved out of a block (e.g. `10.0.1.0/24`) representing actual usage.
 

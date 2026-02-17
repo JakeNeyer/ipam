@@ -13,6 +13,12 @@
   /** @type {'azure' | 'aws' | 'gcp'} */
   let terraformTab = 'aws'
 
+  /** @type {Set<string>} sections that have entered the viewport */
+  let visibleSections = new Set(['hero'])
+
+  /** @type {boolean} true when user has scrolled past hero */
+  let headerScrolled = false
+
   function toggleTheme() {
     theme.set($theme === 'dark' ? 'light' : 'dark')
   }
@@ -37,11 +43,40 @@
         }
       })
       .catch(() => {})
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        let changed = false
+        entries.forEach((entry) => {
+          const id = entry.target.getAttribute('data-animate-id')
+          if (!id) return
+          if (entry.isIntersecting && !visibleSections.has(id)) {
+            visibleSections.add(id)
+            changed = true
+          }
+        })
+        if (changed) visibleSections = new Set(visibleSections)
+      },
+      { rootMargin: '-8% 0px -8% 0px', threshold: 0 }
+    )
+    const el = document.querySelectorAll('[data-animate-id]')
+    el.forEach((node) => observer.observe(node))
+
+    const onScroll = () => {
+      headerScrolled = window.scrollY > 60
+    }
+    window.addEventListener('scroll', onScroll, { passive: true })
+    onScroll()
+
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('scroll', onScroll)
+    }
   })
 </script>
 
 <div class="landing">
-  <header class="landing-header">
+  <header class="landing-header" class:scrolled={headerScrolled}>
     <a href="#landing" class="landing-logo-wrap">
       <img src="{base}images/{$theme === 'light' ? 'logo-light.svg' : 'logo.svg'}" alt="IPAM" class="landing-logo" />
     </a>
@@ -55,13 +90,14 @@
     </div>
   </header>
 
-  <section class="hero">
+  <section class="hero" data-animate-id="hero" class:visible={visibleSections.has('hero')}>
     <div class="hero-bg" aria-hidden="true"></div>
     <div class="hero-bg-title" aria-hidden="true"></div>
     <div class="hero-content">
+      <p class="hero-eyebrow">IP address management</p>
       <h1 class="hero-title">IP address management, simplified</h1>
       <p class="hero-subtitle">
-        Stop using spreadsheets to manage enterprise networks.
+        A simple tool for advanced networks.
       </p>
       <div class="hero-actions">
         <a href="#features" class="btn-hero-primary">See how it works</a>
@@ -93,39 +129,40 @@
     </div>
   </section>
 
-  <section id="features" class="section features">
-    <h2 class="section-title">Core features</h2>
-    <p class="section-desc">Environments, pools, blocks, allocations, reserved blocks, a CIDR wizard, subnet calculator, network advisor, and diagram export.</p>
+  <section id="features" class="section features" data-animate-id="features" class:visible={visibleSections.has('features')}>
+    <p class="section-eyebrow">Core features</p>
+    <h2 class="section-title">Everything you need to get the job done</h2>
+    <p class="section-desc">Plan, organize, sync, and track networks—all in one place.</p>
     <div class="features-grid">
       <div class="feature-card">
         <div class="feature-icon-wrap">
           <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-            <polyline points="9 22 9 12 15 12 15 22" />
+            <path d="M12 2L2 7l10 5 10-5L12 2z" />
+            <path d="M2 17l10 5 10-5" />
+            <path d="M2 12l10 5 10-5" />
           </svg>
         </div>
-        <h3 class="feature-title">Environments</h3>
-        <p class="feature-desc">Group network blocks by environment (e.g. staging, production).</p>
+        <h3 class="feature-title">Environments, Pools, Network blocks & Allocations</h3>
+        <p class="feature-desc">Organize by environments (e.g. staging, production); define CIDR pools per environment; create network blocks that draw from pools; allocate subnets within blocks as in-use networks.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon-wrap">
           <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0L12 2.69z" />
-            <path d="M12 2.69v4.95" />
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
           </svg>
         </div>
-        <h3 class="feature-title">Pools</h3>
-        <p class="feature-desc">CIDR ranges per environment that blocks draw from; non-overlapping within an org.</p>
+        <h3 class="feature-title">Reserved blocks</h3>
+        <p class="feature-desc">Wall off address ranges from being used.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon-wrap">
           <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="2" y="6" width="20" height="12" rx="2" />
-            <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01" />
+            <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
           </svg>
         </div>
-        <h3 class="feature-title">Network blocks</h3>
-        <p class="feature-desc">Define ranges of IP address as network blocks.</p>
+        <h3 class="feature-title">Cloud provider integration</h3>
+        <p class="feature-desc">Sync IPAM with cloud providers such as AWS VPC IPAM: import pools and allocations, keep them in sync, and manage from one place.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon-wrap">
@@ -137,50 +174,6 @@
         </div>
         <h3 class="feature-title">IPv4 + IPv6 support</h3>
         <p class="feature-desc">Plan, allocate, and size networks across IPv4 and IPv6 (including ULA).</p>
-      </div>
-      <div class="feature-card">
-        <div class="feature-icon-wrap">
-          <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-            <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
-            <line x1="12" y1="22.08" x2="12" y2="12" />
-          </svg>
-        </div>
-        <h3 class="feature-title">Allocations</h3>
-        <p class="feature-desc">Allocate CIDR ranges as in-use networks.</p>
-      </div>
-      <div class="feature-card">
-        <div class="feature-icon-wrap">
-          <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="3" />
-            <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
-          </svg>
-        </div>
-        <h3 class="feature-title">CIDR wizard</h3>
-        <p class="feature-desc">Easily design networks with suggestions for optimal space usage.</p>
-      </div>
-      <div class="feature-card">
-        <div class="feature-icon-wrap">
-          <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="3" y="3" width="18" height="18" rx="2" />
-            <line x1="3" y1="9" x2="21" y2="9" />
-            <line x1="3" y1="15" x2="21" y2="15" />
-            <line x1="9" y1="3" x2="9" y2="21" />
-            <line x1="15" y1="3" x2="15" y2="21" />
-          </svg>
-        </div>
-        <h3 class="feature-title">Subnet calculator</h3>
-        <p class="feature-desc">Split and join subnets in a table; plan CIDRs without creating resources.</p>
-      </div>
-      <div class="feature-card">
-        <div class="feature-icon-wrap">
-          <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-          </svg>
-        </div>
-        <h3 class="feature-title">Reserved blocks</h3>
-        <p class="feature-desc">Wall off address ranges from being used.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon-wrap">
@@ -197,34 +190,116 @@
       <div class="feature-card">
         <div class="feature-icon-wrap">
           <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="3" y="3" width="7" height="7" rx="1" />
-            <rect x="14" y="3" width="7" height="7" rx="1" />
-            <rect x="8.5" y="14" width="7" height="7" rx="1" />
-            <path d="M10 7h4M17.5 10v4M6.5 10v4M10 17h4" />
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <line x1="3" y1="9" x2="21" y2="9" />
+            <line x1="3" y1="15" x2="21" y2="15" />
+            <line x1="9" y1="3" x2="9" y2="21" />
+            <line x1="15" y1="3" x2="15" y2="21" />
           </svg>
         </div>
-        <h3 class="feature-title">Network Diagram Export</h3>
-        <p class="feature-desc">Generate draw.io-compatible diagrams of your network topology.</p>
+        <h3 class="feature-title">Subnet calculator</h3>
+        <p class="feature-desc">Split and join subnets in a table; plan CIDRs without creating resources.</p>
       </div>
     </div>
-    <div class="coming-soon-wrap">
-      <p class="coming-soon-label">Coming soon</p>
-      <div class="coming-soon-grid">
-        <div class="feature-card feature-card-coming-soon">
-          <div class="feature-icon-wrap">
-            <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M3 7h18M3 12h18M3 17h18" />
-              <path d="M7 3v18M12 3v18M17 3v18" />
-            </svg>
-          </div>
-          <h3 class="feature-title">Cloud Provider Inventory</h3>
-          <p class="feature-desc">Track networks by plugging in directly to your cloud provider.</p>
+  </section>
+
+  <section id="integrations" class="section integrations-section" data-animate-id="integrations" class:visible={visibleSections.has('integrations')}>
+    <p class="section-eyebrow">Cloud native</p>
+    <h2 class="section-title">One IPAM. Every cloud.</h2>
+    <p class="section-desc">Sync environments, pools, and allocations with AWS VPC IPAM, Azure Virtual Network Manager, Google Cloud VPC, and on-premises networks. Single source of truth across hybrid and multi-cloud.</p>
+    <div class="integrations-diagram-wrap" aria-hidden="true">
+      <div class="integrations-glow"></div>
+      <div class="integrations-diagram-inner">
+        <svg class="integrations-svg" viewBox="0 0 820 520" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="ipamHubGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.3" />
+              <stop offset="100%" stop-color="var(--accent)" stop-opacity="0.06" />
+            </linearGradient>
+            <filter id="integrationsGlow" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="6" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+          </defs>
+          <!-- Connection paths: balanced cross, node edge to hub edge (cards 24% × 24%) -->
+          <g class="integrations-connectors">
+            <path class="integration-line integration-line-onprem" d="M 213 260 Q 261 260 310 260" fill="none" stroke="var(--accent)" stroke-width="3" stroke-dasharray="12 18" stroke-linecap="round" opacity="0.75" />
+            <path class="integration-line integration-line-aws" d="M 410 135 Q 410 167 410 200" fill="none" stroke="var(--accent)" stroke-width="3" stroke-dasharray="12 18" stroke-linecap="round" opacity="0.75" />
+            <path class="integration-line integration-line-azure" d="M 607 260 Q 558 260 510 260" fill="none" stroke="var(--accent)" stroke-width="3" stroke-dasharray="12 18" stroke-linecap="round" opacity="0.75" />
+            <path class="integration-line integration-line-gcp" d="M 410 385 Q 410 352 410 320" fill="none" stroke="var(--accent)" stroke-width="3" stroke-dasharray="12 18" stroke-linecap="round" opacity="0.75" />
+          </g>
+          <!-- Data flow dots -->
+          <circle class="integration-dot integration-dot-onprem" r="6" fill="var(--accent)">
+            <animateMotion dur="2.2s" repeatCount="indefinite" path="M 213 260 Q 261 260 310 260" />
+          </circle>
+          <circle class="integration-dot integration-dot-onprem-2" r="5" fill="var(--accent)" opacity="0.7">
+            <animateMotion dur="2.2s" repeatCount="indefinite" path="M 213 260 Q 261 260 310 260" begin="0.7s" />
+          </circle>
+          <circle class="integration-dot integration-dot-aws" r="6" fill="var(--accent)">
+            <animateMotion dur="2.2s" repeatCount="indefinite" path="M 410 135 Q 410 167 410 200" />
+          </circle>
+          <circle class="integration-dot integration-dot-aws-2" r="5" fill="var(--accent)" opacity="0.7">
+            <animateMotion dur="2.2s" repeatCount="indefinite" path="M 410 135 Q 410 167 410 200" begin="0.7s" />
+          </circle>
+          <circle class="integration-dot integration-dot-azure" r="6" fill="var(--accent)">
+            <animateMotion dur="2.2s" repeatCount="indefinite" path="M 607 260 Q 558 260 510 260" />
+          </circle>
+          <circle class="integration-dot integration-dot-azure-2" r="5" fill="var(--accent)" opacity="0.7">
+            <animateMotion dur="2.2s" repeatCount="indefinite" path="M 607 260 Q 558 260 510 260" begin="0.7s" />
+          </circle>
+          <circle class="integration-dot integration-dot-gcp" r="6" fill="var(--accent)">
+            <animateMotion dur="2.2s" repeatCount="indefinite" path="M 410 385 Q 410 352 410 320" />
+          </circle>
+          <circle class="integration-dot integration-dot-gcp-2" r="5" fill="var(--accent)" opacity="0.7">
+            <animateMotion dur="2.2s" repeatCount="indefinite" path="M 410 385 Q 410 352 410 320" begin="0.7s" />
+          </circle>
+          <!-- Central IPAM hub -->
+          <g class="integration-hub">
+            <rect x="310" y="200" width="200" height="120" rx="24" fill="url(#ipamHubGrad)" stroke="var(--accent)" stroke-width="3" filter="url(#integrationsGlow)" class="integration-hub-bg" />
+            <text x="410" y="248" text-anchor="middle" fill="var(--accent)" font-size="22" font-weight="800" font-family="system-ui, sans-serif">IPAM</text>
+            <text x="410" y="275" text-anchor="middle" fill="var(--text-muted)" font-size="12" font-family="system-ui, sans-serif">Sync · Allocate · Track</text>
+          </g>
+        </svg>
+        <!-- On-prem and cloud provider cards (overlaid) -->
+        <div class="integration-node-card integration-node-onprem">
+          <span class="integration-node-icon integration-node-icon-onprem" aria-hidden="true">
+            <Icon icon="lucide:server" />
+          </span>
+          <span class="integration-node-title">On-premises</span>
+          <span class="integration-node-subtitle">Data center / private</span>
+        </div>
+        <div class="integration-node-card integration-node-aws">
+          <span class="integration-node-icon integration-node-icon-aws" aria-hidden="true">
+            <Icon icon="simple-icons:amazonaws" />
+          </span>
+          <span class="integration-node-title">AWS</span>
+          <span class="integration-node-subtitle">VPC IPAM</span>
+        </div>
+        <div class="integration-node-card integration-node-azure">
+          <span class="integration-coming-soon">Coming soon</span>
+          <span class="integration-node-icon integration-node-icon-azure" aria-hidden="true">
+            <Icon icon="simple-icons:microsoftazure" />
+          </span>
+          <span class="integration-node-title">Azure</span>
+          <span class="integration-node-subtitle">Virtual Network Manager</span>
+        </div>
+        <div class="integration-node-card integration-node-gcp">
+          <span class="integration-coming-soon">Coming soon</span>
+          <span class="integration-node-icon integration-node-icon-gcp" aria-hidden="true">
+            <Icon icon="simple-icons:googlecloud" />
+          </span>
+          <span class="integration-node-title">Google Cloud</span>
+          <span class="integration-node-subtitle">VPC address management</span>
         </div>
       </div>
     </div>
   </section>
 
-  <section id="command-palette" class="section command-palette-section">
+  <section id="command-palette" class="section command-palette-section" data-animate-id="command-palette" class:visible={visibleSections.has('command-palette')}>
+    <p class="section-eyebrow">Productivity</p>
     <h2 class="section-title">Command palette</h2>
     <p class="section-desc">Search, navigate, and create from anywhere. Press ⌘K or Ctrl+K.</p>
     <div class="command-palette-wrap" aria-hidden="true">
@@ -275,9 +350,10 @@
     </div>
   </section>
 
-  <section id="api" class="section api-section">
+  <section id="api" class="section api-section" data-animate-id="api" class:visible={visibleSections.has('api')}>
     <div class="api-bg" aria-hidden="true"></div>
     <div class="api-content">
+      <p class="section-eyebrow">Developers</p>
       <h2 class="section-title">API</h2>
       <p class="section-desc">Full API for all IPAM resources. Use it from scripts, CI/CD, and the Terraform provider.</p>
       <div class="api-diagram" aria-hidden="true">
@@ -315,10 +391,11 @@
     </div>
   </section>
 
-  <section id="terraform" class="section terraform-section">
+  <section id="terraform" class="section terraform-section" data-animate-id="terraform" class:visible={visibleSections.has('terraform')}>
     <div class="terraform-bg" aria-hidden="true"></div>
     <div class="terraform-content">
       <div class="terraform-header">
+        <p class="section-eyebrow">Infrastructure as code</p>
         <h2 class="section-title terraform-title">Terraform provider</h2>
       </div>
       <p class="section-desc">Use IPAM with your favorite IaC tooling.</p>
@@ -509,13 +586,16 @@ resource "google_compute_subnetwork" "app" {'{'}
     </div>
   </section>
 
-  <section id="user-guide" class="section docs-section">
+  <section id="user-guide" class="section docs-section" data-animate-id="docs" class:visible={visibleSections.has('docs')}>
+    <p class="section-eyebrow">Documentation</p>
     <h2 class="section-title">User guide</h2>
     <div class="docs-section-links">
       <a href="#docs" class="docs-section-link">Overview</a>
       <a href="#docs/getting-started" class="docs-section-link">Getting started</a>
       <a href="#docs/environments" class="docs-section-link">Environments</a>
       <a href="#docs/networks" class="docs-section-link">Networks</a>
+      <a href="#docs/integrations" class="docs-section-link">Integrations</a>
+      <a href="#docs/integrations/aws" class="docs-section-link">Integrations — AWS</a>
       <a href="#docs/command-palette" class="docs-section-link">Command palette</a>
       <a href="#docs/cidr-wizard" class="docs-section-link">CIDR wizard</a>
       <a href="#docs/network-advisor" class="docs-section-link">Network Advisor</a>
@@ -528,7 +608,7 @@ resource "google_compute_subnetwork" "app" {'{'}
     </p>
   </section>
 
-  <section class="section cta-section">
+  <section class="section cta-section" data-animate-id="cta" class:visible={visibleSections.has('cta')}>
     <div class="cta-bg" aria-hidden="true"></div>
     <div class="cta-content">
       <h2 class="cta-title">Ready to manage your IP space?</h2>
@@ -573,6 +653,23 @@ resource "google_compute_subnetwork" "app" {'{'}
 </div>
 
 <style>
+  /* Scroll-triggered animations */
+  @keyframes fadeInUp {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
   .landing {
     min-height: 100vh;
     background: var(--bg);
@@ -580,6 +677,9 @@ resource "google_compute_subnetwork" "app" {'{'}
   }
 
   .landing-header {
+    position: sticky;
+    top: 0;
+    z-index: 50;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -593,10 +693,20 @@ resource "google_compute_subnetwork" "app" {'{'}
     );
     border-bottom: 1px solid transparent;
     box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04);
+    transition: background 0.25s ease, box-shadow 0.25s ease;
+  }
+
+  .landing-header.scrolled {
+    background: var(--bg);
+    box-shadow: 0 1px 0 var(--border), 0 4px 20px rgba(0, 0, 0, 0.06);
   }
 
   :global(.dark) .landing-header {
     box-shadow: 0 1px 0 rgba(0, 0, 0, 0.15);
+  }
+
+  :global(.dark) .landing-header.scrolled {
+    box-shadow: 0 1px 0 var(--border), 0 4px 24px rgba(0, 0, 0, 0.3);
   }
 
   .landing-logo-wrap {
@@ -762,19 +872,54 @@ resource "google_compute_subnetwork" "app" {'{'}
     margin: 0 auto;
   }
 
+  .hero.visible .hero-eyebrow {
+    animation: fadeInUp 0.6s ease-out forwards;
+  }
+
+  .hero.visible .hero-title {
+    animation: fadeInUp 0.6s ease-out 0.08s both;
+  }
+
+  .hero.visible .hero-subtitle {
+    animation: fadeInUp 0.6s ease-out 0.16s both;
+  }
+
+  .hero.visible .hero-actions {
+    animation: fadeInUp 0.6s ease-out 0.24s both;
+  }
+
+  .hero.visible .hero-dashboard-wrap {
+    animation: fadeInUp 0.8s ease-out 0.35s both;
+  }
+
+  .hero-eyebrow {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--accent);
+    margin: 0 0 0.75rem;
+    opacity: 0;
+  }
+
   .hero-title {
-    font-size: clamp(2rem, 5vw, 3rem);
+    font-size: clamp(2.25rem, 5.5vw, 3.25rem);
     font-weight: 700;
-    line-height: 1.2;
+    line-height: 1.15;
     margin: 0 0 1rem;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.03em;
+    opacity: 0;
   }
 
   .hero-subtitle {
-    font-size: 1.125rem;
+    font-size: 1.2rem;
     color: var(--text-muted);
     line-height: 1.6;
     margin: 0 0 2rem;
+    max-width: 28em;
+    margin-left: auto;
+    margin-right: auto;
+    opacity: 0;
   }
 
   .hero-actions {
@@ -782,41 +927,47 @@ resource "google_compute_subnetwork" "app" {'{'}
     flex-wrap: wrap;
     gap: 1rem;
     justify-content: center;
+    opacity: 0;
+  }
+
+  .hero-dashboard-wrap {
+    opacity: 0;
   }
 
   .btn-hero-primary {
     display: inline-block;
-    padding: 0.6rem 1.25rem;
-    border-radius: var(--radius);
-    background: var(--accent-dim);
-    color: var(--accent);
+    padding: 0.75rem 1.5rem;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--bg);
     text-decoration: none;
-    font-weight: 500;
+    font-weight: 600;
     font-size: 0.9375rem;
-    border: 1px solid transparent;
-    transition: background 0.15s, border-color 0.15s;
+    border: none;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s;
   }
 
   .btn-hero-primary:hover {
-    background: var(--accent-dim);
-    border-color: var(--accent);
+    transform: translateY(-1px);
+    box-shadow: 0 8px 24px var(--accent-dim);
   }
 
   .btn-hero-secondary {
-    padding: 0.6rem 1.25rem;
-    border-radius: var(--radius);
+    padding: 0.75rem 1.5rem;
+    border-radius: 999px;
     background: transparent;
-    color: var(--text-muted);
-    border: 1px solid var(--border);
-    font-weight: 500;
+    color: var(--text);
+    border: 2px solid var(--border);
+    font-weight: 600;
     font-size: 0.9375rem;
     cursor: pointer;
-    transition: border-color 0.15s, color 0.15s;
+    transition: border-color 0.2s, color 0.2s, transform 0.2s ease;
   }
 
   .btn-hero-secondary:hover {
-    border-color: var(--text-muted);
-    color: var(--text);
+    border-color: var(--accent);
+    color: var(--accent);
+    transform: translateY(-1px);
   }
 
   /* Dashboard screenshot (Netmaker-style) */
@@ -914,11 +1065,16 @@ resource "google_compute_subnetwork" "app" {'{'}
   }
 
   /* Command palette section */
+  .command-palette-section.visible .command-palette-wrap {
+    animation: fadeInUp 0.6s ease-out 0.1s both;
+  }
+
   .command-palette-wrap {
     position: relative;
     max-width: 560px;
     margin: 2.5rem auto 0;
     padding: 0 1rem;
+    opacity: 0;
   }
 
   .command-palette-glow {
@@ -994,16 +1150,37 @@ resource "google_compute_subnetwork" "app" {'{'}
 
   /* Section */
   .section {
-    padding: 4rem 1.5rem;
+    padding: 5rem 1.5rem;
     max-width: 1200px;
     margin: 0 auto;
   }
 
+  .section-eyebrow {
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--accent);
+    text-align: center;
+    margin: 0 0 0.5rem;
+    opacity: 0;
+  }
+
+  .section.visible .section-eyebrow {
+    animation: fadeInUp 0.5s ease-out forwards;
+  }
+
   .section-title {
-    font-size: 1.75rem;
+    font-size: clamp(1.75rem, 4vw, 2.25rem);
     font-weight: 700;
     text-align: center;
     margin: 0 0 0.5rem;
+    letter-spacing: -0.02em;
+    opacity: 0;
+  }
+
+  .section.visible .section-title {
+    animation: fadeInUp 0.5s ease-out 0.06s both;
   }
 
   .section-desc {
@@ -1011,7 +1188,13 @@ resource "google_compute_subnetwork" "app" {'{'}
     color: var(--text-muted);
     max-width: 560px;
     margin: 0 auto 2.5rem;
-    line-height: 1.6;
+    line-height: 1.65;
+    font-size: 1rem;
+    opacity: 0;
+  }
+
+  .section.visible .section-desc {
+    animation: fadeInUp 0.5s ease-out 0.12s both;
   }
 
   /* Features */
@@ -1022,65 +1205,360 @@ resource "google_compute_subnetwork" "app" {'{'}
   }
 
   .feature-card {
-    padding: 1.5rem;
-    border-radius: var(--radius);
+    padding: 1.75rem;
+    border-radius: 16px;
     background: var(--surface);
     border: 1px solid var(--border);
-    box-shadow: var(--shadow-sm);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.2s;
+    opacity: 0;
+  }
+
+  .features.visible .feature-card {
+    animation: fadeInUp 0.5s ease-out both;
+  }
+
+  .features.visible .feature-card:nth-child(1) { animation-delay: 0.12s; }
+  .features.visible .feature-card:nth-child(2) { animation-delay: 0.16s; }
+  .features.visible .feature-card:nth-child(3) { animation-delay: 0.2s; }
+  .features.visible .feature-card:nth-child(4) { animation-delay: 0.24s; }
+  .features.visible .feature-card:nth-child(5) { animation-delay: 0.28s; }
+  .features.visible .feature-card:nth-child(6) { animation-delay: 0.32s; }
+  .features.visible .feature-card:nth-child(7) { animation-delay: 0.36s; }
+  .features.visible .feature-card:nth-child(8) { animation-delay: 0.4s; }
+
+  .feature-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08), 0 0 0 1px var(--border);
+    border-color: var(--accent);
+  }
+
+  :global(.dark) .feature-card:hover {
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25), 0 0 0 1px var(--accent);
   }
 
   .feature-icon-wrap {
-    width: 48px;
-    height: 48px;
-    border-radius: var(--radius);
+    width: 52px;
+    height: 52px;
+    border-radius: 14px;
     background: var(--accent-dim);
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-bottom: 1rem;
+    margin-bottom: 1.25rem;
+    transition: background 0.2s, transform 0.2s;
+  }
+
+  .feature-card:hover .feature-icon-wrap {
+    background: var(--accent);
+    transform: scale(1.05);
+  }
+
+  .feature-card:hover .feature-icon {
+    color: var(--bg);
   }
 
   .feature-icon {
-    width: 24px;
-    height: 24px;
+    width: 26px;
+    height: 26px;
     color: var(--accent);
+    transition: color 0.2s;
   }
 
   .feature-title {
     font-size: 1.125rem;
     font-weight: 600;
     margin: 0 0 0.5rem;
+    letter-spacing: -0.01em;
   }
 
   .feature-desc {
     font-size: 0.9rem;
     color: var(--text-muted);
-    line-height: 1.5;
+    line-height: 1.55;
     margin: 0;
   }
 
-  .coming-soon-wrap {
-    margin-top: 2rem;
+  /* Integrations section - IPAM ↔ AWS / Azure / GCP (Orizon-style animations) */
+  @keyframes integrationFlow {
+    to { stroke-dashoffset: -60; }
   }
 
-  .coming-soon-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 1.5rem;
+  @keyframes hubFloat {
+    0%, 100% { transform: translateY(0) scale(1); opacity: 1; }
+    50% { transform: translateY(-6px) scale(1.02); opacity: 0.98; }
   }
 
-  .coming-soon-label {
-    margin: 0 0 0.75rem;
-    text-align: left;
-    font-size: 0.85rem;
+  @keyframes cardReveal {
+    from {
+      opacity: 0;
+      transform: translateY(20px) scale(0.96);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes cardFloat {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-4px); }
+  }
+
+  .integrations-section {
+    position: relative;
+  }
+
+  .integrations-section.visible .integrations-diagram-wrap {
+    animation: fadeInUp 0.8s ease-out 0.1s both;
+  }
+
+  .integrations-section.visible .integration-node-card {
+    animation: cardReveal 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .integrations-section.visible .integration-node-onprem {
+    animation-delay: 0.25s;
+  }
+
+  .integrations-section.visible .integration-node-aws {
+    animation-delay: 0.4s;
+  }
+
+  .integrations-section.visible .integration-node-azure {
+    animation-delay: 0.55s;
+  }
+
+  .integrations-section.visible .integration-node-gcp {
+    animation-delay: 0.7s;
+  }
+
+  /* Gentle float on cards (Orizon-style), staggered phase */
+  .integrations-section.visible .integration-node-card:nth-child(2) {
+    animation-name: cardReveal, cardFloat;
+    animation-duration: 0.6s, 4s;
+    animation-delay: 0.25s, 0.4s;
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1), ease-in-out;
+    animation-iteration-count: 1, infinite;
+    animation-fill-mode: both, both;
+  }
+
+  .integrations-section.visible .integration-node-card:nth-child(3) {
+    animation-name: cardReveal, cardFloat;
+    animation-duration: 0.6s, 4s;
+    animation-delay: 0.4s, 0.6s;
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1), ease-in-out;
+    animation-iteration-count: 1, infinite;
+    animation-fill-mode: both, both;
+  }
+
+  .integrations-section.visible .integration-node-card:nth-child(4) {
+    animation-name: cardReveal, cardFloat;
+    animation-duration: 0.6s, 4s;
+    animation-delay: 0.55s, 0.8s;
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1), ease-in-out;
+    animation-iteration-count: 1, infinite;
+    animation-fill-mode: both, both;
+  }
+
+  .integrations-section.visible .integration-node-card:nth-child(5) {
+    animation-name: cardReveal, cardFloat;
+    animation-duration: 0.6s, 4s;
+    animation-delay: 0.7s, 1s;
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1), ease-in-out;
+    animation-iteration-count: 1, infinite;
+    animation-fill-mode: both, both;
+  }
+
+  .integrations-diagram-wrap {
+    position: relative;
+    max-width: 900px;
+    margin: 2.5rem auto 0;
+    padding: 1.5rem;
+    opacity: 0;
+  }
+
+  .integrations-glow {
+    position: absolute;
+    inset: -20%;
+    background: radial-gradient(
+      ellipse 80% 60% at 50% 50%,
+      var(--accent-dim) 0%,
+      transparent 60%
+    );
+    pointer-events: none;
+    opacity: 0.7;
+  }
+
+  .integrations-diagram-inner {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 820 / 520;
+    max-width: 820px;
+    margin: 0 auto;
+  }
+
+  .integrations-svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  .integrations-connectors .integration-line {
+    stroke-dashoffset: 0;
+    animation: integrationFlow 1.5s linear infinite;
+  }
+
+  .integrations-connectors .integration-line-onprem {
+    animation-delay: 0.25s;
+  }
+
+  .integrations-connectors .integration-line-azure {
+    animation-delay: 0.5s;
+  }
+
+  .integrations-connectors .integration-line-gcp {
+    animation-delay: 1s;
+  }
+
+  .integration-dot {
+    opacity: 0.9;
+  }
+
+  .integration-hub-bg {
+    animation: hubFloat 4s ease-in-out infinite;
+  }
+
+  /* Cloud provider overlay cards with logos */
+  .integration-coming-soon {
+    position: absolute;
+    top: 0.25rem;
+    right: 0.25rem;
+    padding: 0.15rem 0.4rem;
+    border-radius: 4px;
+    font-size: 0.55rem;
     font-weight: 600;
-    color: var(--accent);
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.03em;
+    color: var(--accent);
+    background: var(--accent-dim);
+    border: 1px solid var(--accent);
+    line-height: 1;
+    white-space: nowrap;
   }
 
-  .feature-card-coming-soon {
-    border-style: dashed;
+  .integration-node-card {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    padding: 0.75rem 1rem;
+    padding-top: 1.5rem;
+    border-radius: 18px;
+    border: 2px solid;
+    background: var(--surface);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.08), 0 0 0 1px var(--border);
+    transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.3s ease;
+    opacity: 0;
+  }
+
+  .integration-node-card:hover {
+    transform: translateY(-6px) scale(1.03);
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.12), 0 0 0 1px var(--border);
+  }
+
+  :global(.dark) .integration-node-card {
+    box-shadow: 0 6px 28px rgba(0, 0, 0, 0.28), 0 0 0 1px var(--border);
+  }
+
+  :global(.dark) .integration-node-card:hover {
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4), 0 0 0 1px var(--border);
+  }
+
+  /* Balanced cross: all nodes equal size (24% × 24%) */
+  .integration-node-onprem {
+    left: 2%;
+    top: 38%;
+    width: 24%;
+    height: 24%;
+    border-color: var(--text-muted);
+    background: linear-gradient(135deg, rgba(128, 128, 128, 0.12) 0%, rgba(128, 128, 128, 0.03) 100%);
+  }
+
+  .integration-node-aws {
+    left: 38%;
+    top: 2%;
+    width: 24%;
+    height: 24%;
+    border-color: #FF9900;
+    background: linear-gradient(135deg, rgba(255, 153, 0, 0.1) 0%, rgba(255, 153, 0, 0.02) 100%);
+  }
+
+  .integration-node-azure {
+    left: 74%;
+    top: 38%;
+    width: 24%;
+    height: 24%;
+    border-color: #0078D4;
+    background: linear-gradient(135deg, rgba(0, 120, 212, 0.1) 0%, rgba(0, 120, 212, 0.02) 100%);
+  }
+
+  .integration-node-gcp {
+    left: 38%;
+    top: 74%;
+    width: 24%;
+    height: 24%;
+    border-color: #4285F4;
+    background: linear-gradient(135deg, rgba(66, 133, 244, 0.1) 0%, rgba(52, 168, 83, 0.04) 100%);
+  }
+
+  .integration-node-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    flex-shrink: 0;
+  }
+
+  .integration-node-icon :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  .integration-node-aws .integration-node-icon {
+    color: #FF9900;
+  }
+
+  .integration-node-azure .integration-node-icon {
+    color: #0078D4;
+  }
+
+  .integration-node-gcp .integration-node-icon {
+    color: #4285F4;
+  }
+
+  .integration-node-onprem .integration-node-icon {
+    color: var(--text-muted);
+  }
+
+  .integration-node-title {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text);
+    line-height: 1.2;
+  }
+
+  .integration-node-subtitle {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-weight: 500;
+    line-height: 1.2;
+    text-align: center;
   }
 
   /* API section */
@@ -1101,11 +1579,16 @@ resource "google_compute_subnetwork" "app" {'{'}
     position: relative;
   }
 
+  .api-section.visible .api-diagram {
+    animation: fadeInUp 0.6s ease-out 0.15s both;
+  }
+
   .api-diagram {
     margin-bottom: 2rem;
     padding: 1.5rem;
     border-radius: var(--radius);
     filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.12)) drop-shadow(0 2px 8px rgba(0, 0, 0, 0.08));
+    opacity: 0;
   }
 
   :global(.dark) .api-diagram {
@@ -1138,6 +1621,16 @@ resource "google_compute_subnetwork" "app" {'{'}
     position: relative;
   }
 
+  .terraform-section.visible .terraform-grid,
+  .terraform-section.visible .terraform-tabs,
+  .terraform-section.visible .terraform-snippet {
+    animation: fadeInUp 0.5s ease-out both;
+  }
+
+  .terraform-section.visible .terraform-grid { animation-delay: 0.08s; }
+  .terraform-section.visible .terraform-tabs { animation-delay: 0.14s; opacity: 0; }
+  .terraform-section.visible .terraform-snippet { animation-delay: 0.2s; opacity: 0; }
+
   .terraform-header {
     display: flex;
     flex-direction: column;
@@ -1155,13 +1648,29 @@ resource "google_compute_subnetwork" "app" {'{'}
     grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
     gap: 1.5rem;
     margin-bottom: 2rem;
+    opacity: 0;
+  }
+
+  .terraform-tabs {
+    opacity: 0;
+  }
+
+  .terraform-snippet {
+    opacity: 0;
   }
 
   .terraform-card {
-    padding: 1.25rem;
-    border-radius: var(--radius);
+    padding: 1.5rem;
+    border-radius: 14px;
     background: var(--surface);
     border: 1px solid var(--border);
+    transition: transform 0.2s ease, border-color 0.2s, box-shadow 0.2s;
+  }
+
+  .terraform-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--accent);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
   }
 
   .terraform-card-title {
@@ -1259,36 +1768,48 @@ resource "google_compute_subnetwork" "app" {'{'}
     position: relative;
   }
 
+  .docs-section.visible .docs-section-links,
+  .docs-section.visible .docs-section-cta-wrap {
+    animation: fadeInUp 0.5s ease-out 0.1s both;
+  }
+
+  .docs-section.visible .docs-section-cta-wrap {
+    animation-delay: 0.18s;
+  }
+
   .docs-section-links {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
     gap: 0.75rem;
     max-width: 720px;
     margin: 0 auto 1.5rem;
+    opacity: 0;
   }
 
   .docs-section-link {
     display: block;
-    padding: 0.6rem 0.75rem;
-    border-radius: var(--radius);
+    padding: 0.7rem 1rem;
+    border-radius: 12px;
     background: var(--surface);
     border: 1px solid var(--border);
     color: var(--text);
     text-decoration: none;
     font-size: 0.9rem;
     font-weight: 500;
-    transition: border-color 0.15s, background 0.15s;
+    transition: border-color 0.2s, background 0.2s, transform 0.2s ease;
   }
 
   .docs-section-link:hover {
     border-color: var(--accent);
     background: var(--accent-dim);
     color: var(--text);
+    transform: translateY(-2px);
   }
 
   .docs-section-cta-wrap {
     text-align: center;
     margin: 0;
+    opacity: 0;
   }
 
   .docs-section-cta {
@@ -1314,6 +1835,10 @@ resource "google_compute_subnetwork" "app" {'{'}
     text-align: center;
   }
 
+  .cta-section.visible .cta-content {
+    animation: fadeInUp 0.6s ease-out 0.1s both;
+  }
+
   .cta-bg {
     position: absolute;
     inset: 0;
@@ -1323,34 +1848,37 @@ resource "google_compute_subnetwork" "app" {'{'}
 
   .cta-content {
     position: relative;
+    opacity: 0;
   }
 
   .cta-title {
-    font-size: 1.75rem;
+    font-size: clamp(1.75rem, 4vw, 2.25rem);
     font-weight: 700;
     margin: 0 0 0.5rem;
+    letter-spacing: -0.02em;
   }
 
   .cta-desc {
     color: var(--text-muted);
     margin: 0 0 1.5rem;
+    font-size: 1.05rem;
   }
 
   .btn-cta {
-    padding: 0.6rem 1.25rem;
-    border-radius: var(--radius);
-    background: transparent;
-    color: var(--text-muted);
-    border: 1px solid var(--border);
-    font-weight: 500;
+    padding: 0.75rem 1.5rem;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    font-weight: 600;
     font-size: 0.9375rem;
     cursor: pointer;
-    transition: border-color 0.15s, color 0.15s;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s;
   }
 
   .btn-cta:hover {
-    border-color: var(--text-muted);
-    color: var(--text);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px var(--accent-dim);
   }
 
   /* Footer */
