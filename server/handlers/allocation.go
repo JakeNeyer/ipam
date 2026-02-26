@@ -313,12 +313,13 @@ func allocationInOrg(s store.Storer, orgID uuid.UUID, alloc *network.Allocation)
 	if orgID == uuid.Nil {
 		return true
 	}
-	blocks, _, err := s.ListBlocksFiltered(strings.TrimSpace(alloc.Block.Name), nil, nil, &orgID, false, "", nil, 1, 0)
+	blocks, _, err := s.ListBlocksFiltered(strings.TrimSpace(alloc.Block.Name), nil, nil, &orgID, false, "", nil, 0, 0)
 	if err != nil || len(blocks) == 0 {
 		return false
 	}
 	for _, b := range blocks {
-		if strings.TrimSpace(b.CIDR) == strings.TrimSpace(alloc.Block.CIDR) {
+		contained, cErr := network.Contains(b.CIDR, alloc.Block.CIDR)
+		if cErr == nil && contained {
 			return true
 		}
 	}
