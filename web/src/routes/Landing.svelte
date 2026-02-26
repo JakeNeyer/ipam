@@ -7,6 +7,7 @@
   const base = (import.meta.env.BASE_URL || '/').replace(/\/+$/, '') + '/'
   const githubUrl = 'https://github.com/JakeNeyer/ipam'
   const githubApiUrl = 'https://api.github.com/repos/JakeNeyer/ipam'
+  const terraformRegistryUrl = 'https://registry.terraform.io/providers/JakeNeyer/ipam/latest/docs'
 
   let githubStats = null
 
@@ -396,9 +397,21 @@
     <div class="terraform-content">
       <div class="terraform-header">
         <p class="section-eyebrow">Infrastructure as code</p>
-        <h2 class="section-title terraform-title">Terraform provider</h2>
+        <div class="terraform-title-row">
+          <img src="{base}images/terraform.svg" alt="Terraform" class="terraform-logo" />
+          <h2 class="section-title terraform-title">Terraform provider</h2>
+        </div>
       </div>
       <p class="section-desc">Use IPAM with your favorite IaC tooling.</p>
+      <div class="terraform-registry-wrap">
+        <a href={terraformRegistryUrl} target="_blank" rel="noopener noreferrer" class="terraform-registry-link">
+          <img src="{base}images/terraform.svg" alt="" class="terraform-registry-icon" aria-hidden="true" />
+          <span>View on Terraform Registry</span>
+          <svg class="terraform-registry-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M7 17L17 7M17 7H7M17 7v10" />
+          </svg>
+        </a>
+      </div>
       <div class="terraform-grid">
         <div class="terraform-card">
           <h3 class="terraform-card-title">Resources</h3>
@@ -620,16 +633,24 @@ resource "google_compute_subnetwork" "app" {'{'}
   <footer class="landing-footer">
     <div class="footer-inner">
       <img src="{base}images/{$theme === 'light' ? 'logo-light.svg' : 'logo.svg'}" alt="IPAM" class="footer-logo" />
-      <p class="footer-copy">IP address management for environments, blocks, and allocations.</p>
-      <a href={githubUrl} target="_blank" rel="noopener noreferrer" class="github-link github-link-footer">
-      <span class="github-link-icon">
-        <SocialIcons alt="" network="github" width={32} height={32} fgColor="currentColor" bgColor="transparent" />
-      </span>
-      <span class="github-link-label">View on GitHub</span>
-      {#if githubStats}
-        <span class="github-link-count"> · {formatCount(githubStats.stars)}</span>
-      {/if}
-    </a>
+
+      <div class="footer-links">
+        <a href={githubUrl} target="_blank" rel="noopener noreferrer" class="github-link github-link-footer">
+          <span class="github-link-icon">
+            <SocialIcons alt="" network="github" width={32} height={32} fgColor="currentColor" bgColor="transparent" />
+          </span>
+          <span class="github-link-label">View on GitHub</span>
+          {#if githubStats}
+            <span class="github-link-count"> · {formatCount(githubStats.stars)}</span>
+          {/if}
+        </a>
+        <a href={terraformRegistryUrl} target="_blank" rel="noopener noreferrer" class="github-link github-link-footer">
+          <span class="github-link-icon">
+            <img src="{base}images/terraform.svg" alt="" class="footer-terraform-icon" />
+          </span>
+          <span class="github-link-label">Terraform Registry</span>
+        </a>
+      </div>
     </div>
   </footer>
   <button
@@ -1639,8 +1660,73 @@ resource "google_compute_subnetwork" "app" {'{'}
     margin-bottom: 0.5rem;
   }
 
+  .terraform-title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    justify-content: center;
+  }
+
+  .terraform-logo {
+    width: 2.5rem;
+    height: 2.5rem;
+    flex-shrink: 0;
+  }
+
   .terraform-title {
     margin: 0;
+  }
+
+  .terraform-registry-wrap {
+    text-align: center;
+    margin-bottom: 2rem;
+    opacity: 0;
+  }
+
+  .terraform-section.visible .terraform-registry-wrap {
+    animation: fadeInUp 0.5s ease-out 0.1s both;
+  }
+
+  .terraform-registry-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1.25rem;
+    border-radius: 999px;
+    background: var(--surface);
+    border: 1.5px solid var(--border);
+    color: var(--text);
+    text-decoration: none;
+    font-size: 0.9rem;
+    font-weight: 600;
+    transition: border-color 0.2s, background 0.2s, transform 0.2s ease, box-shadow 0.2s;
+  }
+
+  .terraform-registry-link:hover {
+    border-color: #5c4ee5;
+    background: rgba(92, 78, 229, 0.08);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(92, 78, 229, 0.15);
+    color: var(--text);
+  }
+
+  .terraform-registry-icon {
+    width: 1.25rem;
+    height: 1.25rem;
+    flex-shrink: 0;
+  }
+
+  .terraform-registry-arrow {
+    width: 1rem;
+    height: 1rem;
+    flex-shrink: 0;
+    opacity: 0.6;
+    transition: opacity 0.15s, transform 0.15s;
+  }
+
+  .terraform-registry-link:hover .terraform-registry-arrow {
+    opacity: 1;
+    transform: translate(1px, -1px);
   }
 
   .terraform-grid {
@@ -1900,13 +1986,18 @@ resource "google_compute_subnetwork" "app" {'{'}
     margin-bottom: 0.5rem;
   }
 
-  .footer-copy {
-    font-size: 0.875rem;
-    color: var(--text-muted);
-    margin: 0;
+
+  .footer-links {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1.5rem;
+    margin-top: 1rem;
+    flex-wrap: wrap;
   }
 
-  .github-link-footer {
-    margin-top: 1rem;
+  .footer-terraform-icon {
+    width: 1.5rem;
+    height: 1.5rem;
   }
 </style>
