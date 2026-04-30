@@ -153,7 +153,7 @@ export async function getPool(id) {
 }
 
 export async function updatePool(id, name, cidr) {
-  return put('/pools/' + id, { name, cidr })
+  return put('/pools/' + id, { id, name, cidr })
 }
 
 export async function deletePool(id) {
@@ -200,15 +200,27 @@ const NIL_UUID = '00000000-0000-0000-0000-000000000000'
  * @param {string|null} [poolId] - optional pool UUID; pass null to clear
  */
 export async function updateBlock(id, name, environmentId = null, organizationId = null, poolId = undefined) {
-  const body = { name }
+  const body = { id, name }
   if (environmentId !== undefined && environmentId !== null) {
     body.environment_id = environmentId === '' ? NIL_UUID : environmentId
   }
   if (environmentId === '' || environmentId === null) {
     if (organizationId) body.organization_id = organizationId
   }
-  if (poolId !== undefined) body.pool_id = poolId
-  return put('/blocks/' + id, body)
+  if (poolId !== undefined) {
+    body.pool_id = poolId === null || poolId === '' ? NIL_UUID : poolId
+  }
+  try {
+    return await put('/blocks/' + id, body)
+  } catch (err) {
+    // Defensive retry for strict validator paths: for pure rename flows, a minimal payload is sufficient.
+    const msg = String(err?.message || '').toLowerCase()
+    const hasOnlyNameUpdate = environmentId === undefined && poolId === undefined
+    if (hasOnlyNameUpdate && msg.includes('validation failed')) {
+      return put('/blocks/' + id, { name })
+    }
+    throw err
+  }
 }
 
 export async function deleteBlock(id) {
@@ -247,7 +259,7 @@ export async function createAllocation(name, block_name, cidr) {
 }
 
 export async function updateAllocation(id, name) {
-  return put('/allocations/' + id, { name })
+  return put('/allocations/' + id, { id, name })
 }
 
 export async function deleteAllocation(id) {
