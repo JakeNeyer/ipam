@@ -92,6 +92,7 @@ func WriteJSONError(w http.ResponseWriter, msg string, code int) {
 
 // SetSessionCookie sets the session cookie on the response. secure should be true when using HTTPS.
 func SetSessionCookie(w http.ResponseWriter, sessionID string, secure bool) {
+	// #nosec G124 -- Secure is intentionally conditional to support local HTTP development.
 	c := &http.Cookie{
 		Name:     SessionCookieName,
 		Value:    sessionID,
@@ -101,7 +102,6 @@ func SetSessionCookie(w http.ResponseWriter, sessionID string, secure bool) {
 		SameSite: http.SameSiteLaxMode,
 		Secure:   secure,
 	}
-	// #nosec G124 -- Secure is intentionally conditional to support local HTTP development.
 	http.SetCookie(w, c)
 }
 
