@@ -101,11 +101,13 @@ func SetSessionCookie(w http.ResponseWriter, sessionID string, secure bool) {
 		SameSite: http.SameSiteLaxMode,
 		Secure:   secure,
 	}
+	// #nosec G124 -- Secure is intentionally conditional to support local HTTP development.
 	http.SetCookie(w, c)
 }
 
 // ClearSessionCookie clears the session cookie. secure should match the cookie that was set (e.g. request was HTTPS).
 func ClearSessionCookie(w http.ResponseWriter, secure bool) {
+	// #nosec G124 -- Secure must match the cookie originally set; local HTTP uses Secure=false.
 	http.SetCookie(w, &http.Cookie{
 		Name:     SessionCookieName,
 		Value:    "",

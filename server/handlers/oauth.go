@@ -93,6 +93,7 @@ func OAuthStartHandler(cfg *config.Config, registry *oauth.ProviderRegistry) htt
 			conf.Scopes = []string{"user:email"}
 		}
 		authURL := conf.AuthCodeURL(state)
+		// #nosec G710 -- OAuth provider authorize URL is generated from trusted configured endpoint.
 		http.Redirect(w, r, authURL, http.StatusFound)
 	}
 }
@@ -167,7 +168,7 @@ func OAuthCallbackHandler(s store.Storer, cfg *config.Config, registry *oauth.Pr
 		}
 
 		secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
-		appRedirect := appRedirectBase(r, appOrigin) + appHashPath("dashboard")
+		appRedirect := appRedirectBase(appOrigin) + appHashPath("dashboard")
 
 		if inviteToken != "" {
 			inv, err := s.GetSignupInviteByToken(inviteToken)
@@ -246,11 +247,12 @@ func redirectBase(r *http.Request) string {
 	return scheme + "://" + host
 }
 
-func appRedirectBase(r *http.Request, appOrigin string) string {
+func appRedirectBase(appOrigin string) string {
 	if s := strings.TrimSpace(appOrigin); s != "" {
 		return strings.TrimSuffix(s, "/")
 	}
-	return redirectBase(r)
+	// Use relative redirects by default to avoid host-header-based open redirect risks.
+	return ""
 }
 
 func appHashPath(fragment string) string {
@@ -258,7 +260,7 @@ func appHashPath(fragment string) string {
 }
 
 func redirectWithError(w http.ResponseWriter, r *http.Request, msg string, appOrigin string) {
-	base := appRedirectBase(r, appOrigin)
+	base := appRedirectBase(appOrigin)
 	u := base + appHashPath("login") + "?error=" + url.QueryEscape(msg)
 	http.Redirect(w, r, u, http.StatusFound)
 }

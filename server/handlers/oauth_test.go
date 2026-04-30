@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/JakeNeyer/ipam/server/config"
@@ -121,8 +122,17 @@ func TestOAuthCallbackHandler_MissingCode(t *testing.T) {
 	if loc == "" {
 		t.Fatal("missing Location header")
 	}
-	if loc[:8] != "https://" && loc[:7] != "http://" {
-		t.Errorf("Location = %s", loc)
+	if !strings.HasPrefix(loc, "/#login?error=") {
+		t.Errorf("Location = %s, want relative /#login?error=...", loc)
+	}
+}
+
+func TestAppRedirectBase(t *testing.T) {
+	if got := appRedirectBase(""); got != "" {
+		t.Errorf("appRedirectBase(empty) = %q, want empty", got)
+	}
+	if got := appRedirectBase(" https://app.example.com/ "); got != "https://app.example.com" {
+		t.Errorf("appRedirectBase(trimmed) = %q, want https://app.example.com", got)
 	}
 }
 
