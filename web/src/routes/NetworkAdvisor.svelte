@@ -552,6 +552,8 @@
       generateSuccess =
         `Created ${envCount} environment${envCount === 1 ? '' : 's'} with ${totalBlocksCreated} network block${totalBlocksCreated === 1 ? '' : 's'}` +
         (reservedCreated > 0 ? ` and ${reservedCreated} reserved block${reservedCreated === 1 ? '' : 's'}.` : '.')
+      // After successful generation, take users back to the dashboard where they can review new resources.
+      window.location.hash = 'dashboard'
     } catch (err) {
       generateError = err?.message || 'Failed to generate resources from advisor plan.'
     } finally {
@@ -998,9 +1000,16 @@
           </div>
         {/each}
       </div>
-      <div class="actions">
-        <button type="button" class="btn btn-primary btn-small" on:click={generateAdvisorPlan} disabled={generating}>
-          {generating ? 'Generating...' : 'Generate plan'}
+      <div class="actions generate-actions">
+        <p class="field-note generate-note">Ready to create these resources and review them on the dashboard.</p>
+        <button type="button" class="btn btn-primary btn-generate-plan" on:click={generateAdvisorPlan} disabled={generating}>
+          {#if generating}
+            Generating plan...
+          {:else}
+            <span class="sparkle" aria-hidden="true">✦</span>
+            Generate plan
+            <span class="sparkle" aria-hidden="true">✦</span>
+          {/if}
         </button>
       </div>
       {#if generateError}
@@ -1185,6 +1194,24 @@
   }
   .actions {
     margin-top: 0.75rem;
+  }
+  .generate-actions {
+    margin-top: 1rem;
+  }
+  .generate-note {
+    margin-bottom: 0.45rem;
+  }
+  .btn-generate-plan {
+    width: 100%;
+    max-width: 320px;
+    min-height: 2.25rem;
+    font-size: 0.88rem;
+    font-weight: 600;
+  }
+  .sparkle {
+    display: inline-block;
+    margin: 0 0.35rem;
+    line-height: 1;
   }
   .advisor-grid {
     display: grid;
