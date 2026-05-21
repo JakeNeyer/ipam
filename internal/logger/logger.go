@@ -9,35 +9,35 @@ import (
 
 // Standard keys for structured logs (consistent across the backend).
 const (
-	KeyPath       = "path"
-	KeyMethod     = "method"
-	KeyStatus     = "status"
-	KeyDuration   = "duration_ms"
-	KeyError      = "error"
-	KeyUserID     = "user_id"
-	KeyEmail      = "email"
-	KeyOperation  = "operation"
+	KeyPath          = "path"
+	KeyMethod        = "method"
+	KeyStatus        = "status"
+	KeyDuration      = "duration_ms"
+	KeyError         = "error"
+	KeyUserID        = "user_id"
+	KeyEmail         = "email"
+	KeyOperation     = "operation"
 	KeySetupRequired = "setup_required"
 )
 
 // Standard error messages (consistent, non-PII where possible).
 const (
-	MsgSetupStatusFailed   = "setup status check failed"
-	MsgSetupAlreadyDone    = "setup already completed"
-	MsgSetupMissingCreds   = "email and password required"
-	MsgSetupPasswordFailed = "password setup failed"
+	MsgSetupStatusFailed     = "setup status check failed"
+	MsgSetupAlreadyDone      = "setup already completed"
+	MsgSetupMissingCreds     = "email and password required"
+	MsgSetupPasswordFailed   = "password setup failed"
 	MsgSetupCreateUserFailed = "failed to create user"
-	MsgAuthMissingCreds   = "email and password required"
-	MsgAuthInvalidCreds   = "invalid email or password"
-	MsgAuthPasswordMismatch = "password mismatch"
-	MsgStoreError         = "store error"
+	MsgAuthMissingCreds      = "email and password required"
+	MsgAuthInvalidCreds      = "invalid email or password"
+	MsgAuthPasswordMismatch  = "password mismatch"
+	MsgStoreError            = "store error"
 )
 
 var Log *slog.Logger
 
 func init() {
 	Log = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+		Level:     slog.LevelInfo,
 		AddSource: false,
 	}))
 }

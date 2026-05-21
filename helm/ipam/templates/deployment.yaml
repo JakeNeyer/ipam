@@ -41,14 +41,7 @@ spec:
             - name: INITIAL_ADMIN_EMAIL
               value: {{ .Values.config.initialAdminEmail | quote }}
             {{- end }}
-            {{- if .Values.config.enableGitHubOAuth }}
-            - name: ENABLE_GITHUB_OAUTH
-              value: "true"
-            {{- end }}
-            {{- if .Values.config.githubClientId }}
-            - name: GITHUB_CLIENT_ID
-              value: {{ .Values.config.githubClientId | quote }}
-            {{- end }}
+            {{ include "ipam.oauthEnv" . | nindent 12 }}
             {{- if .Values.existingSecret }}
             - name: DATABASE_URL
               valueFrom:
@@ -61,12 +54,6 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.existingSecret }}
                   key: initial-admin-password
-                  optional: true
-            - name: GITHUB_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.existingSecret }}
-                  key: github-client-secret
                   optional: true
             {{- else if and .Values.database .Values.database.url }}
             - name: DATABASE_URL

@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -17,19 +16,16 @@ import (
 	"golang.org/x/oauth2"
 )
 
-const (
-	oauthStateLogin  = "login"
-	oauthStateInvite = "invite:"
-)
-
-// AuthConfigResponse is the response for GET /api/auth/config (no auth).
-type AuthConfigResponse struct {
-	OAuthProviders []string `json:"oauth_providers"`
-	// GitHubOAuthEnabled is true when "github" is in OAuthProviders (backward compatibility).
-	GitHubOAuthEnabled bool `json:"github_oauth_enabled"`
+type OAuthProviderOption struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
 }
 
-// AuthConfigHandler returns auth-related config for the frontend (enabled OAuth provider IDs).
+type AuthConfigResponse struct {
+	OAuthProviders       []string              `json:"oauth_providers"`
+	OAuthProviderOptions []OAuthProviderOption `json:"oauth_provider_options"`
+}
+
 func AuthConfigHandler(cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -37,29 +33,29 @@ func AuthConfigHandler(cfg *config.Config) http.HandlerFunc {
 			return
 		}
 		providers := cfg.EnabledOAuthProviders()
-		githubEnabled := false
-		for _, p := range providers {
-			if p == "github" {
-				githubEnabled = true
-				break
+		options := make([]OAuthProviderOption, 0, len(providers))
+		for _, id := range providers {
+			label := config.DefaultOAuthDisplayName(id)
+			if pc := cfg.OAuthProvider(id); pc != nil && pc.DisplayName != "" {
+				label = pc.DisplayName
 			}
+			options = append(options, OAuthProviderOption{ID: id, DisplayName: label})
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(AuthConfigResponse{
-			OAuthProviders:     providers,
-			GitHubOAuthEnabled: githubEnabled,
+			OAuthProviders:       providers,
+			OAuthProviderOptions: options,
 		})
 	}
 }
 
-// OAuthStartHandler redirects to the provider's OAuth authorize URL. Path: /api/auth/oauth/:provider/start. Query: invite_token (optional).
 func OAuthStartHandler(cfg *config.Config, registry *oauth.ProviderRegistry) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		provider := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/api/auth/oauth/"))
+		provider := config.NormalizeOAuthProviderID(strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/api/auth/oauth/")))
 		provider = strings.TrimSuffix(provider, "/start")
 		provider = strings.Trim(provider, "/")
 		if provider == "" {
@@ -77,9 +73,17 @@ func OAuthStartHandler(cfg *config.Config, registry *oauth.ProviderRegistry) htt
 			return
 		}
 		inviteToken := strings.TrimSpace(r.URL.Query().Get("invite_token"))
-		state := oauthStateLogin
-		if inviteToken != "" {
-			state = oauthStateInvite + base64.URLEncoding.EncodeToString([]byte(inviteToken))
+		secure := requestSecure(r)
+		nonce, err := auth.NewOAuthStateNonce()
+		if err != nil {
+			auth.WriteJSONError(w, "could not start OAuth", http.StatusInternalServerError)
+			return
+		}
+		if err := auth.SetOAuthStateCookie(w, auth.OAuthStatePayload{
+			Nonce: nonce, Provider: provider, InviteToken: inviteToken,
+		}, secure); err != nil {
+			auth.WriteJSONError(w, "could not start OAuth", http.StatusInternalServerError)
+			return
 		}
 		redirectURI := redirectBase(r) + "/api/auth/oauth/" + provider + "/callback"
 		conf := &oauth2.Config{
@@ -89,24 +93,20 @@ func OAuthStartHandler(cfg *config.Config, registry *oauth.ProviderRegistry) htt
 			Endpoint:     endpoint,
 			Scopes:       pc.Scopes,
 		}
-		if len(conf.Scopes) == 0 && provider == "github" {
-			conf.Scopes = []string{"user:email"}
-		}
-		authURL := conf.AuthCodeURL(state)
+		conf.Scopes = defaultOAuthScopes(provider, conf.Scopes)
+		authURL := conf.AuthCodeURL(nonce)
 		// #nosec G710 -- OAuth provider authorize URL is generated from trusted configured endpoint.
 		http.Redirect(w, r, authURL, http.StatusFound)
 	}
 }
 
-// OAuthCallbackHandler exchanges code for token, fetches user info, then creates/links user and sets session.
-// Path: /api/auth/oauth/:provider/callback.
 func OAuthCallbackHandler(s store.Storer, cfg *config.Config, registry *oauth.ProviderRegistry) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		provider := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/api/auth/oauth/"))
+		provider := config.NormalizeOAuthProviderID(strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/api/auth/oauth/")))
 		provider = strings.TrimSuffix(provider, "/callback")
 		provider = strings.Trim(provider, "/")
 		if provider == "" {
@@ -129,6 +129,14 @@ func OAuthCallbackHandler(s store.Storer, cfg *config.Config, registry *oauth.Pr
 			redirectWithError(w, r, "missing code or state", cfg.AppOrigin)
 			return
 		}
+		stored, ok := auth.OAuthStateFromRequest(r)
+		if !ok || stored.Nonce != state || stored.Provider != provider {
+			redirectWithError(w, r, "invalid or expired OAuth state", cfg.AppOrigin)
+			return
+		}
+		inviteToken := strings.TrimSpace(stored.InviteToken)
+		secure := requestSecure(r)
+		auth.ClearOAuthStateCookie(w, secure)
 		redirectURI := redirectBase(r) + "/api/auth/oauth/" + provider + "/callback"
 		conf := &oauth2.Config{
 			ClientID:     pc.ClientID,
@@ -137,9 +145,7 @@ func OAuthCallbackHandler(s store.Storer, cfg *config.Config, registry *oauth.Pr
 			Endpoint:     endpoint,
 			Scopes:       pc.Scopes,
 		}
-		if len(conf.Scopes) == 0 && provider == "github" {
-			conf.Scopes = []string{"user:email"}
-		}
+		conf.Scopes = defaultOAuthScopes(provider, conf.Scopes)
 		token, err := conf.Exchange(r.Context(), code)
 		if err != nil {
 			redirectWithError(w, r, "failed to exchange code", cfg.AppOrigin)
@@ -157,17 +163,6 @@ func OAuthCallbackHandler(s store.Storer, cfg *config.Config, registry *oauth.Pr
 		}
 
 		appOrigin := cfg.AppOrigin
-		var inviteToken string
-		if strings.HasPrefix(state, oauthStateInvite) {
-			b, err := base64.URLEncoding.DecodeString(strings.TrimPrefix(state, oauthStateInvite))
-			if err != nil {
-				redirectWithError(w, r, "invalid state", appOrigin)
-				return
-			}
-			inviteToken = string(b)
-		}
-
-		secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 		appRedirect := appRedirectBase(appOrigin) + appHashPath("dashboard")
 
 		if inviteToken != "" {
@@ -190,12 +185,12 @@ func OAuthCallbackHandler(s store.Storer, cfg *config.Config, registry *oauth.Pr
 				role = store.RoleUser
 			}
 			newUser := &store.User{
-				Email:                email,
-				PasswordHash:         "",
-				Role:                 role,
-				OrganizationID:       orgID,
-				OAuthProvider:        provider,
-				OAuthProviderUserID:  providerUserID,
+				Email:               email,
+				PasswordHash:        "",
+				Role:                role,
+				OrganizationID:      orgID,
+				OAuthProvider:       provider,
+				OAuthProviderUserID: providerUserID,
 			}
 			if err := s.CreateUser(newUser); err != nil {
 				redirectWithError(w, r, "could not create account", appOrigin)
@@ -211,13 +206,15 @@ func OAuthCallbackHandler(s store.Storer, cfg *config.Config, registry *oauth.Pr
 			setSessionAndRedirect(w, r, s, user, secure, appRedirect)
 			return
 		}
-		user, err = s.GetUserByEmail(email)
-		if err == nil {
-			if user.OAuthProvider == "" || user.OAuthProviderUserID == "" {
-				_ = s.SetUserOAuth(user.ID, provider, providerUserID)
+		if pc.AllowEmailMatch {
+			user, err = s.GetUserByEmail(email)
+			if err == nil {
+				if user.OAuthProvider == "" || user.OAuthProviderUserID == "" {
+					_ = s.SetUserOAuth(user.ID, provider, providerUserID)
+				}
+				setSessionAndRedirect(w, r, s, user, secure, appRedirect)
+				return
 			}
-			setSessionAndRedirect(w, r, s, user, secure, appRedirect)
-			return
 		}
 		users, listErr := s.ListUsers(nil)
 		if listErr == nil && len(users) == 1 {
@@ -230,6 +227,17 @@ func OAuthCallbackHandler(s store.Storer, cfg *config.Config, registry *oauth.Pr
 		}
 		redirectWithError(w, r, "Use a signup link or ask an admin to create your account", appOrigin)
 	}
+}
+
+func defaultOAuthScopes(_ string, scopes []string) []string {
+	if len(scopes) > 0 {
+		return scopes
+	}
+	return []string{"openid", "email", "profile"}
+}
+
+func requestSecure(r *http.Request) bool {
+	return r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 }
 
 func redirectBase(r *http.Request) string {

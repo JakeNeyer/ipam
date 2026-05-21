@@ -267,14 +267,26 @@ export async function deleteAllocation(id) {
 }
 
 /**
- * Auth config (no auth required). Returns { oauth_providers: string[], github_oauth_enabled: boolean }.
+ * Auth config (no auth required).
+ * @returns {{ oauthProviders: string[], oauthProviderOptions: { id: string, displayName: string }[] }}
  */
 export async function getAuthConfig() {
   const data = await get('/auth/config')
   const providers = Array.isArray(data?.oauth_providers) ? data.oauth_providers : []
+  const options = Array.isArray(data?.oauth_provider_options)
+    ? data.oauth_provider_options
+        .map((o) => ({
+          id: String(o?.id ?? ''),
+          displayName: String(o?.display_name ?? ''),
+        }))
+        .filter((o) => o.id)
+    : providers.map((id) => ({
+        id,
+        displayName: `Sign in with ${id.charAt(0).toUpperCase()}${id.slice(1)}`,
+      }))
   return {
     oauthProviders: providers,
-    githubOAuthEnabled: data?.github_oauth_enabled === true || providers.includes('github'),
+    oauthProviderOptions: options,
   }
 }
 

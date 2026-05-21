@@ -42,7 +42,7 @@ func NewServer(s store.Storer, cfg *config.Config) *web.Service {
 	logoutUC := handlers.NewLogoutUseCase(s)
 	svc.Post("/api/auth/logout", logoutUC, nethttp.SuccessStatus(204))
 	if cfg != nil && len(cfg.EnabledOAuthProviders()) > 0 {
-		registry := oauth.NewProviderRegistry()
+		registry := oauth.NewProviderRegistry(cfg)
 		for _, provider := range cfg.EnabledOAuthProviders() {
 			svc.Handle("/api/auth/oauth/"+provider+"/start", handlers.OAuthStartHandler(cfg, registry))
 			svc.Handle("/api/auth/oauth/"+provider+"/callback", handlers.OAuthCallbackHandler(s, cfg, registry))

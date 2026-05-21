@@ -16,9 +16,9 @@ import (
 
 // CreateSignupInviteRequest is the body for POST /api/admin/signup-invites.
 type CreateSignupInviteRequest struct {
-	ExpiresInHours int        `json:"expires_in_hours"`
-	OrganizationID uuid.UUID  `json:"organization_id,omitempty"`
-	Role           string     `json:"role,omitempty"`
+	ExpiresInHours int       `json:"expires_in_hours"`
+	OrganizationID uuid.UUID `json:"organization_id,omitempty"`
+	Role           string    `json:"role,omitempty"`
 }
 
 // CreateSignupInviteResponse is the response for POST /api/admin/signup-invites.

@@ -81,9 +81,7 @@ export async function checkAuth() {
     ])
     user.set(u)
     if (authCfg) {
-      oauthEnabled.set(
-        (Array.isArray(authCfg.oauthProviders) && authCfg.oauthProviders.length > 0) ||
-        authCfg.githubOAuthEnabled === true
+      oauthEnabled.set(Array.isArray(authCfg.oauthProviders) && authCfg.oauthProviders.length > 0
       )
     }
     if (u && isGlobalAdmin(u)) {

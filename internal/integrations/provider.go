@@ -47,7 +47,7 @@ type BlockSyncResult struct {
 type AllocationSyncResult struct {
 	Create             []*network.Allocation
 	Update             []*network.Allocation // must have Id set (existing app allocation)
-	CurrentExternalIDs []string             // external IDs that exist in the cloud after this sync; allocations for this connection not in this set are cleared (IPAM) or deleted
+	CurrentExternalIDs []string              // external IDs that exist in the cloud after this sync; allocations for this connection not in this set are cleared (IPAM) or deleted
 }
 
 // ConnectionWithEnvMapping is optional: when a provider needs to map cloud scope/region to app environment.

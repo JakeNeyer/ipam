@@ -14,7 +14,7 @@ type Allocation struct {
 	Name         string     `json:"name"`
 	Block        Block      `json:"block"`
 	Provider     string     `json:"provider,omitempty"`      // "native", "aws", "azure", "gcp"; default "native"
-	ExternalID   string     `json:"external_id,omitempty"`  // provider resource ID (e.g. subnet-xxxx)
+	ExternalID   string     `json:"external_id,omitempty"`   // provider resource ID (e.g. subnet-xxxx)
 	ConnectionID *uuid.UUID `json:"connection_id,omitempty"` // cloud connection used to sync
 	DeletedAt    *time.Time `json:"deleted_at,omitempty"`    // set when soft-deleted (pending cloud delete on next sync)
 }

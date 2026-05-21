@@ -1,6 +1,5 @@
 <script>
   import { onMount } from 'svelte'
-  import Icon from '@iconify/svelte'
   import { theme } from '../lib/theme.js'
   import { getAuthConfig, login } from '../lib/api.js'
   import { user } from '../lib/auth.js'
@@ -10,7 +9,7 @@
   let password = ''
   let error = ''
   let submitting = false
-  let githubOAuthEnabled = false
+  let oauthProviderOptions = []
   let configLoaded = false
   let hasOAuthRedirectError = false
   let showErrorModal = false
@@ -27,7 +26,7 @@
     }
     getAuthConfig()
       .then((c) => {
-        githubOAuthEnabled = c?.githubOAuthEnabled === true
+        oauthProviderOptions = Array.isArray(c?.oauthProviderOptions) ? c.oauthProviderOptions : []
         configLoaded = true
       })
       .catch(() => {
@@ -48,9 +47,9 @@
     }
   }
 
-  function signInWithGitHub() {
+  function signInWithProvider(providerId) {
     const base = window.location.origin + window.location.pathname.replace(/\/$/, '') || ''
-    window.location.href = base + '/api/auth/oauth/github/start'
+    window.location.href = base + '/api/auth/oauth/' + encodeURIComponent(providerId) + '/start'
   }
 
   async function handleSubmit(e) {
@@ -88,11 +87,17 @@
       {/if}
       {#if !configLoaded}
         <p class="login-muted">Loading…</p>
-      {:else if githubOAuthEnabled || hasOAuthRedirectError}
-        <button type="button" class="login-github" on:click={signInWithGitHub} disabled={submitting}>
-          <Icon icon="simple-icons:github" width="1.25rem" height="1.25rem" aria-hidden="true" />
-          Sign in with GitHub
-        </button>
+      {:else if oauthProviderOptions.length > 0 || hasOAuthRedirectError}
+        {#each oauthProviderOptions as provider (provider.id)}
+          <button
+            type="button"
+            class="login-oauth"
+            on:click={() => signInWithProvider(provider.id)}
+            disabled={submitting}
+          >
+            {provider.displayName || `Sign in with ${provider.id}`}
+          </button>
+        {/each}
       {:else}
         <label class="login-label" for="login-email">
           <span>Email</span>
@@ -192,14 +197,14 @@
     font-size: 0.9rem;
     color: var(--text-muted);
   }
-  .login-github {
+  .login-oauth {
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
     width: 100%;
     padding: 0.6rem 1rem;
-    background: #000;
+    background: var(--accent);
     color: #fff;
     border: none;
     border-radius: var(--radius);
@@ -208,10 +213,10 @@
     cursor: pointer;
     transition: opacity 0.15s, background 0.15s;
   }
-  .login-github:hover:not(:disabled) {
-    background: #1a1a1a;
+  .login-oauth:hover:not(:disabled) {
+    opacity: 0.92;
   }
-  .login-github:disabled {
+  .login-oauth:disabled {
     opacity: 0.7;
     cursor: not-allowed;
   }

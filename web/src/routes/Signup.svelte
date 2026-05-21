@@ -1,6 +1,5 @@
 <script>
   import { onMount } from 'svelte'
-  import Icon from '@iconify/svelte'
   import { theme } from '../lib/theme.js'
   import { getAuthConfig, validateSignupInvite, registerWithInvite } from '../lib/api.js'
   import { user } from '../lib/auth.js'
@@ -15,10 +14,16 @@
   let validating = true
   let valid = false
   let expiresAt = ''
-  let githubOAuthEnabled = false
+  let oauthProviderOptions = []
+
+  $: oauthEnabled = oauthProviderOptions.length > 0
 
   onMount(async () => {
-    getAuthConfig().then((c) => { githubOAuthEnabled = c?.githubOAuthEnabled === true }).catch(() => {})
+    getAuthConfig()
+      .then((c) => {
+        oauthProviderOptions = Array.isArray(c?.oauthProviderOptions) ? c.oauthProviderOptions : []
+      })
+      .catch(() => {})
     if (!token || !token.trim()) {
       error = 'Invalid signup link. No token provided.'
       validating = false
@@ -37,9 +42,14 @@
     }
   })
 
-  function signUpWithGitHub() {
+  function signUpWithProvider(providerId) {
     const base = window.location.origin + window.location.pathname.replace(/\/$/, '') || ''
-    window.location.href = base + '/api/auth/oauth/github/start?invite_token=' + encodeURIComponent(token.trim())
+    window.location.href =
+      base +
+      '/api/auth/oauth/' +
+      encodeURIComponent(providerId) +
+      '/start?invite_token=' +
+      encodeURIComponent(token.trim())
   }
 
   async function handleSubmit(e) {
@@ -82,7 +92,7 @@
     <img src={$theme === 'light' ? '/images/logo-light.svg' : '/images/logo.svg'} alt="IPAM" class="signup-logo" />
     <h1 class="signup-title">Create your account</h1>
     <p class="signup-subtitle">
-      {#if githubOAuthEnabled}
+      {#if oauthEnabled}
         You've been invited to join. Sign up with your provider to continue.
       {:else}
         You've been invited to join. Enter your details below.
@@ -95,14 +105,21 @@
     {:else if !valid && !validating}
       <div class="signup-error" role="alert">{error}</div>
       <a href="#login" class="signup-link">Sign in</a>
-    {:else if githubOAuthEnabled && valid && !validating}
+    {:else if oauthEnabled && valid && !validating}
       {#if error}
         <div class="signup-error" role="alert">{error}</div>
       {/if}
-      <button type="button" class="signup-github" on:click={signUpWithGitHub} disabled={submitting}>
-        <Icon icon="simple-icons:github" width="1.25rem" height="1.25rem" aria-hidden="true" />
-        Sign up with GitHub
-      </button>
+      {#each oauthProviderOptions as provider (provider.id)}
+        <button
+          type="button"
+          class="signup-oauth"
+          on:click={() => signUpWithProvider(provider.id)}
+          disabled={submitting}
+        >
+          {provider.displayName?.replace(/^Sign in with /, 'Sign up with ') ||
+            `Sign up with ${provider.id}`}
+        </button>
+      {/each}
     {:else}
       {#if validating}
         <p class="signup-muted">Checking invite link…</p>
@@ -250,7 +267,7 @@
   .signup-submit {
     margin-top: 0.5rem;
   }
-  .signup-github {
+  .signup-oauth {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -258,7 +275,7 @@
     width: 100%;
     margin-bottom: 0.5rem;
     padding: 0.6rem 1rem;
-    background: #000;
+    background: var(--accent);
     color: #fff;
     border: none;
     border-radius: var(--radius);
@@ -267,10 +284,10 @@
     cursor: pointer;
     transition: opacity 0.15s, background 0.15s;
   }
-  .signup-github:hover:not(:disabled) {
-    background: #1a1a1a;
+  .signup-oauth:hover:not(:disabled) {
+    opacity: 0.92;
   }
-  .signup-github:disabled {
+  .signup-oauth:disabled {
     opacity: 0.7;
     cursor: not-allowed;
   }
