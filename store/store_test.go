@@ -64,15 +64,15 @@ func TestCreateReservedBlock(t *testing.T) {
 // TestListReservedBlocks tests ListReservedBlocks with table-driven cases.
 func TestListReservedBlocks(t *testing.T) {
 	tests := []struct {
-		name        string
-		setup       func(*Store)
-		wantCount   int
+		name          string
+		setup         func(*Store)
+		wantCount     int
 		wantFirstCIDR string
 	}{
 		{
-			name:        "empty store",
-			setup:       func(s *Store) {},
-			wantCount:   0,
+			name:          "empty store",
+			setup:         func(s *Store) {},
+			wantCount:     0,
 			wantFirstCIDR: "",
 		},
 		{
@@ -80,7 +80,7 @@ func TestListReservedBlocks(t *testing.T) {
 			setup: func(s *Store) {
 				_ = s.CreateReservedBlock(&ReservedBlock{CIDR: "10.0.0.0/24", Reason: "a"})
 			},
-			wantCount:   1,
+			wantCount:     1,
 			wantFirstCIDR: "10.0.0.0/24",
 		},
 		{
@@ -90,7 +90,7 @@ func TestListReservedBlocks(t *testing.T) {
 				_ = s.CreateReservedBlock(&ReservedBlock{CIDR: "10.0.0.0/16"})
 				_ = s.CreateReservedBlock(&ReservedBlock{CIDR: "192.168.0.0/24"})
 			},
-			wantCount:   3,
+			wantCount:     3,
 			wantFirstCIDR: "10.0.0.0/16",
 		},
 	}
@@ -116,11 +116,11 @@ func TestListReservedBlocks(t *testing.T) {
 // TestGetReservedBlock tests GetReservedBlock with table-driven cases.
 func TestGetReservedBlock(t *testing.T) {
 	tests := []struct {
-		name      string
-		setup     func(*Store) uuid.UUID
-		id        uuid.UUID
-		wantCIDR  string
-		wantErr   bool
+		name     string
+		setup    func(*Store) uuid.UUID
+		id       uuid.UUID
+		wantCIDR string
+		wantErr  bool
 	}{
 		{
 			name:     "not found",
@@ -368,22 +368,22 @@ func TestGetEnvironment(t *testing.T) {
 // TestListEnvironmentsFiltered tests ListEnvironmentsFiltered with table-driven cases.
 func TestListEnvironmentsFiltered(t *testing.T) {
 	tests := []struct {
-		name      string
-		setup     func(*Store)
+		name       string
+		setup      func(*Store)
 		nameFilter string
-		limit     int
-		offset    int
-		wantLen   int
-		wantTotal int
+		limit      int
+		offset     int
+		wantLen    int
+		wantTotal  int
 	}{
 		{
-			name:      "empty",
-			setup:     func(s *Store) {},
+			name:       "empty",
+			setup:      func(s *Store) {},
 			nameFilter: "",
-			limit:     10,
-			offset:    0,
-			wantLen:   0,
-			wantTotal: 0,
+			limit:      10,
+			offset:     0,
+			wantLen:    0,
+			wantTotal:  0,
 		},
 		{
 			name: "filter by name",
@@ -406,10 +406,10 @@ func TestListEnvironmentsFiltered(t *testing.T) {
 				}
 			},
 			nameFilter: "",
-			limit:     2,
-			offset:    1,
-			wantLen:   2,
-			wantTotal: 5,
+			limit:      2,
+			offset:     1,
+			wantLen:    2,
+			wantTotal:  5,
 		},
 	}
 	for _, tt := range tests {
@@ -434,31 +434,31 @@ func TestListEnvironmentsFiltered(t *testing.T) {
 // TestCreateUser tests CreateUser with table-driven cases.
 func TestCreateUser(t *testing.T) {
 	tests := []struct {
-		name     string
-		email    string
-		role     string
-		wantErr  bool
+		name        string
+		email       string
+		role        string
+		wantErr     bool
 		errContains string
 	}{
 		{
-			name:     "valid admin",
-			email:    "admin@example.com",
-			role:     RoleAdmin,
-			wantErr:  false,
+			name:        "valid admin",
+			email:       "admin@example.com",
+			role:        RoleAdmin,
+			wantErr:     false,
 			errContains: "",
 		},
 		{
-			name:     "valid user",
-			email:    "user@example.com",
-			role:     RoleUser,
-			wantErr:  false,
+			name:        "valid user",
+			email:       "user@example.com",
+			role:        RoleUser,
+			wantErr:     false,
 			errContains: "",
 		},
 		{
-			name:     "duplicate email",
-			email:    "dup@example.com",
-			role:     RoleUser,
-			wantErr:  true,
+			name:        "duplicate email",
+			email:       "dup@example.com",
+			role:        RoleUser,
+			wantErr:     true,
 			errContains: "already exists",
 		},
 	}
@@ -488,11 +488,11 @@ func TestCreateUser(t *testing.T) {
 // TestGetUserByEmail tests GetUserByEmail with table-driven cases.
 func TestGetUserByEmail(t *testing.T) {
 	tests := []struct {
-		name      string
-		setup     func(*Store)
-		email     string
-		wantRole  string
-		wantErr   bool
+		name     string
+		setup    func(*Store)
+		email    string
+		wantRole string
+		wantErr  bool
 	}{
 		{
 			name:     "not found",

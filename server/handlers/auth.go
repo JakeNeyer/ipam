@@ -204,7 +204,7 @@ type apiTokenResponse struct {
 type createTokenResponse struct {
 	ID             string  `json:"id"`
 	Name           string  `json:"name"`
-	Token     string  `json:"token"`
+	Token          string  `json:"token"`
 	CreatedAt      string  `json:"created_at"`
 	ExpiresAt      *string `json:"expires_at,omitempty"`
 	OrganizationID string  `json:"organization_id,omitempty"`

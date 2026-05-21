@@ -13,7 +13,7 @@ service:
   type: ClusterIP
   port: 8080
 
-# Optional: use existing secret for DATABASE_URL and/or OAuth (keys: database-url, github-client-id, github-client-secret, initial-admin-email, initial-admin-password)
+# Optional: use existing secret for DATABASE_URL and/or OAuth (keys: database-url, oauth-client-secret, initial-admin-email, initial-admin-password)
 existingSecret: ""
 
 # In-memory store if DATABASE_URL is not set (not recommended for production)
@@ -44,10 +44,36 @@ config:
   # Initial admin (only created when no users exist). Prefer existingSecret for passwords.
   initialAdminEmail: ""
   initialAdminPassword: ""
-  # GitHub OAuth. Prefer existingSecret for client secret.
-  enableGitHubOAuth: false
-  githubClientId: ""
-  githubClientSecret: ""
+
+# OAuth providers (maps to OAUTH_PROVIDERS and OAUTH_<ID>_* env vars).
+# Each key is the provider id used in /api/auth/oauth/<id>/start.
+# Register redirect URI: https://<your-host>/api/auth/oauth/<id>/callback
+# Client secrets: set clientSecret here (dev only) or store in existingSecret (recommended).
+#   Secret key defaults to oauth-<id>-client-secret (override with existingSecretKey).
+oauth:
+  providers: {}
+  # keycloak:
+  #   clientId: ipam
+  #   # clientSecret: ""  # dev only; prefer existingSecret
+  #   # existingSecretKey: oauth-keycloak-client-secret
+  #   authUrl: https://idp.example.com/realms/app/protocol/openid-connect/auth
+  #   tokenUrl: https://idp.example.com/realms/app/protocol/openid-connect/token
+  #   userInfoUrl: https://idp.example.com/realms/app/protocol/openid-connect/userinfo
+  #   scopes:
+  #     - openid
+  #     - email
+  #     - profile
+  #   displayName: Sign in with Keycloak
+  # github:
+  #   clientId: ""
+  #   authUrl: https://github.com/login/oauth/authorize
+  #   tokenUrl: https://github.com/login/oauth/access_token
+  #   userInfoUrl: https://api.github.com/user
+  #   emailsUrl: https://api.github.com/user/emails
+  #   scopes:
+  #     - user:email
+  #   userIdClaim: id
+  #   displayName: Sign in with GitHub
 
 # Ingress (optional)
 ingress:

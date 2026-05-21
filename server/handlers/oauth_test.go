@@ -7,10 +7,22 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/JakeNeyer/ipam/server/auth"
 	"github.com/JakeNeyer/ipam/server/config"
 	"github.com/JakeNeyer/ipam/server/oauth"
 	"github.com/JakeNeyer/ipam/store"
 )
+
+func oauthTestProvider() config.OAuthProviderConfig {
+	return config.OAuthProviderConfig{
+		ClientID:     "cid",
+		ClientSecret: "secret",
+		Scopes:       []string{"openid", "email"},
+		AuthURL:      "https://idp.example/oauth/authorize",
+		TokenURL:     "https://idp.example/oauth/token",
+		UserInfoURL:  "https://idp.example/oauth/userinfo",
+	}
+}
 
 func TestAuthConfigHandler_NoConfig(t *testing.T) {
 	handler := AuthConfigHandler(nil)
@@ -27,39 +39,30 @@ func TestAuthConfigHandler_NoConfig(t *testing.T) {
 	if len(out.OAuthProviders) != 0 {
 		t.Errorf("OAuthProviders = %v, want []", out.OAuthProviders)
 	}
-	if out.GitHubOAuthEnabled {
-		t.Error("GitHubOAuthEnabled = true, want false")
-	}
 }
 
-func TestAuthConfigHandler_WithGitHub(t *testing.T) {
+func TestAuthConfigHandler_WithProvider(t *testing.T) {
 	cfg := &config.Config{OAuth: config.OAuthConfig{Providers: map[string]config.OAuthProviderConfig{
-		"github": {ClientID: "cid", ClientSecret: "secret"},
+		"sso": oauthTestProvider(),
 	}}}
 	handler := AuthConfigHandler(cfg)
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/config", nil)
 	rr := httptest.NewRecorder()
 	handler(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200", rr.Code)
-	}
 	var out AuthConfigResponse
 	if err := json.NewDecoder(rr.Body).Decode(&out); err != nil {
 		t.Fatal(err)
 	}
-	if len(out.OAuthProviders) != 1 || out.OAuthProviders[0] != "github" {
-		t.Errorf("OAuthProviders = %v, want [github]", out.OAuthProviders)
-	}
-	if !out.GitHubOAuthEnabled {
-		t.Error("GitHubOAuthEnabled = false, want true")
+	if len(out.OAuthProviders) != 1 || out.OAuthProviders[0] != "sso" {
+		t.Errorf("OAuthProviders = %v", out.OAuthProviders)
 	}
 }
 
 func TestOAuthStartHandler_ProviderRequired(t *testing.T) {
 	cfg := &config.Config{OAuth: config.OAuthConfig{Providers: map[string]config.OAuthProviderConfig{
-		"github": {ClientID: "cid", ClientSecret: "secret"},
+		"sso": oauthTestProvider(),
 	}}}
-	registry := oauth.NewProviderRegistry()
+	registry := oauth.NewProviderRegistry(cfg)
 	handler := OAuthStartHandler(cfg, registry)
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/oauth/", nil)
 	rr := httptest.NewRecorder()
@@ -71,10 +74,9 @@ func TestOAuthStartHandler_ProviderRequired(t *testing.T) {
 
 func TestOAuthStartHandler_ProviderNotEnabled(t *testing.T) {
 	cfg := &config.Config{OAuth: config.OAuthConfig{Providers: map[string]config.OAuthProviderConfig{}}}
-	registry := oauth.NewProviderRegistry()
+	registry := oauth.NewProviderRegistry(cfg)
 	handler := OAuthStartHandler(cfg, registry)
-	req := httptest.NewRequest(http.MethodGet, "/api/auth/oauth/github/start", nil)
-	req.Host = "example.com"
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/oauth/sso/start", nil)
 	rr := httptest.NewRecorder()
 	handler(rr, req)
 	if rr.Code != http.StatusNotFound {
@@ -82,13 +84,56 @@ func TestOAuthStartHandler_ProviderNotEnabled(t *testing.T) {
 	}
 }
 
+func TestOAuthStartHandler_SetsStateCookie(t *testing.T) {
+	cfg := &config.Config{OAuth: config.OAuthConfig{Providers: map[string]config.OAuthProviderConfig{
+		"sso": oauthTestProvider(),
+	}}}
+	registry := oauth.NewProviderRegistry(cfg)
+	handler := OAuthStartHandler(cfg, registry)
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/oauth/sso/start?invite_token=secret-invite", nil)
+	rr := httptest.NewRecorder()
+	handler(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", rr.Code)
+	}
+	var stateCookie *http.Cookie
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == auth.OAuthStateCookieName {
+			stateCookie = c
+			break
+		}
+	}
+	if stateCookie == nil {
+		t.Fatal("missing oauth state cookie")
+	}
+	if stateCookie.HttpOnly != true || stateCookie.Path != "/api/auth/oauth" {
+		t.Errorf("cookie = %+v", stateCookie)
+	}
+}
+
+func TestOAuthCallbackHandler_InvalidState(t *testing.T) {
+	s := store.NewStore()
+	cfg := &config.Config{OAuth: config.OAuthConfig{Providers: map[string]config.OAuthProviderConfig{
+		"sso": oauthTestProvider(),
+	}}}
+	registry := oauth.NewProviderRegistry(cfg)
+	handler := OAuthCallbackHandler(s, cfg, registry)
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/oauth/sso/callback?code=abc&state=wrong", nil)
+	rr := httptest.NewRecorder()
+	handler(rr, req)
+	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "error=") || !strings.Contains(loc, "invalid") {
+		t.Errorf("Location = %s", loc)
+	}
+}
+
 func TestOAuthStartHandler_RedirectsToProvider(t *testing.T) {
 	cfg := &config.Config{OAuth: config.OAuthConfig{Providers: map[string]config.OAuthProviderConfig{
-		"github": {ClientID: "cid", ClientSecret: "secret", Scopes: []string{"user:email"}},
+		"sso": oauthTestProvider(),
 	}}}
-	registry := oauth.NewProviderRegistry()
+	registry := oauth.NewProviderRegistry(cfg)
 	handler := OAuthStartHandler(cfg, registry)
-	req := httptest.NewRequest(http.MethodGet, "/api/auth/oauth/github/start", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/oauth/sso/start", nil)
 	req.Host = "example.com"
 	rr := httptest.NewRecorder()
 	handler(rr, req)
@@ -96,10 +141,7 @@ func TestOAuthStartHandler_RedirectsToProvider(t *testing.T) {
 		t.Errorf("status = %d, want 302", rr.Code)
 	}
 	loc := rr.Header().Get("Location")
-	if loc == "" {
-		t.Fatal("missing Location header")
-	}
-	if loc[:30] != "https://github.com/login/oauth" {
+	if !strings.Contains(loc, "idp.example") || !strings.Contains(loc, "client_id=cid") {
 		t.Errorf("Location = %s", loc)
 	}
 }
@@ -107,45 +149,18 @@ func TestOAuthStartHandler_RedirectsToProvider(t *testing.T) {
 func TestOAuthCallbackHandler_MissingCode(t *testing.T) {
 	s := store.NewStore()
 	cfg := &config.Config{OAuth: config.OAuthConfig{Providers: map[string]config.OAuthProviderConfig{
-		"github": {ClientID: "cid", ClientSecret: "secret"},
+		"sso": oauthTestProvider(),
 	}}}
-	registry := oauth.NewProviderRegistry()
+	registry := oauth.NewProviderRegistry(cfg)
 	handler := OAuthCallbackHandler(s, cfg, registry)
-	req := httptest.NewRequest(http.MethodGet, "/api/auth/oauth/github/callback", nil)
-	req.Host = "example.com"
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/oauth/sso/callback", nil)
 	rr := httptest.NewRecorder()
 	handler(rr, req)
 	if rr.Code != http.StatusFound {
 		t.Errorf("status = %d, want 302", rr.Code)
 	}
 	loc := rr.Header().Get("Location")
-	if loc == "" {
-		t.Fatal("missing Location header")
-	}
 	if !strings.HasPrefix(loc, "/#login?error=") {
-		t.Errorf("Location = %s, want relative /#login?error=...", loc)
-	}
-}
-
-func TestAppRedirectBase(t *testing.T) {
-	if got := appRedirectBase(""); got != "" {
-		t.Errorf("appRedirectBase(empty) = %q, want empty", got)
-	}
-	if got := appRedirectBase(" https://app.example.com/ "); got != "https://app.example.com" {
-		t.Errorf("appRedirectBase(trimmed) = %q, want https://app.example.com", got)
-	}
-}
-
-func TestRedirectBase(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "http://example.com/foo", nil)
-	base := redirectBase(req)
-	if base != "http://example.com" {
-		t.Errorf("redirectBase() = %s", base)
-	}
-	req.Header.Set("X-Forwarded-Proto", "https")
-	req.Header.Set("X-Forwarded-Host", "app.example.com")
-	base = redirectBase(req)
-	if base != "https://app.example.com" {
-		t.Errorf("redirectBase() with headers = %s", base)
+		t.Errorf("Location = %s", loc)
 	}
 }

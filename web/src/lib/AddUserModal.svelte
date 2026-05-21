@@ -21,8 +21,7 @@
       oauthEnabledResolved = oauthEnabled
       getAuthConfig()
         .then((cfg) => {
-          oauthEnabledResolved =
-            (Array.isArray(cfg?.oauthProviders) && cfg.oauthProviders.length > 0) || cfg?.githubOAuthEnabled === true
+          oauthEnabledResolved = Array.isArray(cfg?.oauthProviders) && cfg.oauthProviders.length > 0
         })
         .catch(() => {})
     }

@@ -14,7 +14,7 @@
   onMount(() => {
     getAuthConfig()
       .then((c) => {
-        oauthSetup = c?.githubOAuthEnabled === true || (Array.isArray(c?.oauthProviders) && c.oauthProviders.length > 0)
+        oauthSetup = Array.isArray(c?.oauthProviders) && c.oauthProviders.length > 0
       })
       .catch(() => {})
   })

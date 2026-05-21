@@ -56,8 +56,8 @@ func TestU32ToIP_roundTripFromIP(t *testing.T) {
 // TestCIDRAddressCount tests CIDRAddressCount for IPv4 and IPv6.
 func TestCIDRAddressCount(t *testing.T) {
 	tests := []struct {
-		cidr     string
-		wantStr  string
+		cidr      string
+		wantStr   string
 		fitsInt64 bool
 	}{
 		{"10.0.0.0/24", "256", true},

@@ -257,8 +257,8 @@ func NewListPoolsUseCase(s store.Storer) usecase.Interactor {
 						pools = append(pools, p)
 					}
 				}
-		} else {
-			pools = orgPools
+			} else {
+				pools = orgPools
 			}
 		} else if input.EnvironmentID != uuid.Nil {
 			env, err := s.GetEnvironment(input.EnvironmentID)

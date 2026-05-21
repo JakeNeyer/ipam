@@ -23,39 +23,39 @@ const signupInviteSecretBytes = 32
 
 // Store manages all IPAM data
 type Store struct {
-	organizations     map[uuid.UUID]*Organization
-	environments      map[uuid.UUID]*network.Environment
-	pools             map[uuid.UUID]*network.Pool
-	blocks            map[uuid.UUID]*network.Block
-	allocations       map[uuid.UUID]*network.Allocation
-	reservedBlocks    map[uuid.UUID]*ReservedBlock
-	cloudConnections  map[uuid.UUID]*CloudConnection
-	users             map[uuid.UUID]*User
-	usersByEmail      map[string]uuid.UUID
-	sessions          map[string]*Session
-	tokens            map[uuid.UUID]*APIToken
-	tokenByHash       map[string]uuid.UUID
-	signupInvites     map[uuid.UUID]*SignupInvite
-	inviteByHash      map[string]uuid.UUID
-	mu                sync.RWMutex
+	organizations    map[uuid.UUID]*Organization
+	environments     map[uuid.UUID]*network.Environment
+	pools            map[uuid.UUID]*network.Pool
+	blocks           map[uuid.UUID]*network.Block
+	allocations      map[uuid.UUID]*network.Allocation
+	reservedBlocks   map[uuid.UUID]*ReservedBlock
+	cloudConnections map[uuid.UUID]*CloudConnection
+	users            map[uuid.UUID]*User
+	usersByEmail     map[string]uuid.UUID
+	sessions         map[string]*Session
+	tokens           map[uuid.UUID]*APIToken
+	tokenByHash      map[string]uuid.UUID
+	signupInvites    map[uuid.UUID]*SignupInvite
+	inviteByHash     map[string]uuid.UUID
+	mu               sync.RWMutex
 }
 
 // NewStore creates a new store
 func NewStore() *Store {
 	return &Store{
-		organizations:  make(map[uuid.UUID]*Organization),
-		environments:   make(map[uuid.UUID]*network.Environment),
-		pools:          make(map[uuid.UUID]*network.Pool),
-		blocks:         make(map[uuid.UUID]*network.Block),
-		allocations:    make(map[uuid.UUID]*network.Allocation),
-		reservedBlocks: make(map[uuid.UUID]*ReservedBlock),
-		users:          make(map[uuid.UUID]*User),
-		usersByEmail:   make(map[string]uuid.UUID),
-		sessions:       make(map[string]*Session),
-		tokens:         make(map[uuid.UUID]*APIToken),
-		tokenByHash:    make(map[string]uuid.UUID),
-		signupInvites:   make(map[uuid.UUID]*SignupInvite),
-		inviteByHash:    make(map[string]uuid.UUID),
+		organizations:    make(map[uuid.UUID]*Organization),
+		environments:     make(map[uuid.UUID]*network.Environment),
+		pools:            make(map[uuid.UUID]*network.Pool),
+		blocks:           make(map[uuid.UUID]*network.Block),
+		allocations:      make(map[uuid.UUID]*network.Allocation),
+		reservedBlocks:   make(map[uuid.UUID]*ReservedBlock),
+		users:            make(map[uuid.UUID]*User),
+		usersByEmail:     make(map[string]uuid.UUID),
+		sessions:         make(map[string]*Session),
+		tokens:           make(map[uuid.UUID]*APIToken),
+		tokenByHash:      make(map[string]uuid.UUID),
+		signupInvites:    make(map[uuid.UUID]*SignupInvite),
+		inviteByHash:     make(map[string]uuid.UUID),
 		cloudConnections: make(map[uuid.UUID]*CloudConnection),
 	}
 }

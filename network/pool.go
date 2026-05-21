@@ -16,9 +16,9 @@ type Pool struct {
 	EnvironmentID  uuid.UUID  `json:"environment_id"`
 	Name           string     `json:"name"`
 	CIDR           string     `json:"cidr"`
-	Provider       string     `json:"provider,omitempty"`        // "native", "aws", "azure", "gcp"; default "native"
+	Provider       string     `json:"provider,omitempty"`       // "native", "aws", "azure", "gcp"; default "native"
 	ExternalID     string     `json:"external_id,omitempty"`    // provider resource ID (e.g. ipam-pool-xxxx)
-	ConnectionID   *uuid.UUID `json:"connection_id,omitempty"`   // cloud connection used to sync
-	ParentPoolID   *uuid.UUID `json:"parent_pool_id,omitempty"`  // for sub-pools (e.g. AWS IPAM nested pools)
-	DeletedAt      *time.Time `json:"deleted_at,omitempty"`      // set when soft-deleted (pending cloud delete on next sync)
+	ConnectionID   *uuid.UUID `json:"connection_id,omitempty"`  // cloud connection used to sync
+	ParentPoolID   *uuid.UUID `json:"parent_pool_id,omitempty"` // for sub-pools (e.g. AWS IPAM nested pools)
+	DeletedAt      *time.Time `json:"deleted_at,omitempty"`     // set when soft-deleted (pending cloud delete on next sync)
 }

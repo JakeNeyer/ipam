@@ -14,7 +14,7 @@ import (
 
 const (
 	SessionCookieName = "ipam_session"
-	SessionDuration  = 24 * time.Hour
+	SessionDuration   = 24 * time.Hour
 )
 
 // Middleware returns a middleware that requires a valid session or API key for /api/* except login and logout.

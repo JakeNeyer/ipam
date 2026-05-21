@@ -4,33 +4,40 @@ import (
 	"context"
 	"testing"
 
+	"github.com/JakeNeyer/ipam/server/config"
 	"golang.org/x/oauth2"
 )
 
-func TestNewProviderRegistry(t *testing.T) {
-	r := NewProviderRegistry()
+func TestNewProviderRegistry_Empty(t *testing.T) {
+	r := NewProviderRegistry(nil)
 	if r == nil {
 		t.Fatal("NewProviderRegistry() = nil")
 	}
+	_, ok := r.Endpoint("sso")
+	if ok {
+		t.Error("Endpoint(sso) = true for empty registry")
+	}
 }
 
-func TestProviderRegistry_Endpoint(t *testing.T) {
-	r := NewProviderRegistry()
-	e, ok := r.Endpoint("github")
+func TestNewProviderRegistry_FromConfig(t *testing.T) {
+	cfg := &config.Config{OAuth: config.OAuthConfig{Providers: map[string]config.OAuthProviderConfig{
+		"sso": {
+			ClientID: "c", ClientSecret: "s",
+			AuthURL: "https://idp/auth", TokenURL: "https://idp/token", UserInfoURL: "https://idp/userinfo",
+		},
+	}}}
+	r := NewProviderRegistry(cfg)
+	e, ok := r.Endpoint("sso")
 	if !ok {
-		t.Fatal("Endpoint(\"github\") = false, want true")
+		t.Fatal("Endpoint(\"sso\") = false")
 	}
-	if e.AuthURL == "" || e.TokenURL == "" {
-		t.Errorf("Endpoint(\"github\") = %+v", e)
-	}
-	_, ok = r.Endpoint("unknown")
-	if ok {
-		t.Error("Endpoint(\"unknown\") = true, want false")
+	if e.AuthURL != "https://idp/auth" || e.TokenURL != "https://idp/token" {
+		t.Errorf("Endpoint(\"sso\") = %+v", e)
 	}
 }
 
 func TestProviderRegistry_UserInfo_UnknownProvider(t *testing.T) {
-	r := NewProviderRegistry()
+	r := NewProviderRegistry(nil)
 	id, email, err := r.UserInfo(context.Background(), "unknown", &oauth2.Token{})
 	if err != nil {
 		t.Errorf("UserInfo(unknown) err = %v", err)

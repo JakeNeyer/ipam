@@ -122,8 +122,8 @@ func EnsureDemoFixtures(st store.Storer) {
 	}
 	for _, a := range allocations {
 		allocation := &network.Allocation{
-			Id:   st.GenerateID(),
-			Name: a.name,
+			Id:    st.GenerateID(),
+			Name:  a.name,
 			Block: network.Block{Name: a.blockName, CIDR: a.cidr},
 		}
 		if err := st.CreateAllocation(allocation.Id, allocation); err != nil {
