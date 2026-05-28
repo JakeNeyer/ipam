@@ -105,6 +105,20 @@ OAuth-related container env vars (OAUTH_PROVIDERS and OAUTH_<ID>_*).
 {{- $root := . }}
 {{- $providers := .Values.oauth.providers | default dict }}
 {{- if $providers }}
+{{- if .Values.oauth.tlsConfig.enabled }}
+{{- $tls := .Values.oauth.tlsConfig }}
+- name: OAUTH_TLS_ENABLED
+  value: {{ $tls.enabled | quote }}
+{{- if not (and $tls.tlsCertFile $tls.tlsKeyFile) }}
+{{- fail "oauth.tlsConfig.enabled=true requires both tlsCertFile and tlsKeyFile to be set" }}
+{{- end }}
+- name: OAUTH_TLS_CERT_FILE
+  value: {{ $tls.tlsCertFile | quote }}
+- name: OAUTH_TLS_KEY_FILE
+  value: {{ $tls.tlsKeyFile | quote }}
+- name: OAUTH_TLS_VERSION
+  value: {{ default "1.2" $tls.tlsVersion | quote }}
+{{- end }}
 {{- $list := include "ipam.oauthProvidersList" $root }}
 {{- if $list }}
 

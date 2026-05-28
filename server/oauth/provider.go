@@ -2,24 +2,31 @@ package oauth
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/JakeNeyer/ipam/server/config"
 	"golang.org/x/oauth2"
 )
 
 type ProviderRegistry struct {
-	endpoints map[string]oauth2.Endpoint
-	userInfos map[string]UserInfoFetcher
+	endpoints  map[string]oauth2.Endpoint
+	userInfos  map[string]UserInfoFetcher
+	httpClient *http.Client
 }
 
 type UserInfoFetcher interface {
 	FetchUser(ctx context.Context, token *oauth2.Token) (providerUserID, email string, err error)
 }
 
-func NewProviderRegistry(cfg *config.Config) *ProviderRegistry {
+func NewProviderRegistry(cfg *config.Config, httpClient *http.Client) *ProviderRegistry {
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+
 	r := &ProviderRegistry{
-		endpoints: make(map[string]oauth2.Endpoint),
-		userInfos: make(map[string]UserInfoFetcher),
+		endpoints:  make(map[string]oauth2.Endpoint),
+		userInfos:  make(map[string]UserInfoFetcher),
+		httpClient: httpClient,
 	}
 	if cfg == nil || cfg.OAuth.Providers == nil {
 		return r
@@ -32,9 +39,17 @@ func NewProviderRegistry(cfg *config.Config) *ProviderRegistry {
 		r.Register(id, oauth2.Endpoint{
 			AuthURL:  pc.AuthURL,
 			TokenURL: pc.TokenURL,
-		}, newOAuthUserInfoFromConfig(pc))
+		}, newOAuthUserInfoFromConfig(pc, httpClient))
 	}
 	return r
+}
+
+func (r *ProviderRegistry) HTTPClient() *http.Client {
+	if r.httpClient == nil {
+		return http.DefaultClient
+	}
+
+	return r.httpClient
 }
 
 func (r *ProviderRegistry) Register(providerID string, endpoint oauth2.Endpoint, fetcher UserInfoFetcher) {

@@ -1,6 +1,8 @@
 package server
 
 import (
+	"net/http"
+
 	"github.com/JakeNeyer/ipam/server/auth"
 	"github.com/JakeNeyer/ipam/server/config"
 	"github.com/JakeNeyer/ipam/server/handlers"
@@ -14,7 +16,7 @@ import (
 	swgui "github.com/swaggest/swgui/v5emb"
 )
 
-func NewServer(s store.Storer, cfg *config.Config) *web.Service {
+func NewServer(s store.Storer, cfg *config.Config, h *http.Client) *web.Service {
 	svc := web.NewService(openapi31.NewReflector())
 
 	svc.OpenAPISchema().SetTitle("IPAM Service")
@@ -42,7 +44,7 @@ func NewServer(s store.Storer, cfg *config.Config) *web.Service {
 	logoutUC := handlers.NewLogoutUseCase(s)
 	svc.Post("/api/auth/logout", logoutUC, nethttp.SuccessStatus(204))
 	if cfg != nil && len(cfg.EnabledOAuthProviders()) > 0 {
-		registry := oauth.NewProviderRegistry(cfg)
+		registry := oauth.NewProviderRegistry(cfg, h)
 		for _, provider := range cfg.EnabledOAuthProviders() {
 			svc.Handle("/api/auth/oauth/"+provider+"/start", handlers.OAuthStartHandler(cfg, registry))
 			svc.Handle("/api/auth/oauth/"+provider+"/callback", handlers.OAuthCallbackHandler(s, cfg, registry))

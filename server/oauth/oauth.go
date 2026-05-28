@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/JakeNeyer/ipam/server/config"
 	"golang.org/x/oauth2"
@@ -26,7 +25,7 @@ type oauthUserInfo struct {
 	client              *http.Client
 }
 
-func newOAuthUserInfoFromConfig(pc config.OAuthProviderConfig) *oauthUserInfo {
+func newOAuthUserInfoFromConfig(pc config.OAuthProviderConfig, h *http.Client) *oauthUserInfo {
 	emailVerifiedClaim := pc.EmailVerifiedClaim
 	if emailVerifiedClaim == "" {
 		emailVerifiedClaim = "email_verified"
@@ -39,12 +38,13 @@ func newOAuthUserInfoFromConfig(pc config.OAuthProviderConfig) *oauthUserInfo {
 		pc.UserInfoURL, pc.UserIDClaim, pc.EmailClaim,
 		pc.EmailsURL, pc.EmailsPrimaryClaim,
 		emailVerifiedClaim, emailsVerifiedClaim,
+		h,
 	)
 }
 
 func newOAuthUserInfo(
 	userInfoURL, userIDClaim, emailClaim, emailsURL, emailsPrimaryClaim,
-	emailVerifiedClaim, emailsVerifiedClaim string,
+	emailVerifiedClaim, emailsVerifiedClaim string, client *http.Client,
 ) *oauthUserInfo {
 	if userIDClaim == "" {
 		userIDClaim = "sub"
@@ -63,7 +63,7 @@ func newOAuthUserInfo(
 		emailsPrimaryClaim:  emailsPrimaryClaim,
 		emailVerifiedClaim:  strings.TrimSpace(emailVerifiedClaim),
 		emailsVerifiedClaim: strings.TrimSpace(emailsVerifiedClaim),
-		client:              &http.Client{Timeout: 15 * time.Second},
+		client:              client,
 	}
 }
 
