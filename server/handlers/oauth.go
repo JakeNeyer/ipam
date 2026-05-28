@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/JakeNeyer/ipam/internal/logger"
 	"github.com/JakeNeyer/ipam/server/auth"
 	"github.com/JakeNeyer/ipam/server/config"
 	"github.com/JakeNeyer/ipam/server/oauth"
@@ -146,13 +148,20 @@ func OAuthCallbackHandler(s store.Storer, cfg *config.Config, registry *oauth.Pr
 			Scopes:       pc.Scopes,
 		}
 		conf.Scopes = defaultOAuthScopes(provider, conf.Scopes)
-		token, err := conf.Exchange(r.Context(), code)
+		ctx := context.WithValue(
+			r.Context(),
+			oauth2.HTTPClient,
+			registry.HTTPClient(),
+		)
+		token, err := conf.Exchange(ctx, code)
 		if err != nil {
+			logger.Error("failed to fetch user exchange code", logger.ErrAttr(err))
 			redirectWithError(w, r, "failed to exchange code", cfg.AppOrigin)
 			return
 		}
-		providerUserID, email, err := registry.UserInfo(r.Context(), provider, token)
+		providerUserID, email, err := registry.UserInfo(ctx, provider, token)
 		if err != nil || providerUserID == "" || email == "" {
+			logger.Error("failed to fetch user info", logger.ErrAttr(err))
 			redirectWithError(w, r, "failed to fetch user info", cfg.AppOrigin)
 			return
 		}

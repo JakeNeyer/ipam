@@ -74,6 +74,12 @@ oauth:
   #     - user:email
   #   userIdClaim: id
   #   displayName: Sign in with GitHub
+  # -- Enable TLS for OAuth
+  tlsConfig:
+    enabled: false
+  # tlsCertFile: "/certs/tls.crt"
+  # tlsKeyFile: "/certs/tls.key"
+  # tlsVersion: "1.3"
 
 # Ingress (optional)
 ingress:

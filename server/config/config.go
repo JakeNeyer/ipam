@@ -1,8 +1,12 @@
 package config
 
 import (
+	"crypto/tls"
+	"fmt"
+	"net/http"
 	"os"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -13,6 +17,7 @@ type Config struct {
 
 type OAuthConfig struct {
 	Providers map[string]OAuthProviderConfig
+	TLSConfig OAuthTLSConfig
 }
 
 type OAuthProviderConfig struct {
@@ -30,6 +35,12 @@ type OAuthProviderConfig struct {
 	EmailsVerifiedClaim string // Emails-list entry claim that must be true (e.g. verified on GitHub /user/emails)
 	AllowEmailMatch     bool   // Allow signing in to an existing account by email alone; default false
 	DisplayName         string // Login/signup button label; default derived from provider id
+}
+
+type OAuthTLSConfig struct {
+	TLSCertFile string // Path to TLS Certificate file
+	TLSKeyFile  string // Path to TLS Key file
+	TLSVersion  uint16 // e.g. tls.VersionTLS12
 }
 
 func NormalizeOAuthProviderID(id string) string {
@@ -87,6 +98,35 @@ func DefaultOAuthDisplayName(providerID string) string {
 	return "Sign in with " + strings.ToUpper(providerID[:1]) + providerID[1:]
 }
 
+// BuildOAuthHTTPClient builds the http client and configures TLS if enabled
+func (c *Config) BuildOAuthHTTPClient() (*http.Client, error) {
+	defaultClient := &http.Client{Timeout: 15 * time.Second}
+	if c == nil || c.OAuth.TLSConfig.TLSCertFile == "" || c.OAuth.TLSConfig.TLSKeyFile == "" {
+		return defaultClient, nil
+	}
+
+	cert, err := tls.LoadX509KeyPair(
+		c.OAuth.TLSConfig.TLSCertFile,
+		c.OAuth.TLSConfig.TLSKeyFile,
+	)
+	if err != nil {
+		err := fmt.Errorf("failed to load OAuth TLS cert %v", err)
+		return defaultClient, err
+	}
+
+	tlsConfig := &tls.Config{
+		MinVersion:   c.OAuth.TLSConfig.TLSVersion,
+		Certificates: []tls.Certificate{cert},
+	}
+
+	return &http.Client{
+		Timeout: 15 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: tlsConfig,
+		},
+	}, nil
+}
+
 func LoadFromEnv() *Config {
 	var cfg Config
 	providers := make(map[string]OAuthProviderConfig)
@@ -108,6 +148,28 @@ func LoadFromEnv() *Config {
 	}
 	if origin := strings.TrimSpace(os.Getenv("APP_ORIGIN")); origin != "" {
 		cfg.AppOrigin = origin
+	}
+	if enableTLS := strings.ToLower(strings.TrimSpace(os.Getenv("OAUTH_TLS_ENABLED"))); enableTLS == "true" {
+		var tlsConfig = &OAuthTLSConfig{
+			TLSVersion: tls.VersionTLS12,
+		}
+		if tlsCertFile := strings.TrimSpace(os.Getenv("OAUTH_TLS_CERT_FILE")); tlsCertFile != "" {
+			tlsConfig.TLSCertFile = tlsCertFile
+		}
+		if tlsKeyFile := strings.TrimSpace(os.Getenv("OAUTH_TLS_KEY_FILE")); tlsKeyFile != "" {
+			tlsConfig.TLSKeyFile = tlsKeyFile
+		}
+		if tlsVersion := strings.TrimSpace(os.Getenv("OAUTH_TLS_VERSION")); tlsVersion != "" {
+			switch tlsVersion {
+			case "1.2":
+				tlsConfig.TLSVersion = tls.VersionTLS12
+			case "1.3":
+				tlsConfig.TLSVersion = tls.VersionTLS13
+			default:
+				tlsConfig.TLSVersion = tls.VersionTLS12
+			}
+		}
+		cfg.OAuth.TLSConfig = *tlsConfig
 	}
 	return &cfg
 }

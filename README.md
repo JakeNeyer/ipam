@@ -43,6 +43,10 @@ For each id `<ID>` (uppercased in env names; hyphens become underscores):
 | `OAUTH_<ID>_EMAIL_VERIFIED_CLAIM` | no | `email_verified` | On **userinfo**: if `EMAIL_CLAIM` is present, this claim must exist and be true or sign-in fails. Standard OIDC userinfo (Keycloak, etc.) exposes `email_verified`. Unset the env var to use an empty claim name and skip this check. |
 | `OAUTH_<ID>_EMAILS_VERIFIED_CLAIM` | no | `verified` (only when `EMAILS_URL` is set) | On the **emails array**: ignore entries where this claim is missing or false. GitHub marks confirmed addresses with `"verified": true`. If every entry is unverified, sign-in fails. Unset to skip verification on the list. |
 | `OAUTH_<ID>_ALLOW_EMAIL_MATCH` | no | `false` | Set `true` to sign in to an existing account by email alone (see below). |
+| `OAUTH_TLS_ENABLED` | no | `false` | Set to `true` to enable TLS for OAuth |
+| `OAUTH_TLS_CERT_FILE` | no | `""` | The TLS certificate file to use |
+| `OAUTH_TLS_KEY_FILE` | no | `""` | The TLS key file to use |
+| `OAUTH_TLS_VERSION` | no | `"1.2"` | The TLS version to use. Supports 1.2 and 1.3 |
 
 **Email verification:** IPAM never trusts an email address from OAuth unless the provider marks it verified. For a single userinfo JSON object, that means `email_verified: true` (claim name configurable). For a separate emails list, only verified entries are considered; the primary verified address wins, otherwise the first verified address. This blocks IdP or GitHub responses that include an unverified email from taking over an existing account.
 
