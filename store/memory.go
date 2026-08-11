@@ -1237,20 +1237,32 @@ func (s *Store) CreateAPIToken(userID uuid.UUID, name string, expiresAt *time.Ti
 		return nil, "", err
 	}
 	rawToken = apiTokenPrefix + hex.EncodeToString(secret)
+
+	token, err = s.CreateAPITokenWithRaw(userID, name, rawToken, expiresAt, organizationID)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return token, rawToken, nil
+}
+
+func (s *Store) CreateAPITokenWithRaw(userID uuid.UUID, name string, rawToken string, expiresAt *time.Time, organizationID *uuid.UUID) (*APIToken, error) {
 	keyHash := hashToken(rawToken)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	if _, exists := s.users[userID]; !exists {
-		return nil, "", fmt.Errorf("user not found")
+		return nil, fmt.Errorf("user not found")
 	}
+
 	orgID := uuid.Nil
 	if organizationID != nil {
 		orgID = *organizationID
 	}
-	id := s.GenerateID()
-	token = &APIToken{
-		ID:             id,
+
+	token := &APIToken{
+		ID:             s.GenerateID(),
 		UserID:         userID,
 		Name:           strings.TrimSpace(name),
 		KeyHash:        keyHash,
@@ -1258,9 +1270,11 @@ func (s *Store) CreateAPIToken(userID uuid.UUID, name string, expiresAt *time.Ti
 		ExpiresAt:      expiresAt,
 		OrganizationID: orgID,
 	}
-	s.tokens[id] = token
-	s.tokenByHash[keyHash] = id
-	return token, rawToken, nil
+
+	s.tokens[token.ID] = token
+	s.tokenByHash[keyHash] = token.ID
+
+	return token, nil
 }
 
 // GetUserByTokenHash returns the user for the given token hash, or nil if not found or token expired.

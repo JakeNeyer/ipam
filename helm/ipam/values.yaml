@@ -13,7 +13,9 @@ service:
   type: ClusterIP
   port: 8080
 
-# Optional: use existing secret for DATABASE_URL and/or OAuth (keys: database-url, oauth-client-secret, initial-admin-email, initial-admin-password)
+# Optional: use existing secret for DATABASE_URL and/or OAuth
+# (keys: database-url, oauth-client-secret, initial-admin-email, initial-admin-password,
+# initial-admin-token, initial-admin-token-ttl)
 existingSecret: ""
 
 # In-memory store if DATABASE_URL is not set (not recommended for production)

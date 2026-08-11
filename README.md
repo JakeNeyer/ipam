@@ -19,6 +19,15 @@ This project is under active development. APIs are subject to change.
 
 When the UI runs on a different origin (e.g. Vite on 5173), set **`APP_ORIGIN`** to that URL (e.g. `http://localhost:5173`). The API will then return 401 Unauthorized with a short message for non-API requests (so visiting the API URL directly shows “use the app at …” instead of the login page), and signup links and OAuth redirects will use the app origin.
 
+### Optional: Initial Admin Token
+
+Configure an initial admin API token during bootstrap to support GitOps workflows and automate instance provisioning through the API.
+
+| Variable | Required | Default | Notes |
+|----------|----------|---------|-------|
+| `INITIAL_ADMIN_API_TOKEN` | yes |  - | Initial admin API token to use for initial admin. |
+| `INITIAL_ADMIN_API_TOKEN_TTL` | yes | - | Token lifetime. Must be a valid duration: `30m` (30 minutes), `12h` (12 hours), `60d` (60 days), `8 weeks` (8 weeks), `1y` (1 year). |
+
 ### Optional: OAuth
 
 OAuth sign-in is optional. Users still need a signup invite or an account created by an admin. Set **`APP_ORIGIN`** when the UI is on a different host than the API.

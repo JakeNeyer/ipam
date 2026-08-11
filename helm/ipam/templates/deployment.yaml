@@ -55,6 +55,18 @@ spec:
                   name: {{ .Values.existingSecret }}
                   key: initial-admin-password
                   optional: true
+            - name: INITIAL_ADMIN_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret }}
+                  key: initial-admin-token
+                  optional: true
+            - name: INITIAL_ADMIN_API_TOKEN_TTL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret }}
+                  key: initial-admin-token-ttl
+                  optional: true
             {{- else if and .Values.database .Values.database.url }}
             - name: DATABASE_URL
               valueFrom:

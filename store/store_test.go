@@ -1,6 +1,8 @@
 package store
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"testing"
 	"time"
@@ -704,4 +706,135 @@ func TestGetUserByTokenHash(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCreateAPITokenWithRaw validates creating a API token from a raw string provided
+func TestCreateAPITokenWithRaw(t *testing.T) {
+	tests := []struct {
+		name           string
+		createUser     bool
+		organizationID *uuid.UUID
+		wantErr        bool
+	}{
+		{
+			name:       "creates token for user",
+			createUser: true,
+		},
+		{
+			name:           "creates organization scoped token",
+			createUser:     true,
+			organizationID: uuidPtrTest(uuid.New()),
+		},
+		{
+			name:       "rejects missing user",
+			createUser: false,
+			wantErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := NewStore()
+
+			userID := uuid.New()
+
+			if tt.createUser {
+				user := &User{
+					ID:    userID,
+					Email: "test@example.com",
+					Role:  RoleUser,
+				}
+
+				if err := st.CreateUser(user); err != nil {
+					t.Fatalf("CreateUser() error = %v", err)
+				}
+			}
+
+			rawToken := "ipam_test_supplied_token"
+
+			token, err := st.CreateAPITokenWithRaw(
+				userID,
+				"test-token",
+				rawToken,
+				nil,
+				tt.organizationID,
+			)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("CreateAPITokenWithRaw() expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("CreateAPITokenWithRaw() error = %v", err)
+			}
+
+			if token == nil {
+				t.Fatal("CreateAPITokenWithRaw() returned nil token")
+			}
+
+			if token.UserID != userID {
+				t.Fatalf(
+					"token.UserID = %v, want %v",
+					token.UserID,
+					userID,
+				)
+			}
+
+			if token.Name != "test-token" {
+				t.Fatalf(
+					"token.Name = %q, want %q",
+					token.Name,
+					"test-token",
+				)
+			}
+
+			wantOrgID := uuid.Nil
+			if tt.organizationID != nil {
+				wantOrgID = *tt.organizationID
+			}
+
+			if token.OrganizationID != wantOrgID {
+				t.Fatalf(
+					"token.OrganizationID = %v, want %v",
+					token.OrganizationID,
+					wantOrgID,
+				)
+			}
+
+			found, err := st.GetAPITokenByKeyHash(testTokenHash(rawToken))
+			if err != nil {
+				t.Fatalf("GetAPITokenByKeyHash() error = %v", err)
+			}
+
+			if found.ID != token.ID {
+				t.Fatalf(
+					"found.ID = %v, want %v",
+					found.ID,
+					token.ID,
+				)
+			}
+
+			if found.UserID != userID {
+				t.Fatalf(
+					"found.UserID = %v, want %v",
+					found.UserID,
+					userID,
+				)
+			}
+		})
+	}
+}
+
+// uuidPtrTest is helper function for testing TestCreateAPITokenWithRaw
+func uuidPtrTest(id uuid.UUID) *uuid.UUID {
+	return &id
+}
+
+// testTokenHash is helper function for testing TestCreateAPITokenWithRaw
+func testTokenHash(raw string) string {
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
 }
