@@ -7,7 +7,7 @@ COPY web/ ./
 RUN npm run build
 
 # Build Go API
-FROM golang:1.25-alpine AS go
+FROM golang:1.26.6-alpine AS go
 WORKDIR /app
 RUN apk add --no-cache git
 COPY go.mod go.sum ./
@@ -16,7 +16,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /ipam .
 
 # Run
-FROM alpine:3.23.4
+FROM alpine:3.24.1
 RUN apk upgrade --no-cache && apk add --no-cache ca-certificates tzdata
 WORKDIR /app
 COPY --from=go /ipam .

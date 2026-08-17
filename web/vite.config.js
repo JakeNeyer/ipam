@@ -7,6 +7,8 @@ export default defineConfig({
   base: './',
   plugins: [tailwindcss(), svelte()],
   build: {
+    // Modern browsers; avoids esbuild downlevel limits with newer esbuild.
+    target: 'es2022',
     chunkSizeWarningLimit: 600,
   },
   server: {
