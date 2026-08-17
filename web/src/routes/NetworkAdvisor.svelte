@@ -919,6 +919,7 @@
                 type="number"
                 class="networks-input"
                 min="1"
+                max={sliderMax}
                 value={env.networks}
                 on:input={(e) => updateEnvironmentNetworks(env.id, e.currentTarget.value)}
               />
@@ -1048,7 +1049,7 @@
 
 <style>
   .page {
-    padding: 0;
+    padding: 0 0 5rem;
   }
   .section {
     margin-bottom: 1rem;
@@ -1355,6 +1356,9 @@
     justify-content: space-between;
     gap: 0.5rem;
     margin-top: 0.25rem;
+    /* Keep Next / Start over clear of the floating theme toggle. */
+    padding-right: 4.5rem;
+    padding-bottom: 0.5rem;
   }
   .ok {
     color: var(--success, #22c55e);

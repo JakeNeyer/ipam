@@ -92,7 +92,9 @@
 
   function parseHash() {
     const raw = (window.location.hash || '#').slice(1) || ''
-    const [path, query] = raw.split('?')
+    const [pathRaw, query] = raw.split('?')
+    // Accept both #dashboard and #/dashboard (and leftover leading slashes).
+    const path = (pathRaw || '').replace(/^\/+/, '')
     if (path === '' || path === 'landing' || path === 'features' || path === 'terraform' || path === 'api' || path === 'user-guide') {
       route = 'landing'
       return

@@ -14,44 +14,35 @@ test.describe('auth', () => {
     expect(hasGetStarted || hasSignIn || hasSetup).toBeTruthy()
   })
 
-  test('landing page shows Network Advisor and Network Diagram Export as core features', async ({ page }) => {
+  test('landing page shows Network Advisor and Subnet calculator as core features', async ({ page }) => {
     await page.goto('/')
-    // Wait for landing to appear (skip if redirect to login/setup)
     const landing = page.locator('.landing')
     const isLanding = await landing.isVisible({ timeout: 5000 }).catch(() => false)
     test.skip(!isLanding, 'Landing page not shown (redirected to login/setup)')
 
-    // Core features section should contain Network Advisor and Network Diagram Export
     const coreFeatures = page.locator('.features-grid')
     await expect(coreFeatures.locator('text=Network Advisor')).toBeVisible({ timeout: 5000 })
-    await expect(coreFeatures.locator('text=Network Diagram Export')).toBeVisible({ timeout: 5000 })
+    await expect(coreFeatures.locator('text=Subnet calculator')).toBeVisible({ timeout: 5000 })
 
-    // They should NOT be in the coming-soon section
-    const comingSoon = page.locator('.coming-soon-grid')
-    await expect(comingSoon.locator('text=Network Advisor')).not.toBeVisible()
-    await expect(comingSoon.locator('text=Network Diagram Export')).not.toBeVisible()
-
-    // Cloud Provider Inventory should still be coming soon
-    await expect(comingSoon.locator('text=Cloud Provider Inventory')).toBeVisible()
+    // Azure / GCP still show coming-soon in the integrations diagram
+    await expect(page.locator('.integration-coming-soon').first()).toBeVisible()
   })
 
-  test('unauthenticated visit to #/dashboard shows login or setup', async ({ page }) => {
-    await page.goto('/#/dashboard')
+  test('unauthenticated visit to #dashboard shows login or setup', async ({ page }) => {
+    await page.goto('/#dashboard')
     await page.waitForLoadState('networkidle')
-    // App shows either Login or Setup (or brief Loading)
     await expect(page.locator('text=Sign in').or(page.locator('text=Create the initial admin')).or(page.locator('text=Loading')).first()).toBeVisible({ timeout: 15000 })
-    // Eventually we should see Sign in or Setup form, not dashboard nav
     await expect(page.locator('.nav, .login-form, .setup-form').first()).toBeVisible({ timeout: 10000 })
   })
 
   test('setup page shows form when setup is required', async ({ page }) => {
     await page.goto('/#/')
     await page.waitForLoadState('networkidle')
-    // If setup is required we see Setup form; otherwise Login or Landing
     const setupForm = page.locator('.setup-form')
     const loginForm = page.locator('.login-form')
     const setupTitle = page.locator('text=Create the initial admin')
-    await expect(setupForm.or(loginForm).or(setupTitle)).toBeVisible({ timeout: 15000 })
+    const landing = page.locator('.landing')
+    await expect(setupForm.or(loginForm).or(setupTitle).or(landing)).toBeVisible({ timeout: 15000 })
     if (await setupForm.isVisible()) {
       await expect(page.locator('input[type="email"]')).toBeVisible()
       await expect(page.locator('input[type="password"]').first()).toBeVisible()
@@ -59,7 +50,7 @@ test.describe('auth', () => {
   })
 
   test('login with invalid credentials shows error', async ({ page }) => {
-    await page.goto('/#/login')
+    await page.goto('/#login')
     await page.waitForSelector('.login-form', { state: 'visible', timeout: 10000 })
     await page.fill('input[type="email"]', 'nobody@example.com')
     await page.fill('input[type="password"]', 'wrongpassword')
@@ -71,7 +62,7 @@ test.describe('auth', () => {
     const email = process.env.E2E_LOGIN_EMAIL
     const password = process.env.E2E_LOGIN_PASSWORD
     test.skip(!email || !password, 'E2E_LOGIN_EMAIL and E2E_LOGIN_PASSWORD must be set for this test')
-    await page.goto('/#/login')
+    await page.goto('/#login')
     await page.waitForSelector('.login-form', { state: 'visible', timeout: 10000 })
     await page.fill('input[type="email"]', email)
     await page.fill('input[type="password"]', password)
@@ -84,7 +75,7 @@ test.describe('auth', () => {
     const email = process.env.E2E_LOGIN_EMAIL
     const password = process.env.E2E_LOGIN_PASSWORD
     test.skip(!email || !password, 'E2E_LOGIN_EMAIL and E2E_LOGIN_PASSWORD must be set')
-    await page.goto('/#/login')
+    await page.goto('/#login')
     await page.waitForSelector('.login-form', { state: 'visible', timeout: 10000 })
     await page.fill('input[type="email"]', email)
     await page.fill('input[type="password"]', password)

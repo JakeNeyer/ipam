@@ -21,24 +21,26 @@ test.describe('security', () => {
     expect(body).toHaveProperty('setup_required')
   })
 
-  test('unauthenticated visit to #/admin shows login or setup', async ({ page }) => {
-    await page.goto('/#/admin')
+  test('unauthenticated visit to #admin shows login or setup', async ({ page }) => {
+    await page.goto('/#admin')
     await page.waitForLoadState('networkidle')
-    // App redirects non-auth to login/setup; or shows loading then login/setup
-    await expect(page.locator('.login-form, .setup-form, text=Sign in, text=Create the initial admin').first()).toBeVisible({ timeout: 15000 })
+    await expect(page.locator('.login-form, .setup-form').first()).toBeVisible({ timeout: 15000 })
   })
 
   test('direct API POST /api/setup with invalid email is rejected', async ({ request }) => {
+    const statusRes = await request.get('/api/setup/status')
+    const { setup_required } = await statusRes.json()
     const res = await request.post('/api/setup', {
       data: { email: 'not-an-email', password: 'short' },
       headers: { 'Content-Type': 'application/json' },
     })
-    expect(res.status()).toBe(400)
+    // Validation is 400; once an admin exists the endpoint returns 403 (already completed).
+    expect(res.status()).toBe(setup_required ? 400 : 403)
   })
 
   test('direct API POST /api/auth/login with invalid creds returns error', async ({ request }) => {
     const res = await request.post('/api/auth/login', {
-      data: { email: 'nobody@example.com', password: 'wrong' },
+      data: { email: 'nobody@example.com', password: 'wrongpassword' },
       headers: { 'Content-Type': 'application/json' },
     })
     expect(res.status()).toBe(401)
