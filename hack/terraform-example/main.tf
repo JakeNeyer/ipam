@@ -47,11 +47,13 @@ resource "ipam_allocation" "hack" {
   cidr       = "10.200.0.0/26"
 }
 
-# Auto-allocate: next available /26 in the block (uses POST /api/allocations/auto)
+# Auto-allocate: next available /26 after the static CIDR (uses POST /api/allocations/auto).
+# depends_on avoids a race where auto-alloc takes 10.200.0.0/26 first.
 resource "ipam_allocation" "hack_auto" {
-  name           = "tf-hack-alloc-auto"
-  block_name     = ipam_block.hack.name
-  prefix_length  = 26
+  name          = "tf-hack-alloc-auto"
+  block_name    = ipam_block.hack.name
+  prefix_length = 26
+  depends_on    = [ipam_allocation.hack]
 }
 
 # IPv6 ULA block and allocation

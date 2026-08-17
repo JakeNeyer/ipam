@@ -72,4 +72,8 @@ echo "Running terraform init..."
 # -plugin-dir points at a directory with registry layout so Terraform finds the provider locally (no registry query)
 terraform init -plugin-dir="$PLUGIN_ROOT"
 echo "Running terraform $ACTION..."
-terraform "$ACTION"
+if [ "$ACTION" = "apply" ] || [ "$ACTION" = "destroy" ]; then
+  terraform "$ACTION" -auto-approve
+else
+  terraform "$ACTION"
+fi
