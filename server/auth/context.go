@@ -65,6 +65,12 @@ func ResolveOrgID(ctx context.Context, user *store.User, inputOrgID uuid.UUID) *
 	return nil
 }
 
+// IsGlobalAdminRequest reports whether this request has unrestricted global-admin privileges.
+// A global admin user presenting an org-scoped API token is not treated as global admin for the request.
+func IsGlobalAdminRequest(ctx context.Context, u *store.User) bool {
+	return IsGlobalAdmin(u) && EffectiveOrganizationID(ctx) == uuid.Nil
+}
+
 // UserOrgForAccess returns the organization ID to use for access checks (get/update/delete).
 // When effective org is set (org-scoped token), returns that; else returns user.OrganizationID (Nil for global admin).
 func UserOrgForAccess(ctx context.Context, user *store.User) uuid.UUID {
@@ -80,19 +86,19 @@ func UserOrgForAccess(ctx context.Context, user *store.User) uuid.UUID {
 // IsGlobalAdmin returns true if the user is the global admin (no organization).
 // Global admin can create organizations and access all org-scoped resources.
 // OrganizationID == uuid.Nil is the global-admin sentinel; it must never be assignable by non-global-admin.
-// When EffectiveOrganizationID(ctx) is set (org-scoped token), the request is not treated as global admin for scope.
+// Prefer IsGlobalAdminRequest for authorization decisions so org-scoped API tokens are not treated as global admin.
 func IsGlobalAdmin(u *store.User) bool {
 	return u != nil && u.OrganizationID == uuid.Nil
 }
 
-// RequireGlobalAdminForNilOrg returns nil if organizationID is not Nil, or if the user is global admin.
-// Otherwise it returns an error so that assigning "global admin" (Nil org) is never allowed for non-global-admin.
-// Call this before any operation that could set a user's or invite's organization to Nil.
-func RequireGlobalAdminForNilOrg(user *store.User, organizationID uuid.UUID) error {
+// RequireGlobalAdminForNilOrg returns nil if organizationID is not Nil, or if this request has global-admin privileges.
+// Otherwise it returns an error so that assigning "global admin" (Nil org) is never allowed for non-global-admin
+// or org-scoped API tokens. Call this before any operation that could set a user's or invite's organization to Nil.
+func RequireGlobalAdminForNilOrg(ctx context.Context, user *store.User, organizationID uuid.UUID) error {
 	if organizationID != uuid.Nil {
 		return nil
 	}
-	if user != nil && IsGlobalAdmin(user) {
+	if user != nil && IsGlobalAdminRequest(ctx, user) {
 		return nil
 	}
 	return errForbiddenAssignGlobalAdmin

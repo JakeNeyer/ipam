@@ -65,6 +65,8 @@ Example `values.yaml` fragment:
 config:
   appOrigin: https://ipam.example.com
   initialAdminEmail: admin@example.com
+  initialOrganizationName: acme
+  initialAdminAPITokenTTL: 90d
 
 existingSecret: ipam-secrets
 
@@ -104,7 +106,7 @@ helm template ipam ./helm/ipam -f helm/ipam/ci/oauth-values.yaml
 | `image.repository` | Image repository | `ipam` |
 | `image.tag` | Image tag | `latest` |
 | `service.port` | Service and container port | `8080` |
-| `existingSecret` | Secret name for `database-url`, `initial-admin-password`, `oauth-<id>-client-secret` per provider | `""` |
+| `existingSecret` | Secret name for `database-url`, `initial-admin-password`, `initial-admin-token`, `oauth-<id>-client-secret` per provider | `""` |
 | `oauth.providers` | Map of OAuth provider configs (see [OAuth providers](#oauth-providers)) | `{}` |
 | `database.url` | PostgreSQL DSN (stored in a generated Secret; prefer `existingSecret` for production) | (none) |
 | `postgresql.enabled` | Deploy Bitnami PostgreSQL as a subchart and set `DATABASE_URL` for IPAM | `false` |
@@ -112,6 +114,8 @@ helm template ipam ./helm/ipam -f helm/ipam/ci/oauth-values.yaml
 | `postgresql.auth.database` | Database name to create | `ipam` |
 | `config.appOrigin` | Public app URL (OAuth, signup links) | `""` |
 | `config.initialAdminEmail` | First admin email (when no users exist) | `""` |
+| `config.initialOrganizationName` | First organization name (created with initial admin) | `""` |
+| `config.initialAdminAPITokenTTL` | TTL for bootstrap API token (`initial-admin-token` in `existingSecret`) | `""` |
 | `ingress.enabled` | Create an Ingress | `false` |
 | `autoscaling.enabled` | Enable HPA | `false` |
 

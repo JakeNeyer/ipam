@@ -242,3 +242,96 @@ func TestGlobalAdmin_CannotChangeOwnOrganization(t *testing.T) {
 		t.Errorf("error = %q, want %q", errBody["error"], "cannot change your own organization")
 	}
 }
+
+// requestWithOrgScopedGlobalAdmin simulates a global admin using an org-scoped API token.
+func requestWithOrgScopedGlobalAdmin(r *http.Request, globalAdmin *store.User, orgID uuid.UUID) *http.Request {
+	ctx := auth.WithUser(r.Context(), globalAdmin)
+	ctx = auth.WithEffectiveOrganization(ctx, orgID)
+	return r.WithContext(ctx)
+}
+
+// TestGlobalAdmin_OrgScopedTokenCannotAccessControlPlane proves org-scoped tokens do not get /api/admin org APIs.
+func TestGlobalAdmin_OrgScopedTokenCannotAccessControlPlane(t *testing.T) {
+	s, globalAdmin, org, _ := setupGlobalAdminTest(t)
+
+	t.Run("list organizations", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/admin/organizations", nil)
+		req = requestWithOrgScopedGlobalAdmin(req, globalAdmin, org.ID)
+		rr := httptest.NewRecorder()
+		AdminOrganizationsHandler(s).ServeHTTP(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf("GET organizations: status = %d, want 403", rr.Code)
+		}
+	})
+
+	t.Run("create organization", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/organizations", bytes.NewReader([]byte(`{"name":"evil"}`)))
+		req.Header.Set("Content-Type", "application/json")
+		req = requestWithOrgScopedGlobalAdmin(req, globalAdmin, org.ID)
+		rr := httptest.NewRecorder()
+		AdminOrganizationsHandler(s).ServeHTTP(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf("POST organizations: status = %d, want 403", rr.Code)
+		}
+	})
+
+	t.Run("list users is scoped to effective org", func(t *testing.T) {
+		other := &store.Organization{Name: "Other"}
+		if err := s.CreateOrganization(other); err != nil {
+			t.Fatalf("create other org: %v", err)
+		}
+		otherUser := &store.User{
+			Email:          "other@example.com",
+			PasswordHash:   mustHashPassword("password123"),
+			Role:           store.RoleUser,
+			OrganizationID: other.ID,
+		}
+		if err := s.CreateUser(otherUser); err != nil {
+			t.Fatalf("create other user: %v", err)
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/admin/users", nil)
+		req = requestWithOrgScopedGlobalAdmin(req, globalAdmin, org.ID)
+		rr := httptest.NewRecorder()
+		AdminUsersHandler(s, nil).ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("GET users: status = %d, want 200", rr.Code)
+		}
+		var out struct {
+			Users []struct {
+				Email          string `json:"email"`
+				OrganizationID string `json:"organization_id"`
+			} `json:"users"`
+		}
+		if err := json.NewDecoder(rr.Body).Decode(&out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		for _, u := range out.Users {
+			if u.OrganizationID != org.ID.String() {
+				t.Fatalf("listed user %q org %q, want only %q", u.Email, u.OrganizationID, org.ID)
+			}
+		}
+	})
+
+	t.Run("update user organization forbidden", func(t *testing.T) {
+		target := &store.User{
+			Email:          "target@example.com",
+			PasswordHash:   mustHashPassword("password123"),
+			Role:           store.RoleUser,
+			OrganizationID: org.ID,
+		}
+		if err := s.CreateUser(target); err != nil {
+			t.Fatalf("create target: %v", err)
+		}
+		path := "/api/admin/users/" + target.ID.String() + "/organization"
+		body := []byte(`{"organization_id":"` + org.ID.String() + `"}`)
+		req := httptest.NewRequest(http.MethodPatch, path, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req = requestWithOrgScopedGlobalAdmin(req, globalAdmin, org.ID)
+		rr := httptest.NewRecorder()
+		UpdateUserOrganizationHandler(s).ServeHTTP(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf("PATCH user organization: status = %d, want 403", rr.Code)
+		}
+	})
+}

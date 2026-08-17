@@ -13,7 +13,9 @@ service:
   type: ClusterIP
   port: 8080
 
-# Optional: use existing secret for DATABASE_URL and/or OAuth (keys: database-url, oauth-client-secret, initial-admin-email, initial-admin-password)
+# Optional: use existing secret for DATABASE_URL and/or OAuth
+# (keys: database-url, oauth-client-secret / oauth-<id>-client-secret,
+#  initial-admin-password, initial-admin-token)
 existingSecret: ""
 
 # In-memory store if DATABASE_URL is not set (not recommended for production)
@@ -41,9 +43,13 @@ config:
   appOrigin: ""
   # Enable OpenTelemetry (stdout traces)
   enableOtel: false
-  # Initial admin (only created when no users exist). Prefer existingSecret for passwords.
+  # Initial admin (only created when no users exist). Prefer existingSecret for passwords/tokens.
   initialAdminEmail: ""
   initialAdminPassword: ""
+  # First organization name (created with the initial admin when set).
+  initialOrganizationName: ""
+  # TTL for INITIAL_ADMIN_API_TOKEN (e.g. 90d, 12h). Token value comes from existingSecret key initial-admin-token.
+  initialAdminAPITokenTTL: ""
 
 # OAuth providers (maps to OAUTH_PROVIDERS and OAUTH_<ID>_* env vars).
 # Each key is the provider id used in /api/auth/oauth/<id>/start.

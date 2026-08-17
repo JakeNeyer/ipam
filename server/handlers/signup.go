@@ -108,15 +108,15 @@ func createSignupInvite(s store.Storer, user *store.User, w http.ResponseWriter,
 		hours = 720
 	}
 	expiresAt := time.Now().Add(time.Duration(hours) * time.Hour)
-	orgID := user.OrganizationID
+	orgID := auth.UserOrgForAccess(r.Context(), user)
 	role := store.RoleUser
-	if auth.IsGlobalAdmin(user) {
+	if auth.IsGlobalAdminRequest(r.Context(), user) {
 		orgID = req.OrganizationID
 		if req.Role == store.RoleAdmin {
 			role = store.RoleAdmin
 		}
 	}
-	if err := auth.RequireGlobalAdminForNilOrg(user, orgID); err != nil {
+	if err := auth.RequireGlobalAdminForNilOrg(r.Context(), user, orgID); err != nil {
 		auth.WriteJSONError(w, err.Error(), http.StatusForbidden)
 		return
 	}
