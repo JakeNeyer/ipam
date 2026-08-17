@@ -54,8 +54,9 @@ func AdminUsersHandler(s store.Storer, cfg *config.Config) http.HandlerFunc {
 func listUsers(s store.Storer, w http.ResponseWriter, r *http.Request) {
 	user := auth.UserFromContext(r.Context())
 	var orgID *uuid.UUID
-	if user != nil && !auth.IsGlobalAdmin(user) {
-		orgID = &user.OrganizationID
+	if user != nil && !auth.IsGlobalAdminRequest(r.Context(), user) {
+		scoped := auth.UserOrgForAccess(r.Context(), user)
+		orgID = &scoped
 	}
 	users, err := s.ListUsers(orgID)
 	if err != nil {
@@ -106,11 +107,11 @@ func createUser(s store.Storer, oauthEnabled bool, w http.ResponseWriter, r *htt
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	orgID := user.OrganizationID
-	if auth.IsGlobalAdmin(user) {
+	orgID := auth.UserOrgForAccess(r.Context(), user)
+	if auth.IsGlobalAdminRequest(r.Context(), user) {
 		orgID = req.OrganizationID
 	}
-	if err := auth.RequireGlobalAdminForNilOrg(user, orgID); err != nil {
+	if err := auth.RequireGlobalAdminForNilOrg(r.Context(), user, orgID); err != nil {
 		auth.WriteJSONError(w, err.Error(), http.StatusForbidden)
 		return
 	}
@@ -201,7 +202,7 @@ func UpdateUserOrganizationHandler(s store.Storer) http.HandlerFunc {
 			return
 		}
 		user := auth.UserFromContext(r.Context())
-		if user == nil || !auth.IsGlobalAdmin(user) {
+		if user == nil || !auth.IsGlobalAdminRequest(r.Context(), user) {
 			auth.WriteJSONError(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -228,7 +229,7 @@ func UpdateUserOrganizationHandler(s store.Storer) http.HandlerFunc {
 			auth.WriteJSONError(w, "invalid request body", http.StatusBadRequest)
 			return
 		}
-		if err := auth.RequireGlobalAdminForNilOrg(user, req.OrganizationID); err != nil {
+		if err := auth.RequireGlobalAdminForNilOrg(r.Context(), user, req.OrganizationID); err != nil {
 			auth.WriteJSONError(w, err.Error(), http.StatusForbidden)
 			return
 		}

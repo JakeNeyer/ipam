@@ -69,6 +69,12 @@ func TestStatic(t *testing.T) {
 	if err := os.WriteFile(indexPath, []byte("<html>ok</html>"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	// File larger than Go's 512-byte content sniff buffer — regression for truncated SPA assets.
+	big := strings.Repeat("a", 2048)
+	assetPath := filepath.Join(dir, "app.js")
+	if err := os.WriteFile(assetPath, []byte(big), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	nextCalled := false
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -82,11 +88,14 @@ func TestStatic(t *testing.T) {
 		path         string
 		wantStatus   int
 		wantNextCall bool
+		wantBodyLen  int
+		wantContains string
 	}{
-		{"api passes through", "/api/foo", 200, true},
-		{"docs passes through", "/docs", 200, true},
-		{"root serves index", "/", 200, false},
-		{"subpath no file serves index", "/nope", 200, false},
+		{"api passes through", "/api/foo", 200, true, -1, ""},
+		{"docs passes through", "/docs", 200, true, -1, ""},
+		{"root serves index", "/", 200, false, -1, "<html>ok</html>"},
+		{"subpath no file serves index", "/nope", 200, false, -1, "<html>ok</html>"},
+		{"large asset not truncated", "/app.js", 200, false, 2048, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -99,6 +108,12 @@ func TestStatic(t *testing.T) {
 			}
 			if nextCalled != tt.wantNextCall {
 				t.Errorf("next called = %v, want %v", nextCalled, tt.wantNextCall)
+			}
+			if tt.wantContains != "" && !strings.Contains(rec.Body.String(), tt.wantContains) {
+				t.Errorf("body %q does not contain %q", rec.Body.String(), tt.wantContains)
+			}
+			if tt.wantBodyLen >= 0 && rec.Body.Len() != tt.wantBodyLen {
+				t.Errorf("body len = %d, want %d", rec.Body.Len(), tt.wantBodyLen)
 			}
 		})
 	}

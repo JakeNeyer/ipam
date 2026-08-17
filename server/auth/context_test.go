@@ -111,23 +111,52 @@ func TestIsGlobalAdmin(t *testing.T) {
 	}
 }
 
+func TestIsGlobalAdminRequest(t *testing.T) {
+	admin := &store.User{OrganizationID: uuid.Nil}
+	orgUser := &store.User{OrganizationID: uuid.New()}
+	orgID := uuid.New()
+	scoped := WithEffectiveOrganization(context.Background(), orgID)
+
+	if !IsGlobalAdminRequest(context.Background(), admin) {
+		t.Error("unscoped global admin request expected true")
+	}
+	if IsGlobalAdminRequest(scoped, admin) {
+		t.Error("org-scoped token for global admin expected false")
+	}
+	if IsGlobalAdminRequest(context.Background(), orgUser) {
+		t.Error("org user expected false")
+	}
+	if IsGlobalAdminRequest(scoped, orgUser) {
+		t.Error("org user with effective org expected false")
+	}
+	if IsGlobalAdminRequest(context.Background(), nil) {
+		t.Error("nil user expected false")
+	}
+}
+
 func TestRequireGlobalAdminForNilOrg(t *testing.T) {
 	admin := &store.User{OrganizationID: uuid.Nil}
 	user := &store.User{OrganizationID: uuid.New()}
-	if err := RequireGlobalAdminForNilOrg(admin, uuid.Nil); err != nil {
+	ctx := context.Background()
+	scoped := WithEffectiveOrganization(ctx, uuid.New())
+
+	if err := RequireGlobalAdminForNilOrg(ctx, admin, uuid.Nil); err != nil {
 		t.Errorf("RequireGlobalAdminForNilOrg(admin, Nil) = %v", err)
 	}
-	if err := RequireGlobalAdminForNilOrg(admin, uuid.New()); err != nil {
+	if err := RequireGlobalAdminForNilOrg(ctx, admin, uuid.New()); err != nil {
 		t.Errorf("RequireGlobalAdminForNilOrg(admin, set) = %v", err)
 	}
-	if err := RequireGlobalAdminForNilOrg(user, uuid.Nil); err == nil {
+	if err := RequireGlobalAdminForNilOrg(ctx, user, uuid.Nil); err == nil {
 		t.Error("RequireGlobalAdminForNilOrg(user, Nil) expected error")
 	}
-	if err := RequireGlobalAdminForNilOrg(user, uuid.New()); err != nil {
+	if err := RequireGlobalAdminForNilOrg(ctx, user, uuid.New()); err != nil {
 		t.Errorf("RequireGlobalAdminForNilOrg(user, set) = %v", err)
 	}
-	if err := RequireGlobalAdminForNilOrg(nil, uuid.Nil); err == nil {
+	if err := RequireGlobalAdminForNilOrg(ctx, nil, uuid.Nil); err == nil {
 		t.Error("RequireGlobalAdminForNilOrg(nil, Nil) expected error")
+	}
+	if err := RequireGlobalAdminForNilOrg(scoped, admin, uuid.Nil); err == nil {
+		t.Error("org-scoped global admin assigning Nil org expected error")
 	}
 }
 

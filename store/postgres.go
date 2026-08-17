@@ -1906,27 +1906,39 @@ func (s *PostgresStore) DeleteSession(sessionID string) {
 	_, _ = s.db.Exec(`DELETE FROM sessions WHERE session_id = $1`, sessionID)
 }
 
-func (s *PostgresStore) CreateAPIToken(userID uuid.UUID, name string, expiresAt *time.Time, organizationID *uuid.UUID) (token *APIToken, rawToken string, err error) {
-	var n int
-	if err = s.db.QueryRow(`SELECT 1 FROM users WHERE id = $1`, userID).Scan(&n); err == sql.ErrNoRows {
-		return nil, "", fmt.Errorf("user not found")
-	}
-	if err != nil {
-		return nil, "", err
-	}
+func (s *PostgresStore) CreateAPIToken(userID uuid.UUID, name string, expiresAt *time.Time, organizationID *uuid.UUID) (*APIToken, string, error) {
 	secret := make([]byte, apiTokenSecretBytes)
 	if _, err := rand.Read(secret); err != nil {
 		return nil, "", err
 	}
-	rawToken = apiTokenPrefix + hex.EncodeToString(secret)
+	rawToken := apiTokenPrefix + hex.EncodeToString(secret)
+	token, err := s.CreateAPITokenWithRaw(userID, name, rawToken, expiresAt, organizationID)
+	if err != nil {
+		return nil, "", err
+	}
+	return token, rawToken, nil
+}
+
+func (s *PostgresStore) CreateAPITokenWithRaw(userID uuid.UUID, name string, rawToken string, expiresAt *time.Time, organizationID *uuid.UUID) (*APIToken, error) {
+	rawToken = strings.TrimSpace(rawToken)
+	if rawToken == "" {
+		return nil, fmt.Errorf("raw token is required")
+	}
+	var n int
+	err := s.db.QueryRow(`SELECT 1 FROM users WHERE id = $1`, userID).Scan(&n)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("user not found")
+	}
+	if err != nil {
+		return nil, err
+	}
 	keyHash := hashToken(rawToken)
-	id := uuid.New()
 	orgID := uuid.Nil
 	if organizationID != nil {
 		orgID = *organizationID
 	}
-	token = &APIToken{
-		ID:             id,
+	token := &APIToken{
+		ID:             uuid.New(),
 		UserID:         userID,
 		Name:           strings.TrimSpace(name),
 		KeyHash:        keyHash,
@@ -1939,9 +1951,9 @@ func (s *PostgresStore) CreateAPIToken(userID uuid.UUID, name string, expiresAt 
 		token.ID, token.UserID, token.Name, token.KeyHash, token.CreatedAt, token.ExpiresAt, uuidPtr(token.OrganizationID),
 	)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	return token, rawToken, nil
+	return token, nil
 }
 
 func (s *PostgresStore) GetUserByTokenHash(keyHash string) (*User, error) {

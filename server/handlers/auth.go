@@ -281,8 +281,14 @@ func NewCreateTokenUseCase(s store.Storer) usecase.Interactor {
 			return status.Wrap(errors.New("name is required"), status.InvalidArgument)
 		}
 		var orgID *uuid.UUID
-		if input.OrganizationID != nil && *input.OrganizationID != "" {
-			if !auth.IsGlobalAdmin(user) {
+		if effective := auth.EffectiveOrganizationID(ctx); effective != uuid.Nil {
+			// Org-scoped API tokens may only mint tokens for the same org (no privilege escalation).
+			if input.OrganizationID != nil && *input.OrganizationID != "" && *input.OrganizationID != effective.String() {
+				return status.Wrap(errors.New("organization_id must match the token scope"), status.PermissionDenied)
+			}
+			orgID = &effective
+		} else if input.OrganizationID != nil && *input.OrganizationID != "" {
+			if !auth.IsGlobalAdminRequest(ctx, user) {
 				return status.Wrap(errors.New("only global admins can create org-scoped tokens"), status.PermissionDenied)
 			}
 			parsed, err := uuid.Parse(*input.OrganizationID)
@@ -294,7 +300,7 @@ func NewCreateTokenUseCase(s store.Storer) usecase.Interactor {
 			}
 			orgID = &parsed
 		}
-		if auth.IsGlobalAdmin(user) && orgID == nil {
+		if auth.IsGlobalAdminRequest(ctx, user) && orgID == nil {
 			return status.Wrap(errors.New("organization_id is required for global admin tokens"), status.InvalidArgument)
 		}
 		var expiresAt *time.Time

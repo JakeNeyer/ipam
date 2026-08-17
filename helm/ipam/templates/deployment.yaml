@@ -41,6 +41,14 @@ spec:
             - name: INITIAL_ADMIN_EMAIL
               value: {{ .Values.config.initialAdminEmail | quote }}
             {{- end }}
+            {{- if .Values.config.initialOrganizationName }}
+            - name: INITIAL_ORGANIZATION_NAME
+              value: {{ .Values.config.initialOrganizationName | quote }}
+            {{- end }}
+            {{- if .Values.config.initialAdminAPITokenTTL }}
+            - name: INITIAL_ADMIN_API_TOKEN_TTL
+              value: {{ .Values.config.initialAdminAPITokenTTL | quote }}
+            {{- end }}
             {{ include "ipam.oauthEnv" . | nindent 12 }}
             {{- if .Values.existingSecret }}
             - name: DATABASE_URL
@@ -54,6 +62,12 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.existingSecret }}
                   key: initial-admin-password
+                  optional: true
+            - name: INITIAL_ADMIN_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret }}
+                  key: initial-admin-token
                   optional: true
             {{- else if and .Values.database .Values.database.url }}
             - name: DATABASE_URL

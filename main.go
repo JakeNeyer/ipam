@@ -45,7 +45,10 @@ func main() {
 
 	serverCfg := config.LoadFromEnv()
 	oauthEnabled := len(serverCfg.EnabledOAuthProviders()) > 0
-	setup.EnsureInitialAdmin(st, oauthEnabled)
+	if err := setup.EnsureInitialAdmin(st, oauthEnabled); err != nil {
+		logger.Error("initial admin bootstrap failed", logger.ErrAttr(err))
+		os.Exit(1)
+	}
 	setup.EnsureDemoFixtures(st)
 
 	handlers.StartBackgroundSync(st)

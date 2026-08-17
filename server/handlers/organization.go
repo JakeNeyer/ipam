@@ -26,7 +26,7 @@ type OrganizationResponse struct {
 func AdminOrganizationsHandler(s store.Storer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user := auth.UserFromContext(r.Context())
-		if user == nil || !auth.IsGlobalAdmin(user) {
+		if user == nil || !auth.IsGlobalAdminRequest(r.Context(), user) {
 			auth.WriteJSONError(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -87,7 +87,7 @@ type UpdateOrganizationRequest struct {
 func AdminOrganizationByIDHandler(s store.Storer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user := auth.UserFromContext(r.Context())
-		if user == nil || !auth.IsGlobalAdmin(user) {
+		if user == nil || !auth.IsGlobalAdminRequest(r.Context(), user) {
 			auth.WriteJSONError(w, "forbidden", http.StatusForbidden)
 			return
 		}

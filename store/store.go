@@ -37,9 +37,7 @@ type PoolStore interface {
 	ListPoolsByOrganizationIncludingDeleted(orgID uuid.UUID) ([]*network.Pool, error) // for sync to match cloud pools to soft-deleted rows
 	UpdatePool(id uuid.UUID, pool *network.Pool) error
 	DeletePool(id uuid.UUID) error
-	// SoftDeletePool sets deleted_at so the pool is hidden and can be removed from the cloud on next sync (IPAM conflict).
 	SoftDeletePool(id uuid.UUID) error
-	// ListPoolsPendingCloudDelete returns soft-deleted pools for the connection that should be deleted in the cloud then removed.
 	ListPoolsPendingCloudDelete(connID uuid.UUID) ([]*network.Pool, error)
 }
 
@@ -99,6 +97,7 @@ type SessionStore interface {
 
 type APITokenStore interface {
 	CreateAPIToken(userID uuid.UUID, name string, expiresAt *time.Time, organizationID *uuid.UUID) (token *APIToken, rawToken string, err error)
+	CreateAPITokenWithRaw(userID uuid.UUID, name string, rawToken string, expiresAt *time.Time, organizationID *uuid.UUID) (*APIToken, error)
 	GetUserByTokenHash(keyHash string) (*User, error)
 	GetAPITokenByKeyHash(keyHash string) (*APIToken, error)
 	ListAPITokens(userID uuid.UUID) ([]*APIToken, error)
@@ -122,9 +121,6 @@ type CloudConnectionStore interface {
 	ListCloudConnections() ([]*CloudConnection, error) // all connections, for background sync
 	UpdateCloudConnection(id uuid.UUID, c *CloudConnection) error
 	DeleteCloudConnection(id uuid.UUID) error
-	// WithSyncLock runs fn if this process can acquire the per-connection sync lock (e.g. PostgreSQL advisory lock).
-	// Returns (false, nil) if another instance holds the lock; (true, err) after running fn.
-	// Ensures only one sync runs per connection when multiple server instances are running.
 	WithSyncLock(ctx context.Context, connectionID uuid.UUID, fn func() error) (acquired bool, err error)
 }
 

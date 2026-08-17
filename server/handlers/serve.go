@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -31,27 +33,90 @@ func Static(dir string, next http.Handler) http.Handler {
 		}
 		absDir, err := filepath.Abs(dir)
 		if err != nil {
-			http.ServeFile(w, r, filepath.Join(dir, "index.html"))
+			serveStaticFile(w, r, filepath.Join(dir, "index.html"))
 			return
 		}
 		p := filepath.Join(dir, filepath.Clean(strings.TrimPrefix(r.URL.Path, "/")))
 		absP, err := filepath.Abs(p)
 		if err != nil {
-			http.ServeFile(w, r, filepath.Join(dir, "index.html"))
+			serveStaticFile(w, r, filepath.Join(dir, "index.html"))
 			return
 		}
 		rel, err := filepath.Rel(absDir, absP)
 		if err != nil || strings.Contains(rel, "..") {
-			http.ServeFile(w, r, filepath.Join(dir, "index.html"))
+			serveStaticFile(w, r, filepath.Join(dir, "index.html"))
 			return
 		}
 		// p is safe: absP was verified under absDir via Rel above
 		if f, err := os.Stat(p); err == nil && !f.IsDir() { // #nosec G703
-			http.ServeFile(w, r, p)
+			serveStaticFile(w, r, p)
 			return
 		}
-		http.ServeFile(w, r, filepath.Join(dir, "index.html"))
+		serveStaticFile(w, r, filepath.Join(dir, "index.html"))
 	})
+}
+
+func serveStaticFile(w http.ResponseWriter, r *http.Request, path string) {
+	f, err := os.Open(path) // #nosec G304 -- path is constrained to STATIC_DIR by Static()
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+
+	st, err := f.Stat()
+	if err != nil || st.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+
+	ctype := mimeTypeByExt(path)
+	if ctype == "" {
+		buf := make([]byte, 512)
+		n, _ := io.ReadFull(f, buf)
+		ctype = http.DetectContentType(buf[:n])
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+	}
+	w.Header().Set("Content-Type", ctype)
+	w.Header().Set("Content-Length", strconv.FormatInt(st.Size(), 10))
+	w.WriteHeader(http.StatusOK)
+	if r.Method != http.MethodHead {
+		_, _ = io.Copy(w, f)
+	}
+}
+
+func mimeTypeByExt(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".html", ".htm":
+		return "text/html; charset=utf-8"
+	case ".js", ".mjs":
+		return "text/javascript; charset=utf-8"
+	case ".css":
+		return "text/css; charset=utf-8"
+	case ".svg":
+		return "image/svg+xml"
+	case ".json":
+		return "application/json"
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".webp":
+		return "image/webp"
+	case ".ico":
+		return "image/x-icon"
+	case ".woff":
+		return "font/woff"
+	case ".woff2":
+		return "font/woff2"
+	case ".map":
+		return "application/json"
+	default:
+		return ""
+	}
 }
 
 // ResolveStaticDir returns a directory containing index.html for the SPA, or "" if none found.
