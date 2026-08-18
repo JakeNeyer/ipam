@@ -4,7 +4,34 @@ Source code: [github.com/JakeNeyer/ipam](https://github.com/JakeNeyer/ipam)
 
 ## Quick start
 
-Run the setup script directly with `curl`. It clones the repo, builds the Docker image, starts Postgres, and launches IPAM:
+### Docker (published image)
+
+Pull the pre-built image from GitHub Container Registry and run with Postgres:
+
+```bash
+docker pull ghcr.io/jakeneyer/ipam:latest
+
+docker run -d --name ipam-db \
+  -e POSTGRES_USER=ipam \
+  -e POSTGRES_PASSWORD=ipam \
+  -e POSTGRES_DB=ipam \
+  -p 5432:5432 \
+  postgres:16-alpine
+
+docker run -d --name ipam \
+  -e DATABASE_URL='postgres://ipam:ipam@host.docker.internal:5432/ipam?sslmode=disable' \
+  -e PORT=8080 \
+  -p 8080:8080 \
+  ghcr.io/jakeneyer/ipam:latest
+```
+
+Pin a release with a version tag (for example `ghcr.io/jakeneyer/ipam:0.1.0`). See [GitHub Packages](https://github.com/JakeNeyer/ipam/pkgs/container/ipam) for available tags.
+
+When it finishes, open `http://localhost:8080` and create your admin account.
+
+### Setup script (build from source)
+
+Run the setup script with `curl`. It clones the repo, builds the Docker image, starts Postgres, and launches IPAM:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/JakeNeyer/ipam/main/setup.sh | bash
@@ -27,6 +54,29 @@ export INITIAL_ADMIN_EMAIL=admin@example.com
 export INITIAL_ADMIN_PASSWORD=changeme123
 bash setup.sh
 ```
+
+### Helm
+
+Each [GitHub Release](https://github.com/JakeNeyer/ipam/releases) publishes a Helm chart archive (`ipam-<version>.tgz`) and a SHA256 checksum (`ipam-<version>.tgz.sha256`). The chart defaults to the GHCR image `ghcr.io/jakeneyer/ipam`.
+
+```bash
+VERSION=0.1.0   # or the latest release version
+
+# Download and verify
+curl -fsSLO "https://github.com/JakeNeyer/ipam/releases/download/v${VERSION}/ipam-${VERSION}.tgz"
+curl -fsSLO "https://github.com/JakeNeyer/ipam/releases/download/v${VERSION}/ipam-${VERSION}.tgz.sha256"
+sha256sum -c "ipam-${VERSION}.tgz.sha256"
+
+# Install (in-memory store; not for production)
+helm install ipam "./ipam-${VERSION}.tgz"
+
+# Install with the bundled PostgreSQL subchart
+helm install ipam "./ipam-${VERSION}.tgz" \
+  --set postgresql.enabled=true \
+  --set postgresql.auth.postgresPassword=your-secure-password
+```
+
+Full chart options are in the [Helm chart README](https://github.com/JakeNeyer/ipam/blob/main/helm/ipam/README.md).
 
 ## Concepts
 

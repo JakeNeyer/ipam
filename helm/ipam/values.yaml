@@ -4,8 +4,9 @@
 replicaCount: 1
 
 image:
-  repository: ipam
-  tag: latest
+  repository: ghcr.io/jakeneyer/ipam
+  # Defaults to Chart.AppVersion when empty
+  tag: ""
   pullPolicy: IfNotPresent
 
 # Override the app's default port (container listens on this)

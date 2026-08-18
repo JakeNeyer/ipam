@@ -60,6 +60,14 @@ Create the name of the service account to use
 {{- end }}
 
 {{/*
+Container image reference. Empty image.tag defaults to Chart.AppVersion.
+*/}}
+{{- define "ipam.image" -}}
+{{- $tag := .Values.image.tag | default .Chart.AppVersion -}}
+{{- printf "%s:%s" .Values.image.repository $tag -}}
+{{- end }}
+
+{{/*
 OAuth provider id -> env prefix (e.g. keycloak -> OAUTH_KEYCLOAK_).
 Must match server/config oauthEnvPrefix (uppercase, hyphens to underscores).
 */}}
