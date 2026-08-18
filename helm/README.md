@@ -8,7 +8,26 @@ This directory contains [Helm](https://helm.sh) charts for deploying IPAM to Kub
 |---------|-------------|
 | [ipam/](./ipam/) | IPAM – IP Address Management. Deploys the app with optional Ingress, HPA, and an optional **PostgreSQL** subchart (Bitnami). |
 
-## Quick start
+## Install from a GitHub Release
+
+Release tags publish `ipam-<version>.tgz` and `ipam-<version>.tgz.sha256` as release assets. The chart uses the published container image `ghcr.io/jakeneyer/ipam`.
+
+```bash
+VERSION=0.1.0   # or the latest release version
+
+curl -fsSLO "https://github.com/JakeNeyer/ipam/releases/download/v${VERSION}/ipam-${VERSION}.tgz"
+curl -fsSLO "https://github.com/JakeNeyer/ipam/releases/download/v${VERSION}/ipam-${VERSION}.tgz.sha256"
+sha256sum -c "ipam-${VERSION}.tgz.sha256"
+
+helm install ipam "./ipam-${VERSION}.tgz"
+
+# With the optional PostgreSQL subchart
+helm install ipam "./ipam-${VERSION}.tgz" \
+  --set postgresql.enabled=true \
+  --set postgresql.auth.postgresPassword=your-secure-password
+```
+
+## Install from source
 
 From the repo root. **Before any install**, fetch chart dependencies (required because the chart declares an optional PostgreSQL dependency):
 
@@ -17,11 +36,14 @@ cd helm/ipam && helm dependency update && cd ../..
 ```
 
 ```bash
-# Build the app image
-docker build -t ipam:latest .
-
-# Install IPAM (in-memory store; not for production)
+# Uses ghcr.io/jakeneyer/ipam by default (Chart.AppVersion)
 helm install ipam ./helm/ipam
+
+# Or build a local image
+docker build -t ipam:latest .
+helm install ipam ./helm/ipam \
+  --set image.repository=ipam \
+  --set image.tag=latest
 
 # Install IPAM with the optional PostgreSQL subchart
 helm install ipam ./helm/ipam \
@@ -64,13 +86,15 @@ kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main
 kubectl wait -n ingress-nginx --for=condition=ready pod -l app.kubernetes.io/component=controller --timeout=90s
 ```
 
-**3. Build the IPAM image and load it into Kind:**
+**3. Load a local IPAM image into Kind** (or pull from GHCR if the cluster can reach it):
 
 ```bash
-# From the repo root
+# From the repo root — local build
 docker build -t ipam:latest .
 kind load docker-image ipam:latest --name ipam
 ```
+
+Alternatively, skip the local build and use `ghcr.io/jakeneyer/ipam` in step 5 (omit the `image.repository` / `image.tag` / `image.pullPolicy` overrides so the chart defaults apply).
 
 **4. Fetch chart dependencies** (required once; the chart declares an optional PostgreSQL dependency):
 
@@ -81,8 +105,10 @@ cd helm/ipam && helm dependency update && cd ../..
 **5. Install IPAM with Ingress enabled:**
 
 ```bash
-# From the repo root. In-memory store (fine for a quick local try)
+# From the repo root. Local image loaded into Kind above
 helm install ipam ./helm/ipam \
+  --set image.repository=ipam \
+  --set image.tag=latest \
   --set image.pullPolicy=Never \
   --set ingress.enabled=true \
   --set ingress.className=nginx \
@@ -131,6 +157,8 @@ Then open **http://ipam.local** (or http://ipam.127.0.0.1.nip.io) in your browse
 ```bash
 cd helm/ipam && helm dependency update && cd ../..
 helm install ipam ./helm/ipam \
+  --set image.repository=ipam \
+  --set image.tag=latest \
   --set image.pullPolicy=Never \
   --set postgresql.enabled=true \
   --set postgresql.auth.postgresPassword=ipam-demo \

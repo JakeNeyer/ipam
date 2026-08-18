@@ -8,41 +8,58 @@ Deploy [IPAM](https://github.com/JakeNeyer/ipam) (IP Address Management) into Ku
 - Helm 3+
 - (Production) PostgreSQL – the app can run with an in-memory store when `DATABASE_URL` is not set (data is lost on restart).
 
-## Install
+## Install from a GitHub Release
 
-Build and push the app image, then install the chart.
-
-When using the optional PostgreSQL dependency, fetch dependencies first:
+Each [release](https://github.com/JakeNeyer/ipam/releases) attaches `ipam-<version>.tgz` and `ipam-<version>.tgz.sha256`. The chart pulls `ghcr.io/jakeneyer/ipam` by default (tag defaults to the chart `appVersion`).
 
 ```bash
-cd helm/ipam && helm dependency update && cd ../..
-```
+VERSION=0.1.0   # or the latest release version
 
-```bash
-# From the repo root, build the image (example: local registry)
-docker build -t ipam:latest .
+curl -fsSLO "https://github.com/JakeNeyer/ipam/releases/download/v${VERSION}/ipam-${VERSION}.tgz"
+curl -fsSLO "https://github.com/JakeNeyer/ipam/releases/download/v${VERSION}/ipam-${VERSION}.tgz.sha256"
+sha256sum -c "ipam-${VERSION}.tgz.sha256"
 
 # Install with default values (in-memory store, single replica)
-helm install ipam ./helm/ipam
+helm install ipam "./ipam-${VERSION}.tgz"
 
 # Install with the optional PostgreSQL subchart (Bitnami PostgreSQL)
-helm dependency update helm/ipam   # once, to fetch postgresql chart
-helm install ipam ./helm/ipam \
+helm install ipam "./ipam-${VERSION}.tgz" \
   --set postgresql.enabled=true \
   --set postgresql.auth.postgresPassword=your-secure-password
 
 # Install with existing PostgreSQL (create a secret with key database-url first)
 kubectl create secret generic ipam-secrets --from-literal=database-url='postgresql://user:pass@host:5432/ipam?sslmode=disable'
-helm install ipam ./helm/ipam --set existingSecret=ipam-secrets
+helm install ipam "./ipam-${VERSION}.tgz" --set existingSecret=ipam-secrets
 
 # Install with ingress
-helm install ipam ./helm/ipam \
-  --set image.repository=your-registry/ipam \
-  --set image.tag=1.0.0 \
+helm install ipam "./ipam-${VERSION}.tgz" \
+  --set image.tag=0.1.0 \
   --set ingress.enabled=true \
   --set ingress.hosts[0].host=ipam.example.com \
   --set config.appOrigin=https://ipam.example.com
 ```
+
+## Install from source
+
+Clone the repo, fetch chart dependencies, then install from the chart path:
+
+```bash
+git clone https://github.com/JakeNeyer/ipam.git
+cd ipam
+cd helm/ipam && helm dependency update && cd ../..
+
+# Uses ghcr.io/jakeneyer/ipam by default (Chart.AppVersion)
+helm install ipam ./helm/ipam
+
+# Or build and use a local image
+docker build -t ipam:latest .
+helm install ipam ./helm/ipam \
+  --set image.repository=ipam \
+  --set image.tag=latest \
+  --set image.pullPolicy=IfNotPresent
+```
+
+When using the optional PostgreSQL dependency from source, fetch dependencies first (`helm dependency update helm/ipam`).
 
 ### OAuth providers
 
@@ -103,8 +120,8 @@ helm template ipam ./helm/ipam -f helm/ipam/ci/oauth-values.yaml
 | Key | Description | Default |
 |-----|-------------|---------|
 | `replicaCount` | Number of replicas | `1` |
-| `image.repository` | Image repository | `ipam` |
-| `image.tag` | Image tag | `latest` |
+| `image.repository` | Image repository | `ghcr.io/jakeneyer/ipam` |
+| `image.tag` | Image tag (empty → `Chart.AppVersion`) | `""` |
 | `service.port` | Service and container port | `8080` |
 | `existingSecret` | Secret name for `database-url`, `initial-admin-password`, `initial-admin-token`, `oauth-<id>-client-secret` per provider | `""` |
 | `oauth.providers` | Map of OAuth provider configs (see [OAuth providers](#oauth-providers)) | `{}` |
@@ -119,7 +136,7 @@ helm template ipam ./helm/ipam -f helm/ipam/ci/oauth-values.yaml
 | `ingress.enabled` | Create an Ingress | `false` |
 | `autoscaling.enabled` | Enable HPA | `false` |
 
-When `postgresql.enabled` is true, run `helm dependency update helm/ipam` (or `helm dependency build`) before install. All Bitnami PostgreSQL [values](https://github.com/bitnami/charts/tree/main/bitnami/postgresql#parameters) can be set under `postgresql.*`.
+When `postgresql.enabled` is true, run `helm dependency update helm/ipam` (or `helm dependency build`) before install from source. All Bitnami PostgreSQL [values](https://github.com/bitnami/charts/tree/main/bitnami/postgresql#parameters) can be set under `postgresql.*`. Packaged release charts already include dependencies.
 
 ## Uninstall
 

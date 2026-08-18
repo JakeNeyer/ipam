@@ -20,7 +20,7 @@ The IPAM data model has four main resource types, arranged in a hierarchy:
 
 ## Sections
 
-- [Getting started](#docs/getting-started) — Docker setup, REST API, and Terraform examples.
+- [Getting started](#docs/getting-started) — Docker (GHCR), Helm releases, REST API, and Terraform examples.
 - [Environments](#docs/environments) — Manage environments and their pools.
 - [Networks](#docs/networks) — Manage pools, network blocks, and allocations.
 - [Integrations](#docs/integrations) — Connect cloud providers and sync pools, blocks, and allocations. See [AWS](#docs/integrations/aws) for the AWS data model.
