@@ -31,53 +31,65 @@ func Static(dir string, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		absDir, err := filepath.Abs(dir)
+		root, err := os.OpenRoot(dir)
 		if err != nil {
-			serveStaticFile(w, r, filepath.Join(dir, "index.html"))
+			http.NotFound(w, r)
 			return
 		}
-		p := filepath.Join(dir, filepath.Clean(strings.TrimPrefix(r.URL.Path, "/")))
-		absP, err := filepath.Abs(p)
-		if err != nil {
-			serveStaticFile(w, r, filepath.Join(dir, "index.html"))
+		defer root.Close()
+
+		name := safeStaticName(dir, r.URL.Path)
+		if serveRootFile(w, r, root, name) {
 			return
 		}
-		rel, err := filepath.Rel(absDir, absP)
-		if err != nil || strings.Contains(rel, "..") {
-			serveStaticFile(w, r, filepath.Join(dir, "index.html"))
-			return
+		if !serveRootFile(w, r, root, "index.html") {
+			http.NotFound(w, r)
 		}
-		// p is safe: absP was verified under absDir via Rel above
-		if f, err := os.Stat(p); err == nil && !f.IsDir() { // #nosec G703
-			serveStaticFile(w, r, p)
-			return
-		}
-		serveStaticFile(w, r, filepath.Join(dir, "index.html"))
 	})
 }
 
-func serveStaticFile(w http.ResponseWriter, r *http.Request, path string) {
-	f, err := os.Open(path) // #nosec G304 -- path is constrained to STATIC_DIR by Static()
+// safeStaticName returns a slash-separated path relative to dir, or "index.html" if
+// the request would escape dir. filepath.Rel is the sanitizer that clears URL-path taint.
+func safeStaticName(dir, reqPath string) string {
+	name := strings.TrimPrefix(reqPath, "/")
+	if name == "" {
+		return "index.html"
+	}
+	absDir, err := filepath.Abs(dir)
 	if err != nil {
-		http.NotFound(w, r)
-		return
+		return "index.html"
+	}
+	absP, err := filepath.Abs(filepath.Join(dir, filepath.Clean(name)))
+	if err != nil {
+		return "index.html"
+	}
+	rel, err := filepath.Rel(absDir, absP)
+	if err != nil || rel == "." || strings.Contains(rel, "..") {
+		return "index.html"
+	}
+	return filepath.ToSlash(rel)
+}
+
+func serveRootFile(w http.ResponseWriter, r *http.Request, root *os.Root, name string) bool {
+	f, err := root.Open(name)
+	if err != nil {
+		return false
 	}
 	defer f.Close()
 
 	st, err := f.Stat()
 	if err != nil || st.IsDir() {
-		http.NotFound(w, r)
-		return
+		return false
 	}
 
-	ctype := mimeTypeByExt(path)
+	ctype := mimeTypeByExt(name)
 	if ctype == "" {
 		buf := make([]byte, 512)
 		n, _ := io.ReadFull(f, buf)
 		ctype = http.DetectContentType(buf[:n])
 		if _, err := f.Seek(0, io.SeekStart); err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
+			return true
 		}
 	}
 	w.Header().Set("Content-Type", ctype)
@@ -86,6 +98,7 @@ func serveStaticFile(w http.ResponseWriter, r *http.Request, path string) {
 	if r.Method != http.MethodHead {
 		_, _ = io.Copy(w, f)
 	}
+	return true
 }
 
 func mimeTypeByExt(path string) string {

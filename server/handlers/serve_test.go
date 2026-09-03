@@ -128,9 +128,11 @@ func TestStatic_pathTraversal(t *testing.T) {
 	req := httptest.NewRequest("GET", "/../../../etc/passwd", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
-	// Should either serve index.html (200) or reject (400), never serve actual /etc/passwd
-	if rec.Code != 200 && rec.Code != 400 {
-		t.Errorf("status = %d, want 200 (fallback) or 400 (rejected)", rec.Code)
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200 (SPA fallback)", rec.Code)
+	}
+	if rec.Body.String() != "index" {
+		t.Errorf("body = %q, want index fallback, not a file outside dir", rec.Body.String())
 	}
 }
 
