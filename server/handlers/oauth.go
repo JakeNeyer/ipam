@@ -87,7 +87,7 @@ func OAuthStartHandler(cfg *config.Config, registry *oauth.ProviderRegistry) htt
 			auth.WriteJSONError(w, "could not start OAuth", http.StatusInternalServerError)
 			return
 		}
-		redirectURI := redirectBase(r) + "/api/auth/oauth/" + provider + "/callback"
+		redirectURI := oauthRedirectBase(r, cfg.AppOrigin) + "/api/auth/oauth/" + provider + "/callback"
 		conf := &oauth2.Config{
 			ClientID:     pc.ClientID,
 			ClientSecret: pc.ClientSecret,
@@ -139,7 +139,7 @@ func OAuthCallbackHandler(s store.Storer, cfg *config.Config, registry *oauth.Pr
 		inviteToken := strings.TrimSpace(stored.InviteToken)
 		secure := requestSecure(r)
 		auth.ClearOAuthStateCookie(w, secure)
-		redirectURI := redirectBase(r) + "/api/auth/oauth/" + provider + "/callback"
+		redirectURI := oauthRedirectBase(r, cfg.AppOrigin) + "/api/auth/oauth/" + provider + "/callback"
 		conf := &oauth2.Config{
 			ClientID:     pc.ClientID,
 			ClientSecret: pc.ClientSecret,
@@ -262,6 +262,16 @@ func redirectBase(r *http.Request) string {
 		host = h
 	}
 	return scheme + "://" + host
+}
+
+// oauthRedirectBase is the origin the IdP redirects the browser to after login.
+// Prefer APP_ORIGIN so the callback stays on the UI host (e.g. localhost:5173)
+// instead of the API bind address seen through a changeOrigin proxy (127.0.0.1:8011).
+func oauthRedirectBase(r *http.Request, appOrigin string) string {
+	if base := appRedirectBase(appOrigin); base != "" {
+		return base
+	}
+	return redirectBase(r)
 }
 
 func appRedirectBase(appOrigin string) string {

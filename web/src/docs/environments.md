@@ -7,8 +7,9 @@ Environments are logical groupings (e.g. `Production`, `Staging`) that organize 
 <img src="/images/environments-dark.png" alt="Environments page (dark mode)" class="screenshot-dark" />
 </p>
 
-- **View** — See all environments; expand a row to view CIDR pools and **Blocks without pool**, then expand a pool or block to see its blocks or allocations.
+- **View** — See all environments. Click a name to open that environment’s pools. Click a pool to focus it and its blocks. Use **← All environments** to go back.
 - **Create** — Add an environment with a name and a required pool (pool name + CIDR). Every environment must have a pool.
-- Pools — In the expanded row, add, edit, or delete pools. Pools are CIDR ranges that blocks in that environment draw from; block CIDRs must be contained in a pool’s CIDR. Pools in the same environment cannot overlap.
+- **Pools** — Add, edit, or delete pools from the environment view. Nested child pools are indented. Pools are CIDR ranges that blocks draw from; block CIDRs must be contained in a pool’s CIDR. Pools in the same environment cannot overlap.
+- **Blocks** — Blocks without a pool appear on the environment view. Open a pool to see its blocks. Block names go to Networks. **Open in Networks** focuses the same environment or pool there.
 - **Edit / Delete** — Rename an environment or delete it (and its pools and blocks) from the actions menu.
 - **Quick access** — Search for an environment or pool in the command palette (`⌘K` / `Ctrl+K`) to jump straight to it.

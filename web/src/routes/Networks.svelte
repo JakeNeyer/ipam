@@ -12,6 +12,7 @@
   import { totalIPsForCidr, poolUsedIPs, poolUtilizationPercent } from '../lib/poolUsage.js'
   import { user, selectedOrgForGlobalAdmin, isGlobalAdmin } from '../lib/auth.js'
   import { listEnvironments, listPools, listPoolsByOrganization, listBlocks, listAllocations, createPool, createBlock, createAllocation, getPool, updatePool, updateBlock, updateAllocation, deletePool, deleteBlock, deleteAllocation } from '../lib/api.js'
+  import { getPoolDepth, sortPoolsByHierarchy } from '../lib/poolHierarchy.js'
   import { get } from 'svelte/store'
 
   export let environmentId = null
@@ -49,7 +50,7 @@
   let openedCreateBlockFromQuery = false
   let openedCreateAllocFromQuery = false
   $: if (openCreateBlockFromQuery && !openedCreateBlockFromQuery) {
-    showCreateBlock = true
+    openCreateBlock()
     openedCreateBlockFromQuery = true
     dispatch('clearCreateQuery')
   } else if (!openCreateBlockFromQuery) {
@@ -58,7 +59,7 @@
   $: if (openCreateAllocationFromQuery && !openedCreateAllocFromQuery) {
     openedCreateAllocFromQuery = true
     dispatch('clearCreateQuery')
-    if (blocks.length > 0) showCreateAlloc = true
+    if (blocks.length > 0) openCreateAlloc()
   } else if (!openCreateAllocationFromQuery) {
     openedCreateAllocFromQuery = false
   }
@@ -299,6 +300,49 @@
     return pool?.name ?? null
   }
 
+  $: selectedPoolId =
+    poolIdFilter != null && poolIdFilter !== '' && poolIdFilter !== POOL_FILTER_NONE && !String(poolIdFilter).startsWith(POOL_FILTER_ENV_PREFIX)
+      ? String(poolIdFilter)
+      : null
+  $: scopePool = selectedPoolId ? allPools.find((p) => envIdsMatch(p.id, selectedPoolId)) : null
+  $: scopeEnv = envIdForApi
+    ? environments.find((e) => envIdsMatch(e.id, envIdForApi))
+    : scopePool
+      ? environments.find((e) => envIdsMatch(e.id, scopePool.environment_id))
+      : null
+  $: scopeBlockName = blockNameFilter && String(blockNameFilter).trim() !== '' ? String(blockNameFilter).trim() : null
+  $: scopeAllocName = allocationFilter && String(allocationFilter).trim() !== '' ? String(allocationFilter).trim() : null
+  $: viewMode = effectiveFilter === 'orphaned' ? 'orphaned' : effectiveFilter === 'unused' ? 'unused' : 'all'
+  $: hidePoolsSection = !!scopeBlockName || effectiveFilter === 'orphaned' || poolIdFilter === POOL_FILTER_NONE
+  $: hasScope =
+    viewMode !== 'all' ||
+    !!scopeEnv ||
+    !!scopePool ||
+    poolIdFilter === POOL_FILTER_NONE ||
+    !!scopeBlockName ||
+    !!scopeAllocName
+
+  function drillToEnv(envId) {
+    dispatch('setPoolFilter', { pool: POOL_FILTER_ENV_PREFIX + String(envId) })
+    dispatch('setBlockFilter', { block: null })
+    dispatch('setAllocationFilter', { allocation: null })
+  }
+
+  function drillToPool(poolId) {
+    dispatch('setPoolFilter', { pool: String(poolId) })
+    dispatch('setBlockFilter', { block: null })
+    dispatch('setAllocationFilter', { allocation: null })
+  }
+
+  function drillToBlock(name) {
+    dispatch('setBlockFilter', { block: name })
+    dispatch('setAllocationFilter', { allocation: null })
+  }
+
+  function drillToAlloc(name) {
+    dispatch('setAllocationFilter', { allocation: name })
+  }
+
   $: envIdForApi =
     effectiveFilter && effectiveFilter !== 'all' && effectiveFilter !== 'orphaned' && effectiveFilter !== 'unused'
       ? effectiveFilter
@@ -311,6 +355,10 @@
    *  Inlined into reactive statement so Svelte tracks allPools / environments as dependencies. */
   $: poolFilterOptions = [
     { value: '', label: 'All' },
+    ...environments.map((e) => ({
+      value: POOL_FILTER_ENV_PREFIX + String(e.id),
+      label: 'Environment: ' + (e.name || e.id),
+    })),
     { value: POOL_FILTER_NONE, label: 'No pool' },
     ...allPools.map((p) => ({
       value: String(p.id),
@@ -337,52 +385,25 @@
       : poolIdFilter === POOL_FILTER_NONE
         ? []
       : poolIdFilter != null && poolIdFilter !== '' && !String(poolIdFilter).startsWith(POOL_FILTER_ENV_PREFIX)
-        ? allPools.filter((p) => envIdsMatch(p.id, poolIdFilter))
+        ? allPools.filter((p) => {
+            if (envIdsMatch(p.id, poolIdFilter)) return true
+            let cur = p
+            const seen = new Set()
+            while (cur && cur.parent_pool_id != null && String(cur.parent_pool_id).trim() !== '') {
+              const pid = String(cur.parent_pool_id).toLowerCase()
+              if (seen.has(pid)) break
+              seen.add(pid)
+              if (pid === String(poolIdFilter).toLowerCase()) return true
+              cur = allPools.find((x) => envIdsMatch(x.id, pid))
+            }
+            return false
+          })
         : (blockNameFilter != null && String(blockNameFilter).trim() !== '') || (allocationFilter != null && String(allocationFilter).trim() !== '')
           ? allPools.filter((p) => poolIdsFromDisplayedBlocks.has(String(p.id).toLowerCase()))
           : envIdForApi
             ? allPools.filter((p) => envIdsMatch(p.environment_id, envIdForApi))
             : allPools
 
-  /** Nesting depth of a pool (0 = root, 1 = child of root, 2 = grandchild, …). */
-  function getPoolDepth(pool, poolList) {
-    if (!pool || !poolList) return 0
-    let d = 0
-    let p = pool
-    const idMatch = (a, b) => a != null && b != null && String(a).toLowerCase() === String(b).toLowerCase()
-    while (p && p.parent_pool_id != null && String(p.parent_pool_id).trim() !== '') {
-      const parent = poolList.find((x) => idMatch(x.id, p.parent_pool_id))
-      if (!parent) break
-      d += 1
-      p = parent
-    }
-    return d
-  }
-  /** Order pools parent-first then children (for tables and hierarchy display). */
-  function sortPoolsByHierarchy(poolList) {
-    if (!poolList.length) return []
-    const id = (p) => String(p.id).toLowerCase()
-    const parentId = (p) => (p.parent_pool_id != null && String(p.parent_pool_id).trim() !== '') ? String(p.parent_pool_id).toLowerCase() : null
-    const byId = new Map(poolList.map((p) => [id(p), p]))
-    const childrenMap = new Map()
-    poolList.forEach((p) => {
-      const pid = parentId(p)
-      if (!pid || !byId.has(pid)) return
-      const list = childrenMap.get(pid) || []
-      list.push(p)
-      childrenMap.set(pid, list)
-    })
-    childrenMap.forEach((list) => list.sort((a, b) => (a.name || '').localeCompare(b.name || '')))
-    const result = []
-    function visit(pool) {
-      result.push(pool)
-      ;(childrenMap.get(id(pool)) || []).forEach(visit)
-    }
-    const roots = poolList.filter((p) => !parentId(p) || !byId.has(parentId(p)))
-    roots.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
-    roots.forEach(visit)
-    return result
-  }
   $: displayedPoolsOrdered = sortPoolsByHierarchy(displayedPools)
 
   $: createPoolParentOptions = [
@@ -580,12 +601,46 @@
     }
   }
 
+  function openCreatePool() {
+    showCreatePool = true
+    poolError = ''
+    poolName = ''
+    poolCidr = ''
+    createPoolEnvId = envIdForApi || (scopePool?.environment_id ? String(scopePool.environment_id) : '')
+    createPoolParentId = selectedPoolId || ''
+  }
+
   function openCreateBlock() {
     showCreateBlock = true
     blockError = ''
     blockName = ''
     blockCidr = ''
-    blockPoolId = ''
+    blockPoolId = selectedPoolId || ''
+  }
+
+  function openCreateAlloc() {
+    showCreateAlloc = true
+    allocError = ''
+    allocName = ''
+    allocCidr = ''
+    allocBlockName = scopeBlockName || ''
+  }
+
+  /** Bring a create form into view when it opened off-screen (header buttons, command palette). */
+  function scrollCreateFormIntoView(node) {
+    tick().then(() => {
+      requestAnimationFrame(() => {
+        const target = node.closest('.section') || node
+        const scroller = target.closest('.main')
+        const scrollerRect = scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: window.innerHeight }
+        const rect = target.getBoundingClientRect()
+        const topInView = rect.top >= scrollerRect.top && rect.top <= scrollerRect.bottom - 64
+        if (!topInView) {
+          const reduceMotion = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+          target.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' })
+        }
+      })
+    })
   }
 
   async function startEditBlock(block) {
@@ -921,66 +976,86 @@
   <header class="page-header">
     <div class="page-header-text">
       <h1 class="page-title">Networks</h1>
-      <p class="page-desc">Network blocks define your IP ranges; allocations are subnets within those blocks.</p>
+      <p class="page-desc">Pools, network blocks, and allocations. Click a name to focus that part of the hierarchy.</p>
+    </div>
+    <div class="header-actions">
+      <button type="button" class="btn" on:click={openCreatePool}>Create pool</button>
+      <button type="button" class="btn" on:click={openCreateBlock}>Create block</button>
+      <button type="button" class="btn btn-primary" disabled={blocks.length === 0 && !loading} on:click={openCreateAlloc} title={blocks.length === 0 ? 'Create a network block first' : ''}>Create allocation</button>
     </div>
   </header>
 
-  <div class="filter-bar">
-    <div class="filter-label" role="group" aria-label="Filter">
-      <span>Filter</span>
-      <SearchableSelect
-        options={[
-          { value: 'all', label: 'All' },
-          { value: 'orphaned', label: 'Orphaned only' },
-          { value: 'unused', label: 'Unused only' },
-        ]}
-        value={String(effectiveFilter)}
-        on:change={(e) => setFilter(e.detail)}
-        placeholder="All"
-      />
-    </div>
-    <div class="filter-label" role="group" aria-label="Pool">
-      <span>Pool</span>
-      <SearchableSelect
-        options={poolFilterOptions}
-        value={poolIdFilter != null && poolIdFilter !== '' ? String(poolIdFilter) : ''}
-        on:change={(e) => dispatch('setPoolFilter', { pool: e.detail === '' ? null : e.detail })}
-        placeholder="All"
-      />
-    </div>
-    <div class="filter-label" role="group" aria-label="Block">
-      <span>Block</span>
-      <SearchableSelect
-        options={[{ value: '', label: 'All' }, ...blockFilterOptions]}
-        value={blockNameFilter != null && String(blockNameFilter).trim() !== '' ? String(blockNameFilter).trim() : ''}
-        on:change={(e) => dispatch('setBlockFilter', { block: e.detail === '' ? null : e.detail })}
-        placeholder="All"
-      />
-    </div>
-    <div class="filter-label" role="group" aria-label="Allocation">
-      <span>Allocation</span>
-      <SearchableSelect
-        options={[{ value: '', label: 'All' }, ...allocationFilterOptions]}
-        value={allocationFilter != null && String(allocationFilter).trim() !== '' ? String(allocationFilter).trim() : ''}
-        on:change={(e) => dispatch('setAllocationFilter', { allocation: e.detail === '' ? null : e.detail })}
-        placeholder="All"
-      />
-    </div>
-    {#if effectiveFilter !== 'all' || blockNameFilter || (allocationFilter && String(allocationFilter).trim() !== '') || (poolIdFilter != null && poolIdFilter !== '')}
-      <button type="button" class="btn btn-small" on:click={clearAllFilters}>Show all</button>
+  <div class="list-toolbar">
+    {#if hasScope}
+      <div class="scope-row">
+        <button type="button" class="link-back" on:click={clearAllFilters}>← All networks</button>
+        <nav class="scope-path" aria-label="Current scope">
+          {#if viewMode === 'orphaned'}
+            <span class="scope-current">Orphaned</span>
+          {:else if viewMode === 'unused'}
+            <span class="scope-current">Unused</span>
+          {:else}
+            {#if scopeEnv}
+              {#if scopePool || scopeBlockName || poolIdFilter === POOL_FILTER_NONE}
+                <button type="button" class="scope-crumb" on:click={() => drillToEnv(scopeEnv.id)}>{scopeEnv.name}</button>
+                <span class="scope-sep" aria-hidden="true">/</span>
+              {:else}
+                <span class="scope-current">{scopeEnv.name}</span>
+              {/if}
+            {/if}
+            {#if poolIdFilter === POOL_FILTER_NONE}
+              <span class="scope-current">No pool</span>
+            {:else if scopePool}
+              {#if scopeBlockName}
+                <button type="button" class="scope-crumb" on:click={() => drillToPool(scopePool.id)}>{scopePool.name}</button>
+                <span class="scope-sep" aria-hidden="true">/</span>
+              {:else}
+                <span class="scope-current">{scopePool.name}</span>
+              {/if}
+            {/if}
+            {#if scopeBlockName}
+              {#if scopeAllocName}
+                <button type="button" class="scope-crumb" on:click={() => drillToBlock(scopeBlockName)}>{scopeBlockName}</button>
+                <span class="scope-sep" aria-hidden="true">/</span>
+                <span class="scope-current">{scopeAllocName}</span>
+              {:else}
+                <span class="scope-current">{scopeBlockName}</span>
+              {/if}
+            {/if}
+          {/if}
+        </nav>
+      </div>
     {/if}
+    <div class="filter-bar">
+      <div class="view-toggle" role="group" aria-label="View">
+        <button type="button" class="btn btn-small" class:active={viewMode === 'all'} aria-pressed={viewMode === 'all'} on:click={() => setFilter('all')}>All</button>
+        <button type="button" class="btn btn-small" class:active={viewMode === 'orphaned'} aria-pressed={viewMode === 'orphaned'} on:click={() => setFilter('orphaned')}>Orphaned</button>
+        <button type="button" class="btn btn-small" class:active={viewMode === 'unused'} aria-pressed={viewMode === 'unused'} on:click={() => setFilter('unused')}>Unused</button>
+      </div>
+      {#if viewMode === 'all'}
+        <div class="filter-label" role="group" aria-label="Scope">
+          <span>Scope</span>
+          <SearchableSelect
+            options={poolFilterOptions}
+            value={poolIdFilter != null && poolIdFilter !== '' ? String(poolIdFilter) : ''}
+            on:change={(e) => dispatch('setPoolFilter', { pool: e.detail === '' ? null : e.detail })}
+            placeholder="All"
+          />
+        </div>
+      {/if}
+    </div>
   </div>
 
   {#if loading}
     <div class="loading">Loading…</div>
   {:else}
+    {#if !hidePoolsSection || showCreatePool}
     <section class="section">
       <div class="section-header">
-        <h2>Pools</h2>
-        <button class="btn btn-primary" on:click={() => { showCreatePool = true; poolError = ''; poolName = ''; poolCidr = ''; createPoolEnvId = envIdForApi || ''; createPoolParentId = '' }}>Create pool</button>
+        <h2>Pools {#if displayedPoolsOrdered.length > 0}<span class="section-count">({displayedPoolsOrdered.length})</span>{/if}</h2>
       </div>
       {#if showCreatePool}
-        <div class="form-card">
+        <div class="form-card" use:scrollCreateFormIntoView>
           <h3>New pool</h3>
           <form on:submit|preventDefault={handleCreatePool}>
             <div class="form-row">
@@ -1048,7 +1123,8 @@
               {@const used = poolUsedIPs(pool, allPools, blocks)}
               {@const pct = poolUtilizationPercent(pool, allPools, blocks)}
               {@const available = (() => { try { const t = BigInt(poolTotal || '0'); const u = BigInt(used || '0'); return t >= u ? (t - u).toString() : '0'; } catch { return '0'; } })()}
-              {@const poolDepth = getPoolDepth(pool, allPools)}
+              {@const poolDepthAbs = getPoolDepth(pool, allPools)}
+              {@const poolDepth = Math.max(0, poolDepthAbs - (scopePool ? getPoolDepth(scopePool, allPools) : 0))}
               <tr class:pool-child-row={poolDepth > 0} class:pool-depth-0={poolDepth === 0} class:pool-depth-1={poolDepth === 1} class:pool-depth-2={poolDepth === 2} class:pool-depth-3={poolDepth >= 3}>
                 {#if editingPoolId === pool.id}
                   <td colspan="7" class="edit-cell">
@@ -1076,10 +1152,16 @@
                       {#if pool.provider && pool.provider !== 'native' && getProviderIcon(pool.provider)}
                         <span class="provider-icon provider-icon-pool" title={"Synced from " + pool.provider} aria-hidden="true"><Icon icon={getProviderIcon(pool.provider)} width="1.1em" height="1.1em" /></span>
                       {/if}
-                      <span class="pool-name-text">{pool.name}</span>
+                      <button type="button" class="link-name" on:click={() => drillToPool(pool.id)}>{pool.name}</button>
                     </div>
                   </td>
-                  <td class="environment"><span class="tag tag-env">{getEnvironmentName(pool.environment_id) ?? '—'}</span></td>
+                  <td class="environment">
+                    {#if getEnvironmentName(pool.environment_id)}
+                      <button type="button" class="tag tag-env" on:click={() => drillToEnv(pool.environment_id)}>{getEnvironmentName(pool.environment_id)}</button>
+                    {:else}
+                      <span class="tag tag-env">—</span>
+                    {/if}
+                  </td>
                   <td class="cidr"><code>{pool.cidr}</code></td>
                   <td class="num">{formatBlockCount(poolTotal)}</td>
                   <td class="num">{formatBlockCount(used)}</td>
@@ -1112,7 +1194,7 @@
                         <div class="menu-dropdown menu-dropdown-fixed" role="menu" style="position:fixed;left:{poolDropdownStyle.left}px;top:{poolDropdownStyle.top}px;transform:translateX(-100%);z-index:1000">
                           <button type="button" role="menuitem" on:click|stopPropagation={() => { startEditPool(pool); openPoolMenuId = null }}>Edit</button>
                           {#if effectiveFilterIsEnv}
-                            <button type="button" role="menuitem" on:click|stopPropagation={() => { showCreatePool = true; poolError = ''; poolName = ''; poolCidr = ''; createPoolEnvId = envIdForApi || ''; createPoolParentId = ''; openPoolMenuId = null }}>Add pool</button>
+                            <button type="button" role="menuitem" on:click|stopPropagation={() => { openCreatePool(); openPoolMenuId = null }}>Add pool</button>
                           {/if}
                           <button type="button" role="menuitem" class="menu-item-danger" on:click|stopPropagation={() => { openDeletePoolConfirm(pool); openPoolMenuId = null }}>Delete</button>
                         </div>
@@ -1152,13 +1234,13 @@
         </div>
       {/if}
     </section>
+    {/if}
     <section class="section">
       <div class="section-header">
-        <h2>Network blocks</h2>
-        <button class="btn btn-primary" on:click={openCreateBlock}>Create block</button>
+        <h2>Network blocks {#if blockTotalForDisplay > 0}<span class="section-count">({blockTotalForDisplay})</span>{/if}</h2>
       </div>
       {#if showCreateBlock}
-        <div class="form-card">
+        <div class="form-card" use:scrollCreateFormIntoView>
           <h3>New network block</h3>
           <form on:submit|preventDefault={handleCreateBlock}>
             <div class="wizard-display">
@@ -1318,11 +1400,15 @@
                       {#if block.provider && block.provider !== 'native' && getProviderIcon(block.provider)}
                         <span class="provider-icon provider-icon-block" title={"Synced from " + block.provider} aria-hidden="true"><Icon icon={getProviderIcon(block.provider)} width="1.1em" height="1.1em" /></span>
                       {/if}
-                      {block.name}
+                      <button type="button" class="link-name" on:click={() => drillToBlock(block.name)}>{block.name}</button>
                     </td>
                     <td class="pool">
                       {#if !isOrphanedBlock(block)}
-                        <span class="tag tag-pool">{getPoolName(block.pool_id) ?? '—'}</span>
+                        {#if block.pool_id}
+                          <button type="button" class="tag tag-pool" on:click={() => drillToPool(block.pool_id)}>{getPoolName(block.pool_id) ?? '—'}</button>
+                        {:else}
+                          <span class="tag tag-pool">—</span>
+                        {/if}
                       {:else}
                         <span class="tag tag-orphaned">Orphaned</span>
                       {/if}
@@ -1402,11 +1488,10 @@
 
     <section class="section">
       <div class="section-header">
-        <h2>Allocations</h2>
-        <button class="btn btn-primary" disabled={blocks.length === 0} on:click={() => { showCreateAlloc = true; allocError = ''; allocName = ''; allocBlockName = ''; allocCidr = '' }} title={blocks.length === 0 ? 'Create a network block first' : ''}>Create allocation</button>
+        <h2>Allocations {#if allocTotal > 0}<span class="section-count">({allocTotal})</span>{/if}</h2>
       </div>
       {#if showCreateAlloc && blocks.length > 0}
-        <div class="form-card">
+        <div class="form-card" use:scrollCreateFormIntoView>
           <h3>New allocation</h3>
           <form on:submit|preventDefault={handleCreateAllocation}>
             <div class="form-row">
@@ -1495,7 +1580,7 @@
             {:else}
               {#each sortedAllocations as alloc}
                 {@const allocRange = cidrRange(alloc.cidr)}
-                <tr>
+                <tr class:row-highlight={scopeAllocName && (alloc.name || '').trim() === scopeAllocName}>
                   {#if editingAllocId === alloc.id}
                     <td colspan="3" class="edit-cell">
                       <form class="inline-edit" on:submit|preventDefault={handleUpdateAllocation}>
@@ -1514,9 +1599,15 @@
                       {#if alloc.provider && alloc.provider !== 'native' && getProviderIcon(alloc.provider)}
                         <span class="provider-icon provider-icon-alloc" title={"Synced from " + alloc.provider} aria-hidden="true"><Icon icon={getProviderIcon(alloc.provider)} width="1.15em" height="1.15em" /></span>
                       {/if}
-                      {alloc.name}
+                      <button type="button" class="link-name" on:click={() => drillToAlloc(alloc.name)}>{alloc.name}</button>
                     </td>
-                    <td><span class="tag tag-block" title={"Block: " + (alloc.block_name || '—')}>{alloc.block_name || '—'}</span></td>
+                    <td>
+                      {#if alloc.block_name}
+                        <button type="button" class="tag tag-block" title={"Block: " + alloc.block_name} on:click={() => drillToBlock(alloc.block_name)}>{alloc.block_name}</button>
+                      {:else}
+                        <span class="tag tag-block">—</span>
+                      {/if}
+                    </td>
                     <td class="cidr">
                       <code>{alloc.cidr}</code>
                       {#if allocRange}
@@ -1632,8 +1723,99 @@
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    margin-bottom: 1rem;
+    margin-bottom: 0;
     flex-wrap: wrap;
+  }
+  .header-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .list-toolbar {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+  .scope-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .link-back {
+    border: none;
+    background: none;
+    padding: 0;
+    font: inherit;
+    font-size: 0.9rem;
+    color: var(--accent);
+    cursor: pointer;
+  }
+  .link-back:hover {
+    text-decoration: underline;
+  }
+  .scope-path {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.9rem;
+    min-width: 0;
+  }
+  .scope-sep {
+    color: var(--text-muted);
+    user-select: none;
+  }
+  .scope-crumb {
+    border: none;
+    background: none;
+    padding: 0;
+    font: inherit;
+    color: var(--accent);
+    cursor: pointer;
+  }
+  .scope-crumb:hover {
+    text-decoration: underline;
+  }
+  .scope-current {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .view-toggle {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+  .view-toggle .btn.active {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-dim);
+  }
+  .section-count {
+    font-weight: 400;
+    color: var(--text-muted);
+  }
+  .link-name {
+    border: none;
+    background: none;
+    padding: 0;
+    font: inherit;
+    font-weight: 500;
+    color: var(--accent);
+    cursor: pointer;
+    text-align: left;
+  }
+  .link-name:hover {
+    text-decoration: underline;
+  }
+  .row-highlight {
+    background: var(--accent-dim, rgba(88, 166, 255, 0.12));
+  }
+  button.tag {
+    font-family: inherit;
+    cursor: pointer;
   }
   .filter-label {
     display: flex;
@@ -1687,6 +1869,7 @@
   }
   .section {
     margin-bottom: 2rem;
+    scroll-margin-top: 1.5rem;
   }
   .section-header {
     display: flex;
@@ -1777,6 +1960,7 @@
     box-shadow: var(--shadow-sm);
     padding: 1.25rem;
     margin-bottom: 1rem;
+    scroll-margin-top: 1.5rem;
   }
   .form-card h3 {
     margin: 0 0 1rem 0;

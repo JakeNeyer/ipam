@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { theme } from './lib/theme.js'
-  import { checkAuth, authChecked, user, setupRequired, checkSetupRequired, logout, selectedOrgForGlobalAdmin, selectedOrgNameForGlobalAdmin, isGlobalAdmin, setSelectedOrgForGlobalAdmin } from './lib/auth.js'
+  import { checkAuth, authChecked, user, setupRequired, setupStatusError, checkSetupRequired, logout, selectedOrgForGlobalAdmin, selectedOrgNameForGlobalAdmin, isGlobalAdmin, setSelectedOrgForGlobalAdmin } from './lib/auth.js'
   import { completeTour } from './lib/api.js'
   import Nav from './lib/Nav.svelte'
   import CommandPalette from './lib/CommandPalette.svelte'
@@ -46,7 +46,9 @@
     routeBlockName = opts.block ?? null
     routeAllocationName = opts.allocation ?? null
     routeEnvironmentId = path === 'networks' ? null : environmentId
-    routePoolId = path === 'networks' ? (opts.pool ?? (environmentId ? 'env:' + environmentId : null)) : null
+    routePoolId = path === 'networks'
+      ? (opts.pool ?? (environmentId ? 'env:' + environmentId : null))
+      : (path === 'environments' ? (opts.pool ?? null) : null)
     routeCreateEnv = opts.create === true
     routeCreateBlock = opts.createBlock === true
     routeCreateAllocation = opts.createAllocation === true
@@ -69,6 +71,7 @@
       const params = new URLSearchParams()
       if (opts.create) params.set('create', '1')
       if (opts.env) params.set('env', opts.env)
+      if (opts.pool) params.set('pool', opts.pool)
       const q = params.toString()
       window.location.hash = 'environments' + (q ? '?' + q : '')
     } else if (path === 'docs') {
@@ -150,6 +153,7 @@
           routeCreateEnv = params.get('create') === '1'
           const envId = params.get('env')
           routeEnvId = envId || null
+          routePoolId = params.get('pool') || null
         }
       }
     } else if (path === 'docs' || path.startsWith('docs/')) {
@@ -188,7 +192,7 @@
 
   function handlePaletteNavigate(e) {
     const { path, block, allocation, environmentId, pool } = e.detail || {}
-    if (path === 'environments') go('environments', null, environmentId ? { env: environmentId } : {})
+    if (path === 'environments') go('environments', null, { env: environmentId, pool: pool })
     else if (path === 'networks') go('networks', environmentId ?? null, { block: block ?? undefined, allocation: allocation ?? undefined, pool: pool ?? undefined })
     else if (path === 'dashboard') go('dashboard')
     else if (path === 'docs') go('docs', null, { page: (e.detail && e.detail.page) || '' })
@@ -223,9 +227,14 @@
   }
 
   let setupCheckRequested = false
-  $: if ($authChecked && !$user && $setupRequired === null && !setupCheckRequested) {
+  $: if ($authChecked && !$user && $setupRequired === null && !$setupStatusError && !setupCheckRequested) {
     setupCheckRequested = true
     checkSetupRequired()
+  }
+
+  function retrySetupCheck() {
+    setupStatusError.set(null)
+    setupCheckRequested = false
   }
 
   onMount(() => {
@@ -275,6 +284,15 @@
 {#if !$authChecked}
   <div class="app loading" role="presentation">
     <div class="loading-message">Loading…</div>
+  </div>
+{:else if !$user && $setupStatusError}
+  <div class="app loading" role="presentation">
+    <div class="setup-status-error" role="alert">
+      <h1 class="setup-status-error-title">Can't reach IPAM</h1>
+      <p class="setup-status-error-body">{$setupStatusError}</p>
+      <p class="setup-status-error-hint">If you use Postgres, make sure it is running and DATABASE_URL is correct, then restart the API.</p>
+      <button type="button" class="btn btn-primary" on:click={retrySetupCheck}>Try again</button>
+    </div>
   </div>
 {:else if route === 'landing' && !$user}
   {#if $setupRequired === null}
@@ -327,7 +345,7 @@
           on:viewAllocation={(e) => { window.location.hash = 'networks?allocation=' + encodeURIComponent(e.detail); parseHash() }}
         />
       {:else if route === 'environments'}
-        <Environments openCreateFromQuery={routeCreateEnv} openEnvironmentId={routeEnvId} on:clearCreateQuery={() => { routeCreateEnv = false; if (window.location.hash.includes('create=1')) { window.location.hash = 'environments' } }} />
+        <Environments openCreateFromQuery={routeCreateEnv} openEnvironmentId={routeEnvId} openPoolId={routePoolId} on:clearCreateQuery={() => { routeCreateEnv = false; if (window.location.hash.includes('create=1')) { const p = new URLSearchParams((window.location.hash.split('?')[1] || '')); p.delete('create'); const q = p.toString(); window.location.hash = 'environments' + (q ? '?' + q : '') } }} />
       {:else if route === 'networks'}
         <Networks
           environmentId={routeEnvironmentId}
@@ -417,6 +435,27 @@
   }
   .loading-message {
     font-size: 0.95rem;
+  }
+  .setup-status-error {
+    max-width: 24rem;
+    padding: 1.5rem;
+    text-align: center;
+  }
+  .setup-status-error-title {
+    margin: 0 0 0.5rem;
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .setup-status-error-body {
+    margin: 0 0 0.75rem;
+    font-size: 0.9rem;
+    color: var(--danger, #dc2626);
+  }
+  .setup-status-error-hint {
+    margin: 0 0 1rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
   }
 
   /* Floating theme toggle (bottom right), same as Landing and Docs */

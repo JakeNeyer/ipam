@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 
 	"github.com/JakeNeyer/ipam/internal/logger"
@@ -16,37 +15,28 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+const setupDBUnavailableMsg = "database unavailable; check that Postgres is running and DATABASE_URL is correct"
+
 // getSetupStatusOutput is the response for GET /api/setup/status.
 type getSetupStatusOutput struct {
 	SetupRequired bool `json:"setup_required"`
 }
 
 // NewGetSetupStatusUseCase returns a use case for GET /api/setup/status.
-// When INITIAL_ADMIN_EMAIL is set, setup is skipped (admin is or will be created at startup).
 func NewGetSetupStatusUseCase(s store.Storer, cfg *config.Config) usecase.Interactor {
 	u := usecase.NewInteractor(func(ctx context.Context, input struct{}, output *getSetupStatusOutput) error {
 		users, err := s.ListUsers(nil)
 		if err != nil {
 			logger.Error(logger.MsgSetupStatusFailed, logger.KeyOperation, "get_setup_status", logger.ErrAttr(err))
-			return status.Wrap(errors.New("setup check failed"), status.InvalidArgument)
+			return status.Wrap(errors.New(setupDBUnavailableMsg), status.Internal)
 		}
-		setupRequired := len(users) == 0
-		if setupRequired {
-			email := strings.TrimSpace(os.Getenv("INITIAL_ADMIN_EMAIL"))
-			if email == "" {
-				email = strings.TrimSpace(os.Getenv("INTIAL_ADMIN_EMAIL")) // common typo
-			}
-			if email != "" {
-				setupRequired = false
-			}
-		}
-		output.SetupRequired = setupRequired
+		output.SetupRequired = len(users) == 0
 		logger.Info("setup status", logger.KeyOperation, "get_setup_status", logger.KeySetupRequired, output.SetupRequired)
 		return nil
 	})
 	u.SetTitle("Get setup status")
-	u.SetDescription("Returns whether initial setup is required (no users exist). When INITIAL_ADMIN_EMAIL is set, setup is skipped.")
-	u.SetExpectedErrors(status.InvalidArgument)
+	u.SetDescription("Returns whether initial setup is required (no users exist).")
+	u.SetExpectedErrors(status.Internal)
 	return u
 }
 
@@ -70,7 +60,7 @@ func NewPostSetupUseCase(s store.Storer, cfg *config.Config) usecase.Interactor 
 		users, err := s.ListUsers(nil)
 		if err != nil {
 			logger.Error(logger.MsgSetupStatusFailed, logger.KeyOperation, "post_setup", logger.ErrAttr(err))
-			return status.Wrap(errors.New("setup check failed, please try again"), status.InvalidArgument)
+			return status.Wrap(errors.New(setupDBUnavailableMsg), status.Internal)
 		}
 		if len(users) > 0 {
 			logger.Info(logger.MsgSetupAlreadyDone, logger.KeyOperation, "post_setup")

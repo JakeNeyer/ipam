@@ -7,6 +7,7 @@
   import { formatBlockCount, compareBlockCount, utilizationPercent as utilPct, sumCounts } from '../lib/blockCount.js'
   import { user, selectedOrgForGlobalAdmin, isGlobalAdmin } from '../lib/auth.js'
   import { listEnvironments, listBlocks, listAllocations, listReservedBlocks, listPools, listPoolsByOrganization, exportCSV } from '../lib/api.js'
+  import { sortPoolsByHierarchy } from '../lib/poolHierarchy.js'
 
   const GRAPH_ICON_SIZE = 12
   const GRAPH_ICON_LEFT = 6
@@ -257,32 +258,6 @@
     if (!str || str.length <= maxLen) return str || ''
     return str.slice(0, maxLen - 1) + '…'
   } // { type: 'env'|'pool'|'block'|'alloc', id: string } | null
-
-  /** Order pools parent-first then children (for graph and hierarchy). */
-  function sortPoolsByHierarchy(poolList) {
-    if (!poolList.length) return []
-    const id = (p) => String(p.id).toLowerCase()
-    const parentId = (p) => (p.parent_pool_id != null && String(p.parent_pool_id).trim() !== '') ? String(p.parent_pool_id).toLowerCase() : null
-    const byId = new Map(poolList.map((p) => [id(p), p]))
-    const childrenMap = new Map()
-    poolList.forEach((p) => {
-      const pid = parentId(p)
-      if (!pid || !byId.has(pid)) return
-      const list = childrenMap.get(pid) || []
-      list.push(p)
-      childrenMap.set(pid, list)
-    })
-    childrenMap.forEach((list) => list.sort((a, b) => (a.name || '').localeCompare(b.name || '')))
-    const result = []
-    function visit(pool) {
-      result.push(pool)
-      ;(childrenMap.get(id(pool)) || []).forEach(visit)
-    }
-    const roots = poolList.filter((p) => !parentId(p) || !byId.has(parentId(p)))
-    roots.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
-    roots.forEach(visit)
-    return result
-  }
 
   $: graphData = (() => {
     const envList = [...environments].sort((a, b) => (a.name || '').localeCompare(b.name || ''))

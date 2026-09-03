@@ -3,24 +3,25 @@
   import { onMount } from 'svelte'
   import Icon from '@iconify/svelte'
   import ErrorModal from '../lib/ErrorModal.svelte'
+  import DataTable from '../lib/DataTable.svelte'
   import { cidrRange } from '../lib/cidr.js'
   import { formatBlockCount, compareBlockCount } from '../lib/blockCount.js'
-  import { poolUsedIPs, poolUtilizationPercent } from '../lib/poolUsage.js'
+  import { totalIPsForCidr, poolUsedIPs, poolUtilizationPercent } from '../lib/poolUsage.js'
   import { user, selectedOrgForGlobalAdmin, isGlobalAdmin } from '../lib/auth.js'
   import SearchableSelect from '../lib/SearchableSelect.svelte'
   import { listEnvironments, listAllocations, listPools, createEnvironment, createPool, updateEnvironment, updatePool, deleteEnvironment, deletePool, getEnvironment } from '../lib/api.js'
+  import { idsMatch, getPoolDepth, sortPoolsByHierarchy, ancestorPools } from '../lib/poolHierarchy.js'
 
   export let openCreateFromQuery = false
   export let openEnvironmentId = null
+  export let openPoolId = null
   const dispatch = createEventDispatcher()
 
   let loading = true
   let error = ''
   let environments = []
   let allocations = []
-  let expandedEnvId = null
   let expandedEnvBlocks = []
-  let expandedBlockName = null
   let showCreate = false
   let openedCreateFromQuery = false
   $: if (openCreateFromQuery) {
@@ -44,7 +45,6 @@
   let editError = ''
 
   let expandedEnvPools = []
-  let expandedPoolId = null
   let showAddPool = false
   let newPoolName = ''
   let newPoolCidr = ''
@@ -68,8 +68,9 @@
   let deleteError = ''
 
   let openMenuId = null
-  let menuTriggerEl = null
+  let openPoolMenuId = null
   let menuDropdownStyle = { left: 0, top: 0 }
+  let poolDropdownStyle = { left: 0, top: 0 }
   let errorModalMessage = ''
 
   let envPage = 0
@@ -118,18 +119,13 @@
         environments = [{ id: detail.id, name: detail.name }]
         envTotal = 1
         allocations = allocsRes.allocations
-        expandedEnvId = detail.id
         expandedEnvBlocks = detail.blocks || []
         expandedEnvPools = poolsRes.pools || []
       } else {
-        const [envsRes, allocsRes] = await Promise.all([
-          listEnvironments(listOpts({ limit: envPageSize, offset: envPage * envPageSize })),
-          listAllocations(listOpts()),
-        ])
+        const envsRes = await listEnvironments(listOpts({ limit: envPageSize, offset: envPage * envPageSize }))
         environments = envsRes.environments
         envTotal = envsRes.total
-        allocations = allocsRes.allocations
-        expandedEnvId = null
+        allocations = []
         expandedEnvBlocks = []
         expandedEnvPools = []
       }
@@ -147,47 +143,63 @@
   $: envEnd = Math.min(envPage * envPageSize + envPageSize, envTotal)
   $: envTotalPages = envPageSize > 0 ? Math.ceil(envTotal / envPageSize) : 0
 
+  $: expandedEnvPoolsOrdered = sortPoolsByHierarchy(expandedEnvPools)
+  $: scopeEnv = openEnvironmentId ? (environments[0] || null) : null
+  $: scopePool = openPoolId ? expandedEnvPools.find((p) => idsMatch(p.id, openPoolId)) : null
+  $: poolAncestors = scopePool ? ancestorPools(scopePool, expandedEnvPools) : []
+  $: displayedPools = !openPoolId
+    ? expandedEnvPoolsOrdered
+    : expandedEnvPoolsOrdered.filter((p) => ancestorPools(p, expandedEnvPools).some((a) => idsMatch(a.id, openPoolId)))
+  $: displayedBlocks = openPoolId
+    ? expandedEnvBlocks.filter((b) => idsMatch(b.pool_id, openPoolId))
+    : []
+  $: blocksWithoutPool = openPoolId ? [] : expandedEnvBlocks.filter((b) => !b.pool_id)
+
+  function envHash(envId, poolId) {
+    const params = new URLSearchParams()
+    if (envId) params.set('env', envId)
+    if (poolId) params.set('pool', poolId)
+    const q = params.toString()
+    window.location.hash = 'environments' + (q ? '?' + q : '')
+  }
+
+  function drillToEnv(envId) {
+    envHash(envId, null)
+  }
+
+  function drillToPool(envId, poolId) {
+    envHash(envId, poolId)
+  }
+
+  function clearScope() {
+    window.location.hash = 'environments'
+  }
+
+  function networksHref() {
+    if (openPoolId) return `#networks?pool=${encodeURIComponent(openPoolId)}`
+    if (openEnvironmentId) return `#networks?pool=env:${encodeURIComponent(openEnvironmentId)}`
+    return '#networks'
+  }
+
+  function blockNetworksHref(block) {
+    const params = new URLSearchParams()
+    if (block?.name) params.set('block', block.name)
+    if (block?.pool_id) params.set('pool', block.pool_id)
+    else if (openEnvironmentId) params.set('pool', 'env:' + openEnvironmentId)
+    const q = params.toString()
+    return '#networks' + (q ? '?' + q : '')
+  }
+
   onMount(() => {
     function handleClickOutside(e) {
       if (!e.target.closest('.actions-menu-wrap')) {
         openMenuId = null
+        openPoolMenuId = null
       }
     }
     document.addEventListener('click', handleClickOutside)
     return () => document.removeEventListener('click', handleClickOutside)
   })
-
-  async function toggleEnvRow(env) {
-    if (expandedEnvId === env.id) {
-      expandedEnvId = null
-      expandedEnvBlocks = []
-      expandedEnvPools = []
-      expandedPoolId = null
-      expandedBlockName = null
-      showAddPool = false
-      editingPoolId = null
-      return
-    }
-    expandedEnvId = env.id
-    expandedBlockName = null
-    showAddPool = false
-    editingPoolId = null
-    try {
-      const [detail, poolsRes] = await Promise.all([
-        getEnvironment(env.id),
-        listPools(env.id),
-      ])
-      expandedEnvBlocks = detail.blocks || []
-      expandedEnvPools = poolsRes.pools || []
-    } catch {
-      expandedEnvBlocks = []
-      expandedEnvPools = []
-    }
-  }
-
-  function toggleBlockRow(blockName) {
-    expandedBlockName = expandedBlockName === blockName ? null : blockName
-  }
 
   function allocationsForBlock(blockName) {
     if (!blockName) return []
@@ -195,59 +207,26 @@
     return allocations.filter((a) => (a.block_name || '').trim().toLowerCase() === name)
   }
 
-  function blocksForPool(poolId) {
-    if (!poolId || !expandedEnvBlocks.length) return []
-    const id = String(poolId)
-    return expandedEnvBlocks.filter((b) => b.pool_id && String(b.pool_id) === id)
-  }
-
-  $: blocksWithoutPool = expandedEnvBlocks.filter((b) => !b.pool_id)
-
-  /** Order pools parent-first then children (for hierarchy display). */
-  /** Nesting depth of a pool (0 = root, 1 = child of root, 2 = grandchild, …). */
-  function getPoolDepth(pool, poolList) {
-    if (!pool || !poolList) return 0
-    let d = 0
-    let p = pool
-    const idMatch = (a, b) => a != null && b != null && String(a).toLowerCase() === String(b).toLowerCase()
-    while (p && p.parent_pool_id != null && String(p.parent_pool_id).trim() !== '') {
-      const parent = poolList.find((x) => idMatch(x.id, p.parent_pool_id))
-      if (!parent) break
-      d += 1
-      p = parent
+  function toggleEnvMenu(e, env) {
+    if (openMenuId === env.id) {
+      openMenuId = null
+      return
     }
-    return d
+    const r = e.currentTarget.getBoundingClientRect()
+    menuDropdownStyle = { left: r.right, top: r.bottom + 2 }
+    openMenuId = env.id
+    openPoolMenuId = null
   }
-  function sortPoolsByHierarchy(poolList) {
-    if (!poolList.length) return []
-    const id = (p) => String(p.id).toLowerCase()
-    const parentId = (p) => (p.parent_pool_id != null && String(p.parent_pool_id).trim() !== '') ? String(p.parent_pool_id).toLowerCase() : null
-    const byId = new Map(poolList.map((p) => [id(p), p]))
-    const childrenMap = new Map()
-    poolList.forEach((p) => {
-      const pid = parentId(p)
-      if (!pid || !byId.has(pid)) return
-      const list = childrenMap.get(pid) || []
-      list.push(p)
-      childrenMap.set(pid, list)
-    })
-    childrenMap.forEach((list) => list.sort((a, b) => (a.name || '').localeCompare(b.name || '')))
-    const result = []
-    function visit(pool) {
-      result.push(pool)
-      ;(childrenMap.get(id(pool)) || []).forEach(visit)
-    }
-    const roots = poolList.filter((p) => !parentId(p) || !byId.has(parentId(p)))
-    roots.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
-    roots.forEach(visit)
-    return result
-  }
-  $: expandedEnvPoolsOrdered = sortPoolsByHierarchy(expandedEnvPools)
 
-  function togglePoolRow(poolId) {
-    if (editingPoolId != null) return
-    expandedPoolId = expandedPoolId === poolId ? null : poolId
-    if (expandedPoolId !== poolId) expandedBlockName = null
+  function togglePoolMenu(e, pool) {
+    if (openPoolMenuId === pool.id) {
+      openPoolMenuId = null
+      return
+    }
+    const r = e.currentTarget.getBoundingClientRect()
+    poolDropdownStyle = { left: r.right, top: r.bottom + 2 }
+    openPoolMenuId = pool.id
+    openMenuId = null
   }
 
   async function handleCreate() {
@@ -348,9 +327,14 @@
     deleteSubmitting = true
     deleteError = ''
     try {
+      const wasOpen = openEnvironmentId && idsMatch(deleteConfirmId, openEnvironmentId)
       await deleteEnvironment(deleteConfirmId)
       closeDeleteConfirm()
-      await load()
+      if (wasOpen) {
+        clearScope()
+      } else {
+        await load()
+      }
     } catch (e) {
       deleteError = e.message || 'Failed to delete environment'
       errorModalMessage = deleteError
@@ -360,9 +344,9 @@
   }
 
   async function loadPoolsForExpandedEnv() {
-    if (!expandedEnvId) return
+    if (!openEnvironmentId) return
     try {
-      const res = await listPools(expandedEnvId)
+      const res = await listPools(openEnvironmentId)
       expandedEnvPools = res.pools || []
     } catch {
       expandedEnvPools = []
@@ -373,7 +357,7 @@
     showAddPool = true
     newPoolName = ''
     newPoolCidr = ''
-    newPoolParentId = ''
+    newPoolParentId = openPoolId ? String(openPoolId) : ''
     newPoolError = ''
   }
 
@@ -384,11 +368,11 @@
       newPoolError = 'Name and CIDR are required'
       return
     }
-    if (!expandedEnvId) return
+    if (!openEnvironmentId) return
     newPoolSubmitting = true
     newPoolError = ''
     try {
-      await createPool(expandedEnvId, name, cidr, newPoolParentId?.trim() || null)
+      await createPool(openEnvironmentId, name, cidr, newPoolParentId?.trim() || null)
       newPoolName = ''
       newPoolCidr = ''
       newPoolParentId = ''
@@ -454,9 +438,14 @@
     deletePoolSubmitting = true
     deletePoolError = ''
     try {
+      const wasFocused = openPoolId && idsMatch(deletePoolId, openPoolId)
       await deletePool(deletePoolId)
       closeDeletePoolConfirm()
-      await loadPoolsForExpandedEnv()
+      if (wasFocused && openEnvironmentId) {
+        drillToEnv(openEnvironmentId)
+      } else {
+        await loadPoolsForExpandedEnv()
+      }
     } catch (e) {
       deletePoolError = e.message || 'Failed to delete pool'
     } finally {
@@ -469,15 +458,30 @@
   <header class="page-header">
     <div class="page-header-text">
       <h1 class="page-title">Environments</h1>
-      <p class="page-desc">Logical groupings for your network blocks (e.g. production, staging). Create an environment, then add blocks and allocations from the Networks page.</p>
+      <p class="page-desc">Logical groupings for your network blocks (e.g. production, staging). Click an environment to see its pools.</p>
     </div>
-    <button class="btn btn-primary" on:click={openCreate}>Create environment</button>
+    <div class="header-actions">
+      {#if scopeEnv}
+        <a class="btn" href={networksHref()}>Open in Networks</a>
+        <button type="button" class="btn" on:click={openAddPool}>Add pool</button>
+        <div class="actions-menu-wrap" role="group">
+          <button type="button" class="menu-trigger" aria-haspopup="true" aria-expanded={openMenuId === scopeEnv.id} on:click|stopPropagation={(e) => toggleEnvMenu(e, scopeEnv)} title="Actions"><Icon icon="lucide:ellipsis-vertical" width="1.25em" height="1.25em" /></button>
+          {#if openMenuId === scopeEnv.id}
+            <div class="menu-dropdown menu-dropdown-fixed" role="menu" style="position:fixed;left:{menuDropdownStyle.left}px;top:{menuDropdownStyle.top}px;transform:translateX(-100%);z-index:1000">
+              <button type="button" role="menuitem" on:click|stopPropagation={() => { startEdit(scopeEnv); openMenuId = null }}>Edit</button>
+              <button type="button" role="menuitem" class="menu-item-danger" on:click|stopPropagation={() => { openDeleteConfirm(scopeEnv); openMenuId = null }}>Delete</button>
+            </div>
+          {/if}
+        </div>
+      {/if}
+      <button type="button" class="btn btn-primary" on:click={openCreate}>Create environment</button>
+    </div>
   </header>
 
   {#if showCreate}
-        <div class="form-card">
-          <h3>New environment</h3>
-          <form on:submit|preventDefault={handleCreate}>
+    <div class="form-card">
+      <h3>New environment</h3>
+      <form on:submit|preventDefault={handleCreate}>
         <label>
           <span>Name</span>
           <input type="text" bind:value={createName} placeholder="e.g. production" disabled={createSubmitting} />
@@ -506,20 +510,269 @@
     </div>
   {/if}
 
+  {#if editingId && scopeEnv && editingId === scopeEnv.id}
+    <div class="form-card">
+      <h3>Rename environment</h3>
+      <form on:submit|preventDefault={handleUpdate}>
+        <label>
+          <span>Name</span>
+          <input type="text" bind:value={editName} placeholder="Name" disabled={editSubmitting} />
+        </label>
+        {#if editError}
+          <p class="form-error">{editError}</p>
+        {/if}
+        <div class="form-actions">
+          <button type="button" class="btn" on:click={cancelEdit} disabled={editSubmitting}>Cancel</button>
+          <button type="submit" class="btn btn-primary" disabled={editSubmitting}>
+            {editSubmitting ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </form>
+    </div>
+  {/if}
+
   {#if loading}
     <div class="loading">Loading…</div>
   {:else}
-    <div class="list-toolbar">
-      {#if openEnvironmentId}
-        <a href="#environments" class="link-back">← All environments</a>
+    {#if openEnvironmentId}
+      <div class="list-toolbar">
+        <div class="scope-row">
+          <button type="button" class="link-back" on:click={clearScope}>← All environments</button>
+          {#if scopeEnv}
+            <nav class="scope-path" aria-label="Current scope">
+              {#if scopePool}
+                <button type="button" class="scope-crumb" on:click={() => drillToEnv(scopeEnv.id)}>{scopeEnv.name}</button>
+                <span class="scope-sep" aria-hidden="true">/</span>
+                {#each poolAncestors.slice(0, -1) as anc}
+                  <button type="button" class="scope-crumb" on:click={() => drillToPool(scopeEnv.id, anc.id)}>{anc.name}</button>
+                  <span class="scope-sep" aria-hidden="true">/</span>
+                {/each}
+                <span class="scope-current">{scopePool.name}</span>
+              {:else}
+                <span class="scope-current">{scopeEnv.name}</span>
+              {/if}
+            </nav>
+          {/if}
+        </div>
+      </div>
+
+      <section class="section">
+        <div class="section-header">
+          <h2>Pools {#if displayedPools.length > 0}<span class="section-count">({displayedPools.length})</span>{/if}</h2>
+        </div>
+        {#if showAddPool}
+          <div class="form-card">
+            <h3>New pool</h3>
+            <form on:submit|preventDefault={handleAddPool}>
+              <div class="form-row">
+                <label>
+                  <span>Parent pool (optional)</span>
+                  <SearchableSelect
+                    options={[
+                      { value: '', label: '— None (top-level) —' },
+                      ...expandedEnvPoolsOrdered.map((p) => ({ value: String(p.id), label: `${p.name} (${p.cidr || '—'})` }))
+                    ]}
+                    bind:value={newPoolParentId}
+                    placeholder="Select parent for child pool"
+                  />
+                </label>
+                <label>
+                  <span>Name</span>
+                  <input type="text" bind:value={newPoolName} placeholder="e.g. prod-pool" disabled={newPoolSubmitting} />
+                </label>
+                <label>
+                  <span>CIDR</span>
+                  <input type="text" bind:value={newPoolCidr} placeholder="e.g. 10.0.0.0/8" disabled={newPoolSubmitting} />
+                </label>
+              </div>
+              {#if newPoolParentId && expandedEnvPoolsOrdered.find((p) => String(p.id) === newPoolParentId)}
+                <p class="form-hint" role="status">Child pool CIDR must be contained in the parent pool's CIDR.</p>
+              {/if}
+              {#if newPoolError}
+                <p class="form-error">{newPoolError}</p>
+              {/if}
+              <div class="form-actions">
+                <button type="button" class="btn" on:click={() => (showAddPool = false)} disabled={newPoolSubmitting}>Cancel</button>
+                <button type="submit" class="btn btn-primary" disabled={newPoolSubmitting}>
+                  {newPoolSubmitting ? 'Adding…' : 'Add pool'}
+                </button>
+              </div>
+            </form>
+          </div>
+        {/if}
+        {#if displayedPools.length > 0}
+          <div class="pools-table-wrap">
+            <DataTable>
+              <svelte:fragment slot="header">
+                <tr>
+                  <th>Name</th>
+                  <th>CIDR</th>
+                  <th class="num">Total IPs</th>
+                  <th class="num">Used</th>
+                  <th class="num">Available</th>
+                  <th>Usage</th>
+                  <th class="actions">Actions</th>
+                </tr>
+              </svelte:fragment>
+              <svelte:fragment slot="body">
+                {#each displayedPools as pool}
+                  {@const poolTotal = totalIPsForCidr(pool.cidr)}
+                  {@const used = poolUsedIPs(pool, expandedEnvPools, expandedEnvBlocks)}
+                  {@const pct = poolUtilizationPercent(pool, expandedEnvPools, expandedEnvBlocks)}
+                  {@const available = (() => { try { const t = BigInt(poolTotal || '0'); const u = BigInt(used || '0'); return t >= u ? (t - u).toString() : '0'; } catch { return '0'; } })()}
+                  {@const poolDepthAbs = getPoolDepth(pool, expandedEnvPools)}
+                  {@const poolDepth = Math.max(0, poolDepthAbs - (scopePool ? getPoolDepth(scopePool, expandedEnvPools) : 0))}
+                  <tr class:pool-child-row={poolDepth > 0}>
+                    {#if editingPoolId === pool.id}
+                      <td colspan="6" class="edit-cell">
+                        <form class="inline-edit" on:submit|preventDefault={handleUpdatePool}>
+                          <input type="text" bind:value={editPoolName} placeholder="Name" disabled={editPoolSubmitting} />
+                          <input type="text" bind:value={editPoolCidr} placeholder="CIDR" disabled={editPoolSubmitting} />
+                          <div class="inline-actions">
+                            <button type="button" class="btn btn-small" on:click={cancelEditPool} disabled={editPoolSubmitting}>Cancel</button>
+                            <button type="submit" class="btn btn-primary btn-small" disabled={editPoolSubmitting}>
+                              {editPoolSubmitting ? 'Saving…' : 'Save'}
+                            </button>
+                          </div>
+                        </form>
+                        {#if editPoolError}
+                          <span class="form-error">{editPoolError}</span>
+                        {/if}
+                      </td>
+                      <td class="actions"></td>
+                    {:else}
+                      <td class="name cell-pool-name" style="padding-left: {1 + poolDepth * 1.25}rem">
+                        <div class="pool-name-cell-content">
+                          {#if poolDepth > 0}
+                            <span class="pool-name-indent" aria-hidden="true"><Icon icon="lucide:corner-down-right" width="1em" height="1em" /></span>
+                          {/if}
+                          <button type="button" class="link-name" on:click={() => drillToPool(openEnvironmentId, pool.id)}>{pool.name}</button>
+                        </div>
+                      </td>
+                      <td class="cidr"><code>{pool.cidr}</code></td>
+                      <td class="num">{formatBlockCount(poolTotal)}</td>
+                      <td class="num">{formatBlockCount(used)}</td>
+                      <td class="num">{formatBlockCount(available)}</td>
+                      <td>
+                        <div class="usage-cell" title="Used (child pools + blocks): {formatBlockCount(used)} / {formatBlockCount(poolTotal)}">
+                          <div class="bar-wrap">
+                            <div
+                              class="bar"
+                              class:high={pct >= 80}
+                              class:mid={pct >= 50 && pct < 80}
+                              style="width: {pct < 1 && compareBlockCount(used, '0') > 0 ? 1 : Math.min(100, Math.round(pct))}%"
+                            ></div>
+                          </div>
+                          <span class="pct">{pct < 1 && compareBlockCount(used, '0') > 0 ? '<1' : Math.round(pct)}%</span>
+                        </div>
+                      </td>
+                      <td class="actions">
+                        <div class="actions-menu-wrap" role="group">
+                          <button type="button" class="menu-trigger" aria-haspopup="true" aria-expanded={openPoolMenuId === pool.id} on:click|stopPropagation={(e) => togglePoolMenu(e, pool)} title="Actions"><Icon icon="lucide:ellipsis-vertical" width="1.25em" height="1.25em" /></button>
+                          {#if openPoolMenuId === pool.id}
+                            <div class="menu-dropdown menu-dropdown-fixed" role="menu" style="position:fixed;left:{poolDropdownStyle.left}px;top:{poolDropdownStyle.top}px;transform:translateX(-100%);z-index:1000">
+                              <button type="button" role="menuitem" on:click|stopPropagation={() => { startEditPool(pool); openPoolMenuId = null }}>Edit</button>
+                              <button type="button" role="menuitem" on:click|stopPropagation={() => { openAddPool(); newPoolParentId = String(pool.id); openPoolMenuId = null }}>Add child pool</button>
+                              <button type="button" role="menuitem" class="menu-item-danger" on:click|stopPropagation={() => { openDeletePoolConfirm(pool); openPoolMenuId = null }}>Delete</button>
+                            </div>
+                          {/if}
+                        </div>
+                      </td>
+                    {/if}
+                  </tr>
+                {/each}
+              </svelte:fragment>
+            </DataTable>
+          </div>
+        {:else if !showAddPool}
+          <p class="table-empty-cell">No pools yet. Add a pool to define a CIDR range for blocks.</p>
+        {/if}
+      </section>
+
+      {#if openPoolId}
+        <section class="section">
+          <div class="section-header">
+            <h2>Network blocks {#if displayedBlocks.length > 0}<span class="section-count">({displayedBlocks.length})</span>{/if}</h2>
+          </div>
+          <DataTable>
+            <svelte:fragment slot="header">
+              <tr>
+                <th>Name</th>
+                <th>CIDR</th>
+                <th class="num">Total IPs</th>
+                <th class="num">Allocations</th>
+              </tr>
+            </svelte:fragment>
+            <svelte:fragment slot="body">
+              {#if displayedBlocks.length === 0}
+                <tr>
+                  <td colspan="4" class="table-empty-cell">No network blocks in this pool.</td>
+                </tr>
+              {:else}
+                {#each displayedBlocks as block}
+                  {@const blockAllocs = allocationsForBlock(block.name)}
+                  {@const blockRange = cidrRange(block.cidr)}
+                  <tr>
+                    <td class="name">
+                      <a class="link-name" href={blockNetworksHref(block)}>{block.name}</a>
+                    </td>
+                    <td class="cidr">
+                      <code>{block.cidr}</code>
+                      {#if blockRange}
+                        <span class="cidr-range">{blockRange.start} – {blockRange.end}</span>
+                      {/if}
+                    </td>
+                    <td class="num">{formatBlockCount(block.total_ips)}</td>
+                    <td class="num">{blockAllocs.length}</td>
+                  </tr>
+                {/each}
+              {/if}
+            </svelte:fragment>
+          </DataTable>
+        </section>
+      {:else if blocksWithoutPool.length > 0}
+        <section class="section">
+          <div class="section-header">
+            <h2>Blocks without pool <span class="section-count">({blocksWithoutPool.length})</span></h2>
+          </div>
+          <p class="section-desc">Network blocks in this environment that are not assigned to any pool.</p>
+          <DataTable>
+            <svelte:fragment slot="header">
+              <tr>
+                <th>Name</th>
+                <th>CIDR</th>
+                <th class="num">Total IPs</th>
+                <th class="num">Allocations</th>
+              </tr>
+            </svelte:fragment>
+            <svelte:fragment slot="body">
+              {#each blocksWithoutPool as block}
+                {@const blockAllocs = allocationsForBlock(block.name)}
+                {@const blockRange = cidrRange(block.cidr)}
+                <tr>
+                  <td class="name">
+                    <a class="link-name" href={blockNetworksHref(block)}>{block.name}</a>
+                  </td>
+                  <td class="cidr">
+                    <code>{block.cidr}</code>
+                    {#if blockRange}
+                      <span class="cidr-range">{blockRange.start} – {blockRange.end}</span>
+                    {/if}
+                  </td>
+                  <td class="num">{formatBlockCount(block.total_ips)}</td>
+                  <td class="num">{blockAllocs.length}</td>
+                </tr>
+              {/each}
+            </svelte:fragment>
+          </DataTable>
+        </section>
       {/if}
-    </div>
-    <div class="table-wrap">
-      <table class="table">
-        <thead>
+    {:else}
+      <DataTable>
+        <svelte:fragment slot="header">
           <tr>
             <th class="sortable" class:sorted={envSortBy === 'name'}>
-              <button type="button" class="th-sort" on:click|stopPropagation={() => setEnvSort('name')}>
+              <button type="button" class="th-sort" on:click={() => setEnvSort('name')}>
                 <span class="th-sort-label">Name</span>
                 {#if envSortBy === 'name'}
                   <span class="sort-icon" aria-hidden="true"><Icon icon={envSortDir === 'asc' ? 'lucide:chevron-up' : 'lucide:chevron-down'} width="0.875em" height="0.875em" /></span>
@@ -527,7 +780,7 @@
               </button>
             </th>
             <th class="sortable" class:sorted={envSortBy === 'id'}>
-              <button type="button" class="th-sort" on:click|stopPropagation={() => setEnvSort('id')}>
+              <button type="button" class="th-sort" on:click={() => setEnvSort('id')}>
                 <span class="th-sort-label">ID</span>
                 {#if envSortBy === 'id'}
                   <span class="sort-icon" aria-hidden="true"><Icon icon={envSortDir === 'asc' ? 'lucide:chevron-up' : 'lucide:chevron-down'} width="0.875em" height="0.875em" /></span>
@@ -536,306 +789,53 @@
             </th>
             <th class="actions">Actions</th>
           </tr>
-        </thead>
-        <tbody>
+        </svelte:fragment>
+        <svelte:fragment slot="body">
           {#if envTotal === 0 && !showCreate}
             <tr>
               <td colspan="3" class="table-empty-cell">No environments yet. Create one above.</td>
             </tr>
           {:else}
-          {#each sortedEnvironments as env}
-            <tr class="env-row" class:expanded={expandedEnvId === env.id} role="button" tabindex="0" on:click={() => editingId !== env.id && toggleEnvRow(env)} on:keydown={(e) => e.key === 'Enter' && editingId !== env.id && toggleEnvRow(env)}>
-              {#if editingId === env.id}
-                <td colspan="2" class="edit-cell">
-                  <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-                  <form class="inline-edit" on:submit|preventDefault={handleUpdate} on:click|stopPropagation on:keydown|stopPropagation>
-                    <input type="text" bind:value={editName} placeholder="Name" disabled={editSubmitting} />
-                    <div class="inline-actions">
-                      <button type="button" class="btn btn-small" on:click={cancelEdit} disabled={editSubmitting}>Cancel</button>
-                      <button type="submit" class="btn btn-primary btn-small" disabled={editSubmitting}>
-                        {editSubmitting ? 'Saving…' : 'Save'}
-                      </button>
-                    </div>
-                  </form>
-                </td>
-                <td class="actions" on:click|stopPropagation>
-                  <div class="actions-menu-wrap" role="group">
-                    <button type="button" class="menu-trigger" aria-haspopup="true" aria-expanded={openMenuId === env.id} on:click|stopPropagation={(e) => {
-                      if (openMenuId === env.id) {
-                        openMenuId = null;
-                        menuTriggerEl = null;
-                      } else {
-                        menuTriggerEl = e.currentTarget;
-                        const r = e.currentTarget.getBoundingClientRect();
-                        menuDropdownStyle = { left: r.right, top: r.bottom + 2 };
-                        openMenuId = env.id;
-                      }
-                    }} title="Actions"><Icon icon="lucide:ellipsis-vertical" width="1.25em" height="1.25em" /></button>
-                    {#if openMenuId === env.id}
-                      <div class="menu-dropdown menu-dropdown-fixed" role="menu" style="position:fixed;left:{menuDropdownStyle.left}px;top:{menuDropdownStyle.top}px;transform:translateX(-100%);z-index:1000">
-                        <button type="button" role="menuitem" on:click|stopPropagation={() => { startEdit(env); openMenuId = null }}>Edit</button>
-                        <button type="button" role="menuitem" class="menu-item-danger" on:click|stopPropagation={() => { openDeleteConfirm(env); openMenuId = null }}>Delete</button>
+            {#each sortedEnvironments as env}
+              <tr>
+                {#if editingId === env.id}
+                  <td colspan="2" class="edit-cell">
+                    <form class="inline-edit" on:submit|preventDefault={handleUpdate}>
+                      <input type="text" bind:value={editName} placeholder="Name" disabled={editSubmitting} />
+                      <div class="inline-actions">
+                        <button type="button" class="btn btn-small" on:click={cancelEdit} disabled={editSubmitting}>Cancel</button>
+                        <button type="submit" class="btn btn-primary btn-small" disabled={editSubmitting}>
+                          {editSubmitting ? 'Saving…' : 'Save'}
+                        </button>
                       </div>
+                    </form>
+                    {#if editError}
+                      <span class="form-error">{editError}</span>
                     {/if}
-                  </div>
-                </td>
-              {:else}
-                <td class="name">{env.name}</td>
-                <td class="id"><code>{env.id}</code></td>
-                <td class="actions" on:click|stopPropagation>
-                  <div class="actions-menu-wrap" role="group">
-                    <button type="button" class="menu-trigger" aria-haspopup="true" aria-expanded={openMenuId === env.id} on:click|stopPropagation={(e) => {
-                      if (openMenuId === env.id) {
-                        openMenuId = null;
-                        menuTriggerEl = null;
-                      } else {
-                        menuTriggerEl = e.currentTarget;
-                        const r = e.currentTarget.getBoundingClientRect();
-                        menuDropdownStyle = { left: r.right, top: r.bottom + 2 };
-                        openMenuId = env.id;
-                      }
-                    }} title="Actions"><Icon icon="lucide:ellipsis-vertical" width="1.25em" height="1.25em" /></button>
-                    {#if openMenuId === env.id}
-                      <div class="menu-dropdown menu-dropdown-fixed" role="menu" style="position:fixed;left:{menuDropdownStyle.left}px;top:{menuDropdownStyle.top}px;transform:translateX(-100%);z-index:1000">
-                        <button type="button" role="menuitem" on:click|stopPropagation={() => { startEdit(env); openMenuId = null }}>Edit</button>
-                        <button type="button" role="menuitem" class="menu-item-danger" on:click|stopPropagation={() => { openDeleteConfirm(env); openMenuId = null }}>Delete</button>
-                      </div>
-                    {/if}
-                  </div>
-                </td>
-              {/if}
-            </tr>
-            {#if expandedEnvId === env.id}
-              <tr class="detail-row">
-                <td colspan="3" class="detail-cell">
-                  <div class="pools-summary">
-                    <div class="pools-section-header">
-                      <h4 class="summary-title">
-                        <span class="summary-title-icon" aria-hidden="true"><Icon icon="lucide:droplets" width="1em" height="1em" /></span>
-                        CIDR pools
-                        {#if expandedEnvPools.length > 0}
-                          <span class="summary-title-count">({expandedEnvPools.length})</span>
-                        {/if}
-                      </h4>
-                      {#if !showAddPool}
-                        <button type="button" class="btn btn-small btn-primary" on:click|stopPropagation={openAddPool}>Add pool</button>
-                      {/if}
-                    </div>
-                    <p class="summary-desc">Pools define the CIDR ranges that network blocks in this environment can draw from.</p>
-                    {#if showAddPool}
-                      <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-                      <div class="form-card-inline" role="group" aria-label="Add pool form" on:click|stopPropagation on:keydown|stopPropagation>
-                        <form on:submit|preventDefault={handleAddPool}>
-                          <div class="form-row">
-                            <div class="add-pool-parent-label">
-                              <span>Parent pool (optional)</span>
-                              <SearchableSelect
-                                options={[
-                                  { value: '', label: '— None (top-level) —' },
-                                  ...expandedEnvPoolsOrdered.map((p) => ({ value: String(p.id), label: `${p.name} (${p.cidr || '—'})` }))
-                                ]}
-                                bind:value={newPoolParentId}
-                                placeholder="Select parent for child pool"
-                              />
-                            </div>
-                            <input type="text" bind:value={newPoolName} placeholder="Pool name" disabled={newPoolSubmitting} />
-                            <input type="text" bind:value={newPoolCidr} placeholder="e.g. 10.0.0.0/8" disabled={newPoolSubmitting} />
-                            <div class="inline-actions">
-                              <button type="button" class="btn btn-small" on:click={() => (showAddPool = false)} disabled={newPoolSubmitting}>Cancel</button>
-                              <button type="submit" class="btn btn-primary btn-small" disabled={newPoolSubmitting}>
-                                {newPoolSubmitting ? 'Adding…' : 'Add pool'}
-                              </button>
-                            </div>
-                          </div>
-                          {#if newPoolParentId && expandedEnvPoolsOrdered.find((p) => String(p.id) === newPoolParentId)}
-                            <p class="form-hint add-pool-hint" role="status">Child pool CIDR must be contained in the parent pool's CIDR.</p>
-                          {/if}
-                          {#if newPoolError}
-                            <p class="form-error">{newPoolError}</p>
-                          {/if}
-                        </form>
-                      </div>
-                    {/if}
-                    {#if !showAddPool || expandedEnvPoolsOrdered.length > 0}
-                    <div class="pools-list-wrap">
-                    {#if expandedEnvPoolsOrdered.length === 0 && !showAddPool}
-                      <p class="summary-empty">No pools yet. Add a pool to define a CIDR range for blocks.</p>
-                    {:else if expandedEnvPoolsOrdered.length > 0}
-                      <p class="summary-desc summary-desc-inlist">Click a pool to show its network blocks; click a block to show allocations.</p>
-                      <ul class="hierarchy-list pool-list">
-                        {#each expandedEnvPoolsOrdered as pool}
-                          {@const poolBlocks = blocksForPool(pool.id)}
-                          {@const poolDepth = getPoolDepth(pool, expandedEnvPoolsOrdered)}
-                          {@const isChildPool = poolDepth > 0}
-                          {@const used = poolUsedIPs(pool, expandedEnvPoolsOrdered, expandedEnvBlocks)}
-                          {@const pct = poolUtilizationPercent(pool, expandedEnvPoolsOrdered, expandedEnvBlocks)}
-                          <li class="pool-node" class:pool-node-child={isChildPool} style="margin-left: {poolDepth * 1.25}rem">
-                            {#if editingPoolId === pool.id}
-                              <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-                              <div class="pool-item pool-item-edit" role="group" aria-label="Edit pool form" on:click|stopPropagation on:keydown|stopPropagation>
-                                <form class="inline-edit" on:submit|preventDefault={handleUpdatePool}>
-                                  <input type="text" bind:value={editPoolName} placeholder="Name" disabled={editPoolSubmitting} />
-                                  <input type="text" bind:value={editPoolCidr} placeholder="CIDR" disabled={editPoolSubmitting} />
-                                  <div class="inline-actions">
-                                    <button type="button" class="btn btn-small" on:click={cancelEditPool} disabled={editPoolSubmitting}>Cancel</button>
-                                    <button type="submit" class="btn btn-primary btn-small" disabled={editPoolSubmitting}>
-                                      {editPoolSubmitting ? 'Saving…' : 'Save'}
-                                    </button>
-                                  </div>
-                                </form>
-                                {#if editPoolError}
-                                  <span class="form-error">{editPoolError}</span>
-                                {/if}
-                              </div>
-                            {:else}
-                              <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-                              <div
-                                class="pool-item pool-item-header"
-                                class:pool-item-child={isChildPool}
-                                class:expanded={expandedPoolId === pool.id}
-                                role="button"
-                                tabindex="0"
-                                on:click|stopPropagation={() => togglePoolRow(pool.id)}
-                                on:keydown={(e) => e.key === 'Enter' && togglePoolRow(pool.id)}
-                              >
-                                <span class="expand-icon"><Icon icon={expandedPoolId === pool.id ? 'lucide:chevron-down' : 'lucide:chevron-right'} width="1em" height="1em" /></span>
-                                {#if isChildPool}<span class="pool-name-indent" aria-hidden="true" title="Nested level {poolDepth}"><Icon icon="lucide:corner-down-right" width="1em" height="1em" /></span>{/if}
-                                <span class="pool-name">{pool.name}</span>
-                                <code class="pool-cidr">{pool.cidr}</code>
-                                <span class="pool-block-count">{poolBlocks.length} block{poolBlocks.length === 1 ? '' : 's'}</span>
-                                <span class="pool-usage" title="Used (child pools + blocks): {formatBlockCount(used)}">{pct < 1 && compareBlockCount(used, '0') > 0 ? '<1' : Math.round(pct)}% used</span>
-                                <div class="pool-actions" role="group" aria-label="Pool actions" on:click|stopPropagation on:keydown|stopPropagation>
-                                  <button type="button" class="btn btn-small" on:click|stopPropagation={() => startEditPool(pool)}>Edit</button>
-                                  <button type="button" class="btn btn-small btn-danger" on:click|stopPropagation={() => openDeletePoolConfirm(pool)}>Delete</button>
-                                </div>
-                              </div>
-                              {#if expandedPoolId === pool.id}
-                                <ul class="block-list-nested">
-                                  {#if poolBlocks.length === 0}
-                                    <li class="nested-empty">No network blocks in this pool.</li>
-                                  {:else}
-                                    {#each poolBlocks as block}
-                                      {@const blockAllocs = allocationsForBlock(block.name)}
-                                      <li class="block-node">
-                                        <div
-                                          class="block-item block-item-header"
-                                          class:expanded={expandedBlockName === block.name}
-                                          role="button"
-                                          tabindex="0"
-                                          on:click|stopPropagation={() => toggleBlockRow(block.name)}
-                                          on:keydown={(e) => e.key === 'Enter' && toggleBlockRow(block.name)}
-                                        >
-                                          <span class="expand-icon"><Icon icon={expandedBlockName === block.name ? 'lucide:chevron-down' : 'lucide:chevron-right'} width="1em" height="1em" /></span>
-                                          <span class="block-name">{block.name}</span>
-                                          <code class="block-cidr">{block.cidr}</code>
-                                          {#if cidrRange(block.cidr)}
-                                            <span class="block-range">{cidrRange(block.cidr).start} – {cidrRange(block.cidr).end}</span>
-                                          {/if}
-                                          <span class="block-ips">{formatBlockCount(block.total_ips)} IPs</span>
-                                          <span class="alloc-count">{blockAllocs.length} allocation{blockAllocs.length === 1 ? '' : 's'}</span>
-                                        </div>
-                                        {#if expandedBlockName === block.name}
-                                          <div class="allocations-summary">
-                                            <h5 class="allocations-title">Allocations</h5>
-                                            {#if blockAllocs.length === 0}
-                                              <p class="summary-empty">No allocations in this block.</p>
-                                            {:else}
-                                              <ul class="alloc-list">
-                                                {#each blockAllocs as alloc}
-                                                  {@const allocRange = cidrRange(alloc.cidr)}
-                                                  <li class="alloc-item">
-                                                    <span class="alloc-name">{alloc.name}</span>
-                                                    <code class="alloc-cidr">{alloc.cidr}</code>
-                                                    {#if allocRange}
-                                                      <span class="alloc-range">{allocRange.start} – {allocRange.end}</span>
-                                                    {/if}
-                                                  </li>
-                                                {/each}
-                                              </ul>
-                                            {/if}
-                                          </div>
-                                        {/if}
-                                      </li>
-                                    {/each}
-                                  {/if}
-                                </ul>
-                              {/if}
-                            {/if}
-                          </li>
-                        {/each}
-                      </ul>
-                    {/if}
-                    </div>
-                    {/if}
-                    {#if blocksWithoutPool.length > 0}
-                        <div class="blocks-without-pool">
-                          <div class="pools-section-header">
-                            <h4 class="summary-title">
-                              <span class="summary-title-icon" aria-hidden="true"><Icon icon="lucide:layers" width="1em" height="1em" /></span>
-                              Blocks without pool
-                              <span class="summary-title-count">({blocksWithoutPool.length})</span>
-                            </h4>
-                          </div>
-                          <p class="summary-desc">Network blocks in this environment that are not assigned to any pool. Click a block to show its allocations.</p>
-                          <div class="pools-list-wrap">
-                          <ul class="hierarchy-list blocks-without-pool-list">
-                            {#each blocksWithoutPool as block}
-                              {@const blockAllocs = allocationsForBlock(block.name)}
-                              <li class="block-node">
-                                <div
-                                  class="block-item block-item-header"
-                                  class:expanded={expandedBlockName === block.name}
-                                  role="button"
-                                  tabindex="0"
-                                  on:click|stopPropagation={() => toggleBlockRow(block.name)}
-                                  on:keydown={(e) => e.key === 'Enter' && toggleBlockRow(block.name)}
-                                >
-                                  <span class="expand-icon"><Icon icon={expandedBlockName === block.name ? 'lucide:chevron-down' : 'lucide:chevron-right'} width="1em" height="1em" /></span>
-                                  <span class="block-name">{block.name}</span>
-                                  <code class="block-cidr">{block.cidr}</code>
-                                  {#if cidrRange(block.cidr)}
-                                    <span class="block-range">{cidrRange(block.cidr).start} – {cidrRange(block.cidr).end}</span>
-                                  {/if}
-                                  <span class="block-ips">{formatBlockCount(block.total_ips)} IPs</span>
-                                  <span class="alloc-count">{blockAllocs.length} allocation{blockAllocs.length === 1 ? '' : 's'}</span>
-                                </div>
-                                {#if expandedBlockName === block.name}
-                                  <div class="allocations-summary">
-                                    <h5 class="allocations-title">Allocations</h5>
-                                    {#if blockAllocs.length === 0}
-                                      <p class="summary-empty">No allocations in this block.</p>
-                                    {:else}
-                                      <ul class="alloc-list">
-                                        {#each blockAllocs as alloc}
-                                          {@const allocRange = cidrRange(alloc.cidr)}
-                                          <li class="alloc-item">
-                                            <span class="alloc-name">{alloc.name}</span>
-                                            <code class="alloc-cidr">{alloc.cidr}</code>
-                                            {#if allocRange}
-                                              <span class="alloc-range">{allocRange.start} – {allocRange.end}</span>
-                                            {/if}
-                                          </li>
-                                        {/each}
-                                      </ul>
-                                    {/if}
-                                  </div>
-                                {/if}
-                              </li>
-                            {/each}
-                          </ul>
-                          </div>
+                  </td>
+                  <td class="actions"></td>
+                {:else}
+                  <td class="name">
+                    <button type="button" class="link-name" on:click={() => drillToEnv(env.id)}>{env.name}</button>
+                  </td>
+                  <td class="id"><code>{env.id}</code></td>
+                  <td class="actions">
+                    <div class="actions-menu-wrap" role="group">
+                      <button type="button" class="menu-trigger" aria-haspopup="true" aria-expanded={openMenuId === env.id} on:click|stopPropagation={(e) => toggleEnvMenu(e, env)} title="Actions"><Icon icon="lucide:ellipsis-vertical" width="1.25em" height="1.25em" /></button>
+                      {#if openMenuId === env.id}
+                        <div class="menu-dropdown menu-dropdown-fixed" role="menu" style="position:fixed;left:{menuDropdownStyle.left}px;top:{menuDropdownStyle.top}px;transform:translateX(-100%);z-index:1000">
+                          <button type="button" role="menuitem" on:click|stopPropagation={() => { startEdit(env); openMenuId = null }}>Edit</button>
+                          <button type="button" role="menuitem" class="menu-item-danger" on:click|stopPropagation={() => { openDeleteConfirm(env); openMenuId = null }}>Delete</button>
                         </div>
                       {/if}
-                  </div>
-                </td>
+                    </div>
+                  </td>
+                {/if}
               </tr>
-            {/if}
-          {/each}
+            {/each}
           {/if}
-        </tbody>
-      </table>
-    </div>
-    {#if !openEnvironmentId}
+        </svelte:fragment>
+      </DataTable>
       <div class="pagination">
         <span class="pagination-info">Showing {envStart}–{envEnd} of {envTotal}</span>
         <div class="pagination-controls">
@@ -905,16 +905,104 @@
   .environments {
     padding-top: 0.5rem;
   }
+  .header-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+  }
   .list-toolbar {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
     margin-bottom: 1rem;
   }
+  .scope-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+  }
   .link-back {
+    border: none;
+    background: none;
+    padding: 0;
+    font: inherit;
     font-size: 0.9rem;
     color: var(--accent);
-    text-decoration: none;
+    cursor: pointer;
   }
   .link-back:hover {
     text-decoration: underline;
+  }
+  .scope-path {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.9rem;
+    min-width: 0;
+  }
+  .scope-sep {
+    color: var(--text-muted);
+    user-select: none;
+  }
+  .scope-crumb {
+    border: none;
+    background: none;
+    padding: 0;
+    font: inherit;
+    color: var(--accent);
+    cursor: pointer;
+  }
+  .scope-crumb:hover {
+    text-decoration: underline;
+  }
+  .scope-current {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .section {
+    margin-bottom: 2rem;
+  }
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+  }
+  .section h2 {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--text-muted);
+  }
+  .section-count {
+    font-weight: 400;
+    color: var(--text-muted);
+  }
+  .section-desc {
+    margin: -0.25rem 0 0.75rem 0;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+  .link-name {
+    border: none;
+    background: none;
+    padding: 0;
+    font: inherit;
+    font-weight: 500;
+    color: var(--accent);
+    cursor: pointer;
+    text-align: left;
+    text-decoration: none;
+  }
+  .link-name:hover {
+    text-decoration: underline;
+  }
+  a.link-name {
+    display: inline;
   }
   .pagination {
     display: flex;
@@ -987,9 +1075,6 @@
     border: 1px solid var(--border);
     border-radius: var(--radius);
     box-shadow: var(--shadow-md);
-  }
-  .menu-dropdown-fixed {
-    /* position/left/top/transform/z-index set inline for fixed positioning above table */
   }
   .menu-dropdown [role='menuitem'] {
     display: block;
@@ -1153,99 +1238,19 @@
     display: flex;
     gap: 0.5rem;
   }
+  .form-hint {
+    margin: 0 0 1rem 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .form-error {
+    margin: 0.35rem 0 0 0;
+    font-size: 0.85rem;
+    color: var(--danger);
+  }
   .loading {
     color: var(--text-muted);
     padding: 2rem;
-  }
-  .table-wrap {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow-sm);
-    overflow: hidden;
-  }
-  .table {
-    width: 100%;
-    border-collapse: collapse;
-  }
-  .table th {
-    text-align: left;
-    padding: 0.75rem 1rem;
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-muted);
-    background: var(--table-header-bg);
-    border-bottom: 1px solid var(--border);
-  }
-  .table th.sortable {
-    padding: 0;
-  }
-  .table th .th-sort {
-    display: inline-flex;
-    flex-direction: row;
-    flex-wrap: nowrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.35rem;
-    width: 100%;
-    min-width: 0;
-    padding: 0.75rem 1rem;
-    text-align: left;
-    white-space: nowrap;
-    font-size: inherit;
-    font-weight: inherit;
-    text-transform: inherit;
-    letter-spacing: inherit;
-    color: inherit;
-    background: none;
-    border: none;
-    cursor: pointer;
-    font-family: inherit;
-    transition: color 0.15s, background 0.15s;
-  }
-  .table th .th-sort:hover {
-    color: var(--text);
-    background: rgba(255, 255, 255, 0.04);
-  }
-  .table th.sortable.sorted .th-sort {
-    color: var(--accent);
-  }
-  .table th .th-sort-label {
-    flex-shrink: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .table th .sort-icon {
-    flex-shrink: 0;
-    flex-grow: 0;
-    font-size: 0.65rem;
-  }
-  .table td {
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid var(--table-row-border);
-  }
-  .table tr:last-child td {
-    border-bottom: none;
-  }
-  .table tr.env-row {
-    cursor: pointer;
-  }
-  .table tr.env-row:hover td {
-    background: var(--table-row-hover);
-  }
-  .table tr.env-row.expanded td {
-    background: rgba(88, 166, 255, 0.06);
-    border-bottom-color: var(--accent);
-  }
-  .table thead th:first-child {
-    min-width: 220px;
-  }
-  .table td.name {
-    min-width: 220px;
   }
   .name {
     font-weight: 500;
@@ -1255,372 +1260,72 @@
     font-size: 0.8rem;
     color: var(--text-muted);
   }
-  .detail-row {
-    background: var(--bg);
+  .pools-table-wrap :global(th:first-child),
+  .pools-table-wrap :global(td.name.cell-pool-name) {
+    min-width: 10rem;
+    max-width: 28rem;
   }
-  .detail-row td {
-    vertical-align: top;
-    padding: 0;
-    border-bottom: 1px solid var(--table-row-border);
-  }
-  .detail-cell {
-    padding: 1.5rem 1.5rem 1rem 3rem;
-  }
-  .pools-summary {
-    margin-bottom: 1.5rem;
-    font-size: 0.9rem;
-  }
-  .pools-section-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    margin-bottom: 0.5rem;
-    margin-top: 0.25rem;
-  }
-  .pools-section-header .summary-title {
-    margin: 0;
+  .pool-name-cell-content {
     display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
-  }
-  .summary-title-icon {
-    display: inline-flex;
-    color: var(--text-muted);
-    opacity: 0.9;
-  }
-  .summary-title-count {
-    font-weight: 500;
-    color: var(--text-muted);
-    opacity: 0.9;
-  }
-  .summary-desc {
-    margin: 0 0 0.75rem 0;
-    font-size: 0.85rem;
-    color: var(--text-muted);
-  }
-  .summary-desc-inlist {
-    margin-bottom: 0.5rem;
-  }
-  .pools-list-wrap {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 0.75rem 1rem;
-    margin-top: 0.25rem;
-  }
-  .pools-list-wrap .summary-empty {
-    margin: 0;
-    padding: 0.5rem 0;
-  }
-  .hierarchy-list.pool-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-  }
-  .pool-node {
-    margin-bottom: 0.5rem;
-  }
-  .pool-node:last-child {
-    margin-bottom: 0;
-  }
-  .pool-item {
-    display: flex;
     flex-wrap: wrap;
-    align-items: center;
-    gap: 0.5rem 1rem;
-    padding: 0.6rem 0.85rem;
-    border-radius: var(--radius);
-    border: 1px solid transparent;
-    transition: background 0.15s, border-color 0.15s;
-  }
-  .pool-item-header {
-    cursor: pointer;
-    background: var(--bg);
-    border-color: var(--border);
-  }
-  .pool-item-header:hover {
-    background: var(--table-row-hover);
-  }
-  .pool-item-header.expanded {
-    background: rgba(88, 166, 255, 0.06);
-    border-color: rgba(88, 166, 255, 0.2);
-  }
-  .pool-item-edit {
-    border: 1px solid var(--border);
-    background: var(--surface);
-  }
-  .expand-icon {
-    display: inline-flex;
-    color: var(--text-muted);
-    flex-shrink: 0;
+    gap: 0.35rem;
+    min-width: 0;
   }
   .pool-name-indent {
     display: inline-flex;
-    margin-right: 0.25rem;
+    margin-right: 0.35rem;
     color: var(--text-muted);
-    flex-shrink: 0;
+    vertical-align: middle;
   }
-  .pool-node-child .pool-item-header {
-    padding-left: 0.5rem;
-  }
-  .pool-name {
-    font-weight: 500;
-  }
-  .pool-cidr {
+  .cidr code {
     font-family: var(--font-mono);
-    font-size: 0.85rem;
-    color: var(--text-muted);
-    padding: 0.15em 0.4em;
-    background: var(--bg);
-    border-radius: 3px;
-  }
-  .pool-block-count {
-    font-size: 0.85rem;
-    color: var(--text-muted);
-  }
-  .pool-usage {
-    font-size: 0.85rem;
-    color: var(--text-muted);
-    margin-left: 0.5rem;
-  }
-  .pool-actions {
-    display: flex;
-    gap: 0.35rem;
-    margin-left: auto;
-  }
-  .block-list-nested {
-    list-style: none;
-    margin: 0.5rem 0 0 1.25rem;
-    padding: 0 0 0 0.75rem;
-    border-left: 2px solid var(--border);
-  }
-  .block-node {
-    margin-bottom: 0.5rem;
-  }
-  .block-node:last-child {
-    margin-bottom: 0;
-  }
-  .block-node .allocations-summary {
-    margin-left: 0.5rem;
-  }
-  .block-item-header {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.5rem 1rem;
-    padding: 0.4rem 0.6rem;
-    border-radius: var(--radius);
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
-  }
-  .block-list-nested .block-item-header {
-    padding: 0.6rem 0.85rem;
-    background: var(--bg);
-    border: 1px solid var(--border);
-  }
-  .block-item-header:hover {
-    background: var(--table-row-hover);
-  }
-  .block-list-nested .block-item-header:hover {
-    background: var(--table-row-hover);
-  }
-  .block-item-header.expanded {
-    background: rgba(0, 0, 0, 0.04);
-  }
-  .block-list-nested .block-item-header.expanded {
-    background: rgba(88, 166, 255, 0.06);
-    border-color: rgba(88, 166, 255, 0.2);
-  }
-  .block-item-header .block-name {
-    font-weight: 500;
-  }
-  .block-item-header .block-cidr {
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
-    color: var(--text-muted);
-  }
-  .block-item-header .block-range {
     font-size: 0.8rem;
     color: var(--text-muted);
+  }
+  .cidr-range {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--text-muted);
     font-family: var(--font-mono);
+    margin-top: 0.2rem;
   }
-  .block-item-header .alloc-count {
-    font-size: 0.85rem;
-    color: var(--text-muted);
+  .num {
+    font-variant-numeric: tabular-nums;
   }
-  .nested-empty {
-    font-size: 0.9rem;
-    color: var(--text-muted);
-    padding: 0.5rem 0;
-  }
-  .blocks-without-pool {
-    margin-top: 1.5rem;
-  }
-  .blocks-without-pool .pools-section-header {
-    margin-bottom: 0.5rem;
-  }
-  .blocks-without-pool .summary-desc {
-    margin-bottom: 0.5rem;
-  }
-  .blocks-without-pool .pools-list-wrap {
-    margin-top: 0.25rem;
-  }
-  .hierarchy-list.blocks-without-pool-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-  }
-  .blocks-without-pool-list .block-node {
-    margin-bottom: 0.5rem;
-  }
-  .blocks-without-pool-list .block-node:last-child {
-    margin-bottom: 0;
-  }
-  .blocks-without-pool-list .block-item-header {
-    padding: 0.6rem 0.85rem;
-    background: var(--bg);
-    border: 1px solid var(--border);
-  }
-  .blocks-without-pool-list .block-item-header:hover {
-    background: var(--table-row-hover);
-  }
-  .blocks-without-pool-list .block-item-header.expanded {
-    background: rgba(88, 166, 255, 0.06);
-    border-color: rgba(88, 166, 255, 0.2);
-  }
-  .form-card-inline {
-    padding: 0.75rem;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    margin: 0.5rem 0 0 0;
-  }
-  .form-card-inline .form-row {
+  .usage-cell {
     display: flex;
-    flex-wrap: wrap;
     align-items: center;
     gap: 0.5rem;
+    min-width: 100px;
   }
-  .form-card-inline input {
-    max-width: 180px;
-    padding: 0.4rem 0.6rem;
-    font-size: 0.9rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--bg);
-    color: var(--text);
+  .bar-wrap {
+    flex: 1;
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+    overflow: hidden;
   }
-  .form-card-inline .add-pool-parent-label {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    min-width: 180px;
+  .bar {
+    height: 100%;
+    border-radius: 3px;
+    background: var(--success);
+    transition: width 0.2s;
   }
-  .form-card-inline .add-pool-parent-label span {
-    font-size: 0.8rem;
-    font-weight: 500;
-    color: var(--text-muted);
+  .bar.mid {
+    background: var(--warn);
   }
-  .form-card-inline .add-pool-hint {
-    margin-top: 0.35rem;
-    font-size: 0.8rem;
-    color: var(--text-muted);
+  .bar.high {
+    background: var(--danger);
   }
-  .form-error {
-    margin: 0.35rem 0 0 0;
-    font-size: 0.85rem;
-    color: var(--danger);
-  }
-  .summary-title {
-    margin: 0 0 0.75rem 0;
-    font-size: 0.8rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-muted);
-  }
-  .summary-empty {
-    margin: 0;
-    font-size: 0.85rem;
-    color: var(--text-muted);
-  }
-  .block-item {
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 0.6rem 0.75rem;
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
-  }
-  .block-item:hover {
-    background: rgba(255, 255, 255, 0.03);
-    border-color: var(--text-muted);
-  }
-  .block-item.expanded {
-    border-color: var(--accent);
-    background: rgba(88, 166, 255, 0.04);
-  }
-  .block-item-header {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.5rem 1rem;
-  }
-  .block-name {
-    font-weight: 500;
-    color: var(--text);
-  }
-  .block-cidr {
-    font-family: var(--font-mono);
+  .pct {
     font-size: 0.8rem;
     color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    min-width: 2.5em;
   }
-  .block-range {
-    font-size: 0.75rem;
+  .table-empty-cell {
     color: var(--text-muted);
-    font-family: var(--font-mono);
-  }
-  .block-ips {
-    font-size: 0.8rem;
-    color: var(--text-muted);
-  }
-  .allocations-summary {
-    margin-top: 0.75rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid var(--border);
-  }
-  .allocations-title {
-    margin: 0 0 0.5rem 0;
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-muted);
-  }
-  .alloc-list {
-    margin: 0;
-    padding-left: 1.25rem;
-    list-style: disc;
-  }
-  .alloc-item {
-    margin-bottom: 0.35rem;
-    font-size: 0.85rem;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.35rem 0.75rem;
-  }
-  .alloc-name {
-    font-weight: 500;
-  }
-  .alloc-cidr {
-    font-family: var(--font-mono);
-    font-size: 0.8rem;
-    color: var(--text-muted);
-  }
-  .alloc-range {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
+    padding: 1rem;
   }
 </style>

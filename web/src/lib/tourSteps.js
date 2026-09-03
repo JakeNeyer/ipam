@@ -19,13 +19,13 @@ export const tourSteps = [
     id: 'nav-environments',
     targetId: 'tour-nav-environments',
     title: 'Environments',
-    body: 'Create and manage environments (e.g. production, staging). Each environment can have multiple blocks.',
+    body: 'Create and manage environments (e.g. production, staging). Click an environment to see its pools, then click a pool to focus it.',
   },
   {
     id: 'nav-networks',
     targetId: 'tour-nav-networks',
     title: 'Networks',
-    body: 'Browse blocks and allocations, filter by environment, and create new blocks or IP allocations.',
+    body: 'Browse pools, blocks, and allocations. Filter by environment or pool, and click a name to focus that part of the hierarchy.',
   },
   {
     id: 'nav-network-advisor',

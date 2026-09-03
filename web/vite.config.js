@@ -6,8 +6,15 @@ export default defineConfig({
   // Relative asset paths let the built SPA work at "/" or under a subpath.
   base: './',
   plugins: [tailwindcss(), svelte()],
+  esbuild: {
+    target: 'es2022',
+  },
+  optimizeDeps: {
+    esbuildOptions: {
+      target: 'es2022',
+    },
+  },
   build: {
-    // Modern browsers; avoids esbuild downlevel limits with newer esbuild.
     target: 'es2022',
     chunkSizeWarningLimit: 600,
   },
@@ -15,12 +22,14 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:8011',
+        target: 'http://127.0.0.1:8011',
         changeOrigin: true,
+        xfwd: true,
       },
       '/docs': {
-        target: 'http://localhost:8011',
+        target: 'http://127.0.0.1:8011',
         changeOrigin: true,
+        xfwd: true,
       },
     },
   },

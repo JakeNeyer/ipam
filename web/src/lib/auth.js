@@ -10,6 +10,9 @@ export const authChecked = writable(false)
 /** @type {import('svelte/store').Writable<boolean | null>} true = setup required, false = not required, null = not yet checked */
 export const setupRequired = writable(null)
 
+/** @type {import('svelte/store').Writable<string | null>} set when GET /api/setup/status fails (API/DB down) */
+export const setupStatusError = writable(null)
+
 /** @type {import('svelte/store').Writable<boolean>} true when at least one OAuth provider is configured */
 export const oauthEnabled = writable(false)
 
@@ -121,7 +124,8 @@ export function isGlobalAdmin(u) {
 /**
  * Fetches setup status and updates setupRequired store.
  * Call when not logged in to decide whether to show Setup or Login.
- * On failure (e.g. network/500), defaults to true so the user can still reach Setup.
+ * On failure (e.g. network/500), leaves setupRequired unset and records setupStatusError
+ * so the UI can show that the API is unreachable instead of a fake setup form.
  * @returns {Promise<boolean>} true if setup is required
  */
 export async function checkSetupRequired() {
@@ -129,10 +133,11 @@ export async function checkSetupRequired() {
     const res = await getSetupStatus()
     const required = res?.setup_required === true
     setupRequired.set(required)
+    setupStatusError.set(null)
     return required
-  } catch {
-    // When status check fails (e.g. Postgres/network), show Setup so initial admin can be created
-    setupRequired.set(true)
-    return true
+  } catch (err) {
+    setupRequired.set(null)
+    setupStatusError.set(err?.message || 'Could not reach the API')
+    return false
   }
 }

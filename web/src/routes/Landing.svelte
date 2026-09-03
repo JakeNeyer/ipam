@@ -1,7 +1,6 @@
 <script>
   import { onMount } from 'svelte'
   import Icon from '@iconify/svelte'
-  import SocialIcons from '@rodneylab/svelte-social-icons'
   import { theme } from '../lib/theme.js'
 
   const base = (import.meta.env.BASE_URL || '/').replace(/\/+$/, '') + '/'
@@ -84,7 +83,7 @@
     <div class="landing-header-actions">
       <a href={githubUrl} target="_blank" rel="noopener noreferrer" class="github-link github-link-icon-only" aria-label="Star on GitHub">
         <span class="github-link-icon">
-          <SocialIcons alt="" network="github" width={32} height={32} fgColor="currentColor" bgColor="transparent" />
+          <Icon icon="simple-icons:github" width="32" height="32" />
         </span>
       </a>
       <button type="button" class="landing-cta-btn" on:click={goLogin}>Log in</button>
@@ -637,7 +636,7 @@ resource "google_compute_subnetwork" "app" {'{'}
       <div class="footer-links">
         <a href={githubUrl} target="_blank" rel="noopener noreferrer" class="github-link github-link-footer">
           <span class="github-link-icon">
-            <SocialIcons alt="" network="github" width={32} height={32} fgColor="currentColor" bgColor="transparent" />
+            <Icon icon="simple-icons:github" width="32" height="32" />
           </span>
           <span class="github-link-label">View on GitHub</span>
           {#if githubStats}

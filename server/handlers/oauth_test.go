@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -158,6 +159,57 @@ func TestOAuthStartHandler_RedirectsToProvider(t *testing.T) {
 	loc := rr.Header().Get("Location")
 	if !strings.Contains(loc, "idp.example") || !strings.Contains(loc, "client_id=cid") {
 		t.Errorf("Location = %s", loc)
+	}
+	u, err := url.Parse(loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := u.Query().Get("redirect_uri"); got != "http://example.com/api/auth/oauth/sso/callback" {
+		t.Errorf("redirect_uri = %q", got)
+	}
+}
+
+func TestOAuthStartHandler_UsesAppOriginForRedirectURI(t *testing.T) {
+	cfg := &config.Config{
+		AppOrigin: "http://localhost:5173",
+		OAuth: config.OAuthConfig{Providers: map[string]config.OAuthProviderConfig{
+			"sso": oauthTestProvider(),
+		}},
+	}
+	registry, err := oauth.NewProviderRegistry(cfg)
+	if err != nil {
+		t.Fatalf("NewProviderRegistry() error = %v", err)
+	}
+	handler := OAuthStartHandler(cfg, registry)
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/oauth/sso/start", nil)
+	req.Host = "127.0.0.1:8011"
+	rr := httptest.NewRecorder()
+	handler(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", rr.Code)
+	}
+	u, err := url.Parse(rr.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := u.Query().Get("redirect_uri"); got != "http://localhost:5173/api/auth/oauth/sso/callback" {
+		t.Errorf("redirect_uri = %q, want APP_ORIGIN callback", got)
+	}
+}
+
+func TestOauthRedirectBase(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/oauth/github/start", nil)
+	req.Host = "127.0.0.1:8011"
+	if got := oauthRedirectBase(req, "http://localhost:5173/"); got != "http://localhost:5173" {
+		t.Errorf("with APP_ORIGIN = %q", got)
+	}
+	if got := oauthRedirectBase(req, ""); got != "http://127.0.0.1:8011" {
+		t.Errorf("without APP_ORIGIN = %q", got)
+	}
+	req.Header.Set("X-Forwarded-Host", "localhost:5173")
+	req.Header.Set("X-Forwarded-Proto", "http")
+	if got := oauthRedirectBase(req, ""); got != "http://localhost:5173" {
+		t.Errorf("with forwarded host = %q", got)
 	}
 }
 

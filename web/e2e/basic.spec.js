@@ -23,11 +23,14 @@ test.describe('basic functionality', () => {
   test('navigate to Environments', async ({ page }) => {
     await page.getByRole('button', { name: 'Environments' }).click()
     await expect(page.locator('h1.page-title', { hasText: 'Environments' })).toBeVisible({ timeout: 5000 })
+    await expect(page.getByRole('button', { name: 'Create environment' })).toBeVisible()
   })
 
   test('navigate to Networks', async ({ page }) => {
     await page.getByRole('button', { name: 'Networks' }).click()
     await expect(page.locator('h1.page-title', { hasText: 'Networks' })).toBeVisible({ timeout: 5000 })
+    await expect(page.getByRole('button', { name: 'Create block' })).toBeVisible()
+    await expect(page.getByRole('group', { name: 'View' }).getByRole('button', { name: 'All' })).toBeVisible()
   })
 
   test('admin can open Admin page', async ({ page }) => {
