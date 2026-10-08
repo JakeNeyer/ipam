@@ -3,6 +3,7 @@
   import { theme } from '../lib/theme.js'
   import overviewMd from '../docs/overview.md?raw'
   import gettingStartedMd from '../docs/getting-started.md?raw'
+  import metricsMd from '../docs/metrics.md?raw'
   import environmentsMd from '../docs/environments.md?raw'
   import networksMd from '../docs/networks.md?raw'
   import commandPaletteMd from '../docs/command-palette.md?raw'
@@ -20,6 +21,7 @@
   const NAV = [
     { id: '', label: 'Overview' },
     { id: 'getting-started', label: 'Getting started' },
+    { id: 'metrics', label: 'Metrics' },
     { id: 'environments', label: 'Environments' },
     {
       id: 'networks',
@@ -54,6 +56,7 @@
   const CONTENT = {
     '': overviewMd,
     'getting-started': gettingStartedMd,
+    'metrics': metricsMd,
     'environments': environmentsMd,
     'networks': networksMd,
     'integrations': integrationsMd,

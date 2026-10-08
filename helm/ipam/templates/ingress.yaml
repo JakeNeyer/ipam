@@ -1,4 +1,12 @@
 {{- if .Values.ingress.enabled -}}
+{{- /*
+  The Ingress forwards every path (including GET /metrics) to the Service. Without a
+  scrape token that publishes the full IP inventory, so refuse to render unless a
+  token source is configured, metrics are disabled, or the operator opts in explicitly.
+*/ -}}
+{{- if and .Values.metrics.enabled (not .Values.metrics.token) (not .Values.existingSecret) (not .Values.metrics.allowUnauthenticatedIngress) }}
+{{- fail "ingress.enabled exposes GET /metrics (full IP inventory) without authentication. Set metrics.token, put a metrics-token key in existingSecret, set metrics.enabled=false, or set metrics.allowUnauthenticatedIngress=true if the endpoint is protected elsewhere." }}
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

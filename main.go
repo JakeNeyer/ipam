@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/JakeNeyer/ipam/internal/logger"
+	"github.com/JakeNeyer/ipam/internal/metrics"
 	"github.com/JakeNeyer/ipam/internal/setup"
 	"github.com/JakeNeyer/ipam/internal/telemetry"
 	"github.com/JakeNeyer/ipam/server"
@@ -66,7 +67,6 @@ func main() {
 	} else {
 		handler = middleware.RequestLog(handler)
 	}
-	handler = middleware.Recover(handler)
 
 	appOrigin := serverCfg.AppOrigin
 	if appOrigin != "" {
@@ -80,13 +80,26 @@ func main() {
 		}
 	}
 
+	if serverCfg.Metrics.Enabled {
+		handler = metrics.Wrap(handler, metrics.Handler(st, serverCfg.Metrics.Token))
+		if serverCfg.Metrics.Token == "" {
+			logger.Warn("metrics endpoint is unauthenticated; set METRICS_TOKEN or keep " + metrics.Path + " off public ingress")
+		}
+	}
+	// Outermost so panics in the static/app-origin wrappers are recovered too.
+	handler = middleware.Recover(handler)
+
 	addr := "0.0.0.0"
 	if port := os.Getenv("PORT"); port != "" {
 		addr = addr + ":" + port
 	} else {
 		addr = "localhost:8011"
 	}
-	logger.Info("server listening", slog.String("addr", "http://"+addr), slog.String("docs", "http://"+addr+"/docs"))
+	listenAttrs := []any{slog.String("addr", "http://"+addr), slog.String("docs", "http://"+addr+"/docs")}
+	if serverCfg.Metrics.Enabled {
+		listenAttrs = append(listenAttrs, slog.String("metrics", "http://"+addr+metrics.Path))
+	}
+	logger.Info("server listening", listenAttrs...)
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           handler,

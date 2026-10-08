@@ -604,6 +604,7 @@ resource "google_compute_subnetwork" "app" {'{'}
     <div class="docs-section-links">
       <a href="#docs" class="docs-section-link">Overview</a>
       <a href="#docs/getting-started" class="docs-section-link">Getting started</a>
+      <a href="#docs/metrics" class="docs-section-link">Metrics</a>
       <a href="#docs/environments" class="docs-section-link">Environments</a>
       <a href="#docs/networks" class="docs-section-link">Networks</a>
       <a href="#docs/integrations" class="docs-section-link">Integrations</a>

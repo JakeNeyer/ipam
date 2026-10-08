@@ -16,7 +16,7 @@ service:
 
 # Optional: use existing secret for DATABASE_URL and/or OAuth
 # (keys: database-url, oauth-client-secret / oauth-<id>-client-secret,
-#  initial-admin-password, initial-admin-token)
+#  initial-admin-password, initial-admin-token, metrics-token)
 existingSecret: ""
 
 # In-memory store if DATABASE_URL is not set (not recommended for production)
@@ -51,6 +51,37 @@ config:
   initialOrganizationName: ""
   # TTL for INITIAL_ADMIN_API_TOKEN (e.g. 90d, 12h). Token value comes from existingSecret key initial-admin-token.
   initialAdminAPITokenTTL: ""
+
+# Prometheus metrics at GET /metrics (IP space gauges for Grafana).
+# Scrape the Kubernetes Service, not the public Ingress.
+metrics:
+  # Serves /metrics (METRICS_ENABLED) and adds prometheus.io/* pod annotations.
+  enabled: true
+  # Scrape token (Authorization: Bearer). Takes precedence over existingSecret when set;
+  # otherwise the metrics-token key in existingSecret is used if present.
+  # Required when ingress.enabled is true (see allowUnauthenticatedIngress).
+  token: ""
+  existingSecretKey: metrics-token
+  # The chart refuses to render an Ingress that would expose /metrics without a token.
+  # Set true only if the endpoint is protected elsewhere (ingress auth, network policy, path exclusion).
+  allowUnauthenticatedIngress: false
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    namespace: ""
+    labels: {}
+    # bearerTokenSecret:
+    #   name: ipam-secrets
+    #   key: metrics-token
+  # Grafana sidecar ConfigMap (kube-prometheus-stack: grafana.sidecar.dashboards).
+  # Import the same JSON by hand from grafana/ipam-ip-space.json.
+  grafanaDashboard:
+    enabled: false
+    namespace: ""
+    labels:
+      grafana_dashboard: "1"
+    annotations: {}
 
 # OAuth providers (maps to OAUTH_PROVIDERS and OAUTH_<ID>_* env vars).
 # Each key is the provider id used in /api/auth/oauth/<id>/start.
