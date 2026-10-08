@@ -13,6 +13,15 @@ type Config struct {
 	OAuth OAuthConfig
 	// AppOrigin is the public URL of the frontend (e.g. http://localhost:5173). When set, invite URLs and OAuth redirects use it; non-API requests to this server return 401 Unauthorized.
 	AppOrigin string
+	Metrics   MetricsConfig
+}
+
+// MetricsConfig controls the Prometheus GET /metrics endpoint.
+type MetricsConfig struct {
+	// Enabled mounts /metrics. METRICS_ENABLED; defaults to true.
+	Enabled bool
+	// Token, when non-empty, requires Authorization: Bearer <token> on /metrics. METRICS_TOKEN.
+	Token string // #nosec G117 -- scrape credential from config, not logged
 }
 
 type OAuthConfig struct {
@@ -162,6 +171,10 @@ func LoadFromEnv() *Config {
 	}
 	if origin := strings.TrimSpace(os.Getenv("APP_ORIGIN")); origin != "" {
 		cfg.AppOrigin = origin
+	}
+	cfg.Metrics = MetricsConfig{
+		Enabled: envBoolDefault("METRICS_ENABLED", true),
+		Token:   strings.TrimSpace(os.Getenv("METRICS_TOKEN")),
 	}
 
 	return &cfg

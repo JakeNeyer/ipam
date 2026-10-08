@@ -123,7 +123,7 @@ helm template ipam ./helm/ipam -f helm/ipam/ci/oauth-values.yaml
 | `image.repository` | Image repository | `ghcr.io/jakeneyer/ipam` |
 | `image.tag` | Image tag (empty → `Chart.AppVersion`) | `""` |
 | `service.port` | Service and container port | `8080` |
-| `existingSecret` | Secret name for `database-url`, `initial-admin-password`, `initial-admin-token`, `oauth-<id>-client-secret` per provider | `""` |
+| `existingSecret` | Secret name for `database-url`, `initial-admin-password`, `initial-admin-token`, `oauth-<id>-client-secret` per provider, optional `metrics-token` | `""` |
 | `oauth.providers` | Map of OAuth provider configs (see [OAuth providers](#oauth-providers)) | `{}` |
 | `database.url` | PostgreSQL DSN (stored in a generated Secret; prefer `existingSecret` for production) | (none) |
 | `postgresql.enabled` | Deploy Bitnami PostgreSQL as a subchart and set `DATABASE_URL` for IPAM | `false` |
@@ -134,9 +134,22 @@ helm template ipam ./helm/ipam -f helm/ipam/ci/oauth-values.yaml
 | `config.initialOrganizationName` | First organization name (created with initial admin) | `""` |
 | `config.initialAdminAPITokenTTL` | TTL for bootstrap API token (`initial-admin-token` in `existingSecret`) | `""` |
 | `ingress.enabled` | Create an Ingress | `false` |
+| `metrics.enabled` | Serve `GET /metrics` (`METRICS_ENABLED`) and add Prometheus scrape annotations to the pod | `true` |
+| `metrics.token` | `METRICS_TOKEN` scrape token; takes precedence over `existingSecret` key `metrics-token` | `""` |
+| `metrics.allowUnauthenticatedIngress` | Allow `ingress.enabled` with no metrics token (the chart otherwise refuses to render) | `false` |
+| `metrics.serviceMonitor.enabled` | Create a prometheus-operator ServiceMonitor | `false` |
+| `metrics.grafanaDashboard.enabled` | ConfigMap for Grafana sidecar (`grafana/ipam-ip-space.json`) | `false` |
 | `autoscaling.enabled` | Enable HPA | `false` |
 
 When `postgresql.enabled` is true, run `helm dependency update helm/ipam` (or `helm dependency build`) before install from source. All Bitnami PostgreSQL [values](https://github.com/bitnami/charts/tree/main/bitnami/postgresql#parameters) can be set under `postgresql.*`. Packaged release charts already include dependencies.
+
+## Metrics
+
+`GET /metrics` exports Prometheus gauges for IP-space utilization (block fill, pool carve-out, reserved ranges). `metrics.enabled` (default `true`) serves the endpoint and adds pod scrape annotations; set it to `false` to turn `/metrics` off entirely. Create a prometheus-operator ServiceMonitor with `--set metrics.serviceMonitor.enabled=true`.
+
+The endpoint lists every organization, environment, pool, block, and CIDR, so scrape the Service, not a public Ingress. Scrape auth: set `metrics.token`, or store a `metrics-token` key in `existingSecret` (wired as `METRICS_TOKEN` automatically; `metrics.token` wins when both are set). With `ingress.enabled=true` the chart refuses to render unless one of those is configured or `metrics.enabled=false`; set `metrics.allowUnauthenticatedIngress=true` only if `/metrics` is protected by other means (ingress auth, path exclusion, network policy).
+
+To load the Grafana dashboard via a sidecar (kube-prometheus-stack), set `--set metrics.grafanaDashboard.enabled=true`. That creates a ConfigMap labeled `grafana_dashboard=1`. Set `metrics.grafanaDashboard.namespace` to Grafana’s namespace if it is not the IPAM release namespace. You can also import [`grafana/ipam-ip-space.json`](../../grafana/ipam-ip-space.json) in the Grafana UI; see [grafana/README.md](../../grafana/README.md).
 
 ## Uninstall
 

@@ -1,0 +1,21 @@
+{{- if .Values.metrics.grafanaDashboard.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ipam.fullname" . }}-grafana-dashboard
+  {{- if .Values.metrics.grafanaDashboard.namespace }}
+  namespace: {{ .Values.metrics.grafanaDashboard.namespace }}
+  {{- end }}
+  labels:
+    {{- include "ipam.labels" . | nindent 4 }}
+    {{- with .Values.metrics.grafanaDashboard.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.metrics.grafanaDashboard.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  ipam-ip-space.json: |-
+{{ .Files.Get "dashboards/ipam-ip-space.json" | indent 4 }}
+{{- end }}

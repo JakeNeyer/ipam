@@ -25,6 +25,37 @@ func TestLoadFromEnv_OIDCProvider(t *testing.T) {
 	}
 }
 
+func TestLoadFromEnv_Metrics(t *testing.T) {
+	t.Run("defaults", func(t *testing.T) {
+		t.Setenv("METRICS_ENABLED", "")
+		t.Setenv("METRICS_TOKEN", "")
+		cfg := LoadFromEnv()
+		if !cfg.Metrics.Enabled {
+			t.Error("Metrics.Enabled should default to true")
+		}
+		if cfg.Metrics.Token != "" {
+			t.Errorf("Metrics.Token = %q, want empty", cfg.Metrics.Token)
+		}
+	})
+	t.Run("disabled and token trimmed", func(t *testing.T) {
+		t.Setenv("METRICS_ENABLED", "false")
+		t.Setenv("METRICS_TOKEN", "  s3cret \n")
+		cfg := LoadFromEnv()
+		if cfg.Metrics.Enabled {
+			t.Error("Metrics.Enabled should be false")
+		}
+		if cfg.Metrics.Token != "s3cret" {
+			t.Errorf("Metrics.Token = %q, want %q", cfg.Metrics.Token, "s3cret")
+		}
+	})
+	t.Run("garbage keeps default", func(t *testing.T) {
+		t.Setenv("METRICS_ENABLED", "maybe")
+		if !LoadFromEnv().Metrics.Enabled {
+			t.Error("unparseable METRICS_ENABLED should keep default true")
+		}
+	})
+}
+
 func TestOAuthProviderConfig_Enabled(t *testing.T) {
 	p := OAuthProviderConfig{
 		ClientID: "x", ClientSecret: "y",

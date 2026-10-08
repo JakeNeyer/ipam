@@ -10,4 +10,6 @@
 
 2. API docs (Swagger): add /docs to the URL above.
 
-3. For production, set DATABASE_URL via existingSecret or database.url. Without a database, IPAM uses an in-memory store (data is lost on restart).
+3. Prometheus metrics: GET /metrics (scrape the Service, not a public Ingress). Enable a ServiceMonitor with `--set metrics.serviceMonitor.enabled=true`. Import the Grafana dashboard from grafana/ipam-ip-space.json, or `--set metrics.grafanaDashboard.enabled=true` for a sidecar ConfigMap.
+
+4. For production, set DATABASE_URL via existingSecret or database.url. Without a database, IPAM uses an in-memory store (data is lost on restart).

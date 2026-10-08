@@ -119,6 +119,10 @@ curl -X POST http://localhost:8080/api/allocations/auto \
 
 The auto-allocate endpoint returns the assigned CIDR in the response. It uses bin-packing to fill gaps in the block before appending to the end. Full API docs are available at `/docs`.
 
+## Metrics (Grafana)
+
+IPAM serves Prometheus gauges at **`GET /metrics`**. Import the Grafana dashboard from [`grafana/ipam-ip-space.json`](https://github.com/JakeNeyer/ipam/blob/main/grafana/ipam-ip-space.json) (**Dashboards → Import**). See [Metrics](#docs/metrics).
+
 ## Terraform provider
 
 The `jakeneyer/ipam` Terraform provider manages environments, pools, blocks, and allocations as infrastructure-as-code.

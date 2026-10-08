@@ -26,6 +26,7 @@ func TestUnauthorized(t *testing.T) {
 	}{
 		{"api passes through", "/api/foo", http.StatusOK, true, ""},
 		{"docs passes through", "/docs", http.StatusOK, true, ""},
+		{"metrics passes through", "/metrics", http.StatusOK, true, ""},
 		{"root returns 401", "/", 401, false, "Unauthorized"},
 		{"other returns 401", "/login", 401, false, "Unauthorized"},
 	}
@@ -93,6 +94,7 @@ func TestStatic(t *testing.T) {
 	}{
 		{"api passes through", "/api/foo", 200, true, -1, ""},
 		{"docs passes through", "/docs", 200, true, -1, ""},
+		{"metrics passes through", "/metrics", 200, true, -1, ""},
 		{"root serves index", "/", 200, false, -1, "<html>ok</html>"},
 		{"subpath no file serves index", "/nope", 200, false, -1, "<html>ok</html>"},
 		{"large asset not truncated", "/app.js", 200, false, 2048, ""},

@@ -97,6 +97,10 @@ export OAUTH_KEYCLOAK_EMAIL_VERIFIED_CLAIM=email_verified
 
 When `OAUTH_PROVIDERS` is unset, login is email and password only.
 
+## Metrics (Prometheus / Grafana)
+
+`GET /metrics` exports IP-space gauges for Prometheus (on by default; `METRICS_ENABLED=false` turns it off). Import the Grafana dashboard from [`grafana/ipam-ip-space.json`](grafana/ipam-ip-space.json) (see [grafana/README.md](grafana/README.md)). The endpoint lists every CIDR in the inventory, so set **`METRICS_TOKEN`** (requires `Authorization: Bearer`) or keep it off public ingress. Metric names and Helm scrape options: in-app [Metrics](web/src/docs/metrics.md) guide.
+
 ## E2E tests (Playwright)
 
 From the repo root, run the API with the built web UI, then run Playwright from `web/`:

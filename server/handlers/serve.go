@@ -14,7 +14,7 @@ func Unauthorized(appOrigin string, next http.Handler) http.Handler {
 	origin := strings.TrimSuffix(appOrigin, "/")
 	body := "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Unauthorized</title></head><body><h1>Unauthorized</h1><p>This is the API server. Use the app at <a href=\"" + origin + "\">" + origin + "</a>.</p></body></html>"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api") || strings.HasPrefix(r.URL.Path, "/docs") {
+		if isBackendPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -27,7 +27,7 @@ func Unauthorized(appOrigin string, next http.Handler) http.Handler {
 // Static serves API/docs from next, everything else from dir (SPA fallback to index.html).
 func Static(dir string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api") || strings.HasPrefix(r.URL.Path, "/docs") {
+		if isBackendPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -99,6 +99,11 @@ func serveRootFile(w http.ResponseWriter, r *http.Request, root *os.Root, name s
 		_, _ = io.Copy(w, f)
 	}
 	return true
+}
+
+// isBackendPath reports whether the request should skip the SPA / APP_ORIGIN wrapper.
+func isBackendPath(path string) bool {
+	return strings.HasPrefix(path, "/api") || strings.HasPrefix(path, "/docs") || path == "/metrics"
 }
 
 func mimeTypeByExt(path string) string {
