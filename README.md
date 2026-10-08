@@ -12,6 +12,8 @@
 
 This project is under active development. APIs are subject to change.
 
+![IPAM dashboard](docs/images/ui-dashboard-dark.png)
+
 ## Quick start
 
 **Docker (published image):**
@@ -100,6 +102,8 @@ When `OAUTH_PROVIDERS` is unset, login is email and password only.
 ## Metrics (Prometheus / Grafana)
 
 `GET /metrics` exports IP-space gauges for Prometheus (on by default; `METRICS_ENABLED=false` turns it off). Import the Grafana dashboard from [`grafana/ipam-ip-space.json`](grafana/ipam-ip-space.json) (see [grafana/README.md](grafana/README.md)). The endpoint lists every CIDR in the inventory, so set **`METRICS_TOKEN`** (requires `Authorization: Bearer`) or keep it off public ingress. Metric names and Helm scrape options: in-app [Metrics](web/src/docs/metrics.md) guide.
+
+![IPAM IP Space Grafana dashboard](docs/images/grafana-ip-space.png)
 
 ## E2E tests (Playwright)
 
