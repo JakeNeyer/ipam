@@ -782,6 +782,31 @@ func TestCreateAPITokenWithRaw(t *testing.T) {
 	}
 }
 
+func TestGetOrganizationByName(t *testing.T) {
+	s := NewStore()
+	org := &Organization{Name: "Acme"}
+	if err := s.CreateOrganization(org); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetOrganizationByName("acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != org.ID {
+		t.Errorf("ID = %v, want %v", got.ID, org.ID)
+	}
+	if _, err := s.GetOrganizationByName("missing"); err == nil {
+		t.Fatal("expected not found")
+	}
+	dup := &Organization{Name: "ACME"}
+	if err := s.CreateOrganization(dup); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetOrganizationByName("Acme"); err == nil {
+		t.Fatal("expected ambiguous name error")
+	}
+}
+
 func uuidPtrTest(id uuid.UUID) *uuid.UUID {
 	return &id
 }

@@ -107,6 +107,17 @@ Secret key in existingSecret for a provider client secret.
 {{- end }}
 
 {{/*
+Claim map (roleMap / orgMap) -> claimValue:mapped,claimValue:mapped
+*/}}
+{{- define "ipam.oauthClaimMap" -}}
+{{- $parts := list -}}
+{{- range $k, $v := . -}}
+{{- $parts = append $parts (printf "%s:%s" $k $v) -}}
+{{- end -}}
+{{- join "," $parts -}}
+{{- end }}
+
+{{/*
 OAuth-related container env vars (OAUTH_PROVIDERS and OAUTH_<ID>_*).
 */}}
 {{- define "ipam.oauthEnv" }}
@@ -175,6 +186,42 @@ OAuth-related container env vars (OAUTH_PROVIDERS and OAUTH_<ID>_*).
 {{- if $p.allowEmailMatch }}
 - name: {{ $prefix }}ALLOW_EMAIL_MATCH
   value: {{ $p.allowEmailMatch | quote }}
+{{- end }}
+{{- if $p.jitEnabled }}
+- name: {{ $prefix }}JIT_ENABLED
+  value: {{ $p.jitEnabled | quote }}
+{{- end }}
+{{- if $p.jitDefaultRole }}
+- name: {{ $prefix }}JIT_DEFAULT_ROLE
+  value: {{ $p.jitDefaultRole | quote }}
+{{- end }}
+{{- if $p.jitDefaultOrganization }}
+- name: {{ $prefix }}JIT_DEFAULT_ORGANIZATION
+  value: {{ $p.jitDefaultOrganization | quote }}
+{{- end }}
+{{- if $p.jitAllowedEmailDomains }}
+- name: {{ $prefix }}JIT_ALLOWED_EMAIL_DOMAINS
+  value: {{ join "," $p.jitAllowedEmailDomains | quote }}
+{{- end }}
+{{- if $p.jitDomainOrgMap }}
+- name: {{ $prefix }}JIT_DOMAIN_ORG_MAP
+  value: {{ include "ipam.oauthClaimMap" $p.jitDomainOrgMap | quote }}
+{{- end }}
+{{- if $p.roleClaim }}
+- name: {{ $prefix }}ROLE_CLAIM
+  value: {{ $p.roleClaim | quote }}
+{{- end }}
+{{- if $p.roleMap }}
+- name: {{ $prefix }}ROLE_MAP
+  value: {{ include "ipam.oauthClaimMap" $p.roleMap | quote }}
+{{- end }}
+{{- if $p.orgClaim }}
+- name: {{ $prefix }}ORG_CLAIM
+  value: {{ $p.orgClaim | quote }}
+{{- end }}
+{{- if $p.orgMap }}
+- name: {{ $prefix }}ORG_MAP
+  value: {{ include "ipam.oauthClaimMap" $p.orgMap | quote }}
 {{- end }}
 {{- $mtls := default dict $p.clientMtlsConfig }}
 - name: {{ $prefix }}CLIENT_MTLS_ENABLED

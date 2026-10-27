@@ -29,21 +29,36 @@ type OAuthConfig struct {
 }
 
 type OAuthProviderConfig struct {
-	ClientID            string
-	ClientSecret        string // #nosec G117 -- OAuth client secret from config, not logged
-	Scopes              []string
-	AuthURL             string
-	TokenURL            string
-	UserInfoURL         string
-	UserIDClaim         string // JSON claim for provider user id; default "sub"
-	EmailClaim          string // JSON claim for email; default "email"
-	EmailsURL           string // Optional second URL returning a JSON array when email is not on userinfo (e.g. GitHub /user/emails)
-	EmailsPrimaryClaim  string // Claim on array entries marking the preferred email; default "primary"
-	EmailVerifiedClaim  string // Userinfo claim that must be true when email comes from userinfo (e.g. email_verified)
-	EmailsVerifiedClaim string // Emails-list entry claim that must be true (e.g. verified on GitHub /user/emails)
-	AllowEmailMatch     bool   // Allow signing in to an existing account by email alone; default false
-	DisplayName         string // Login/signup button label; default derived from provider id
-	ClientMTLS          OAuthClientMTLSConfig
+	ClientID               string
+	ClientSecret           string // #nosec G117 -- OAuth client secret from config, not logged
+	Scopes                 []string
+	AuthURL                string
+	TokenURL               string
+	UserInfoURL            string
+	UserIDClaim            string // JSON claim for provider user id; default "sub"
+	EmailClaim             string // JSON claim for email; default "email"
+	EmailsURL              string // Optional second URL returning a JSON array when email is not on userinfo (e.g. GitHub /user/emails)
+	EmailsPrimaryClaim     string // Claim on array entries marking the preferred email; default "primary"
+	EmailVerifiedClaim     string // Userinfo claim that must be true when email comes from userinfo (e.g. email_verified)
+	EmailsVerifiedClaim    string // Emails-list entry claim that must be true (e.g. verified on GitHub /user/emails)
+	AllowEmailMatch        bool   // Allow signing in to an existing account by email alone; default false
+	DisplayName            string // Login/signup button label; default derived from provider id
+	ClientMTLS             OAuthClientMTLSConfig
+	JITEnabled             bool            // Create users on first SSO login without an invite; default false
+	JITDefaultRole         string          // Role when ROLE_MAP does not match; default "user"
+	JITDefaultOrganization string          // Org name or UUID when ORG_CLAIM is missing and domain map does not match
+	JITAllowedEmailDomains []string        // If set, JIT only accepts these exact email domains
+	JITDomainOrgMap        []ClaimMapEntry // email domain → organization name or UUID; also an allowlist when AllowedEmailDomains is empty
+	RoleClaim              string          // Dotted claim path for role mapping (e.g. groups, realm_access.roles)
+	RoleMap                []ClaimMapEntry // claim value → IPAM role (user or admin)
+	OrgClaim               string          // Dotted claim path for organization mapping
+	OrgMap                 []ClaimMapEntry // claim value → organization name or UUID
+}
+
+// ClaimMapEntry maps an IdP claim value to an IPAM role or organization (parse order is preserved).
+type ClaimMapEntry struct {
+	Value  string
+	Mapped string
 }
 
 type OAuthClientMTLSConfig struct {
@@ -206,19 +221,28 @@ func oauthEnvPrefix(providerID string) string {
 func loadOAuthProviderFromEnv(providerID string) OAuthProviderConfig {
 	prefix := oauthEnvPrefix(providerID)
 	p := OAuthProviderConfig{
-		ClientID:            strings.TrimSpace(os.Getenv(prefix + "CLIENT_ID")),
-		ClientSecret:        strings.TrimSpace(os.Getenv(prefix + "CLIENT_SECRET")),
-		AuthURL:             strings.TrimSpace(os.Getenv(prefix + "AUTH_URL")),
-		TokenURL:            strings.TrimSpace(os.Getenv(prefix + "TOKEN_URL")),
-		UserInfoURL:         strings.TrimSpace(os.Getenv(prefix + "USERINFO_URL")),
-		UserIDClaim:         strings.TrimSpace(os.Getenv(prefix + "USER_ID_CLAIM")),
-		EmailClaim:          strings.TrimSpace(os.Getenv(prefix + "EMAIL_CLAIM")),
-		EmailsURL:           strings.TrimSpace(os.Getenv(prefix + "EMAILS_URL")),
-		EmailsPrimaryClaim:  strings.TrimSpace(os.Getenv(prefix + "EMAILS_PRIMARY_CLAIM")),
-		EmailVerifiedClaim:  strings.TrimSpace(os.Getenv(prefix + "EMAIL_VERIFIED_CLAIM")),
-		EmailsVerifiedClaim: strings.TrimSpace(os.Getenv(prefix + "EMAILS_VERIFIED_CLAIM")),
-		AllowEmailMatch:     envBoolDefault(prefix+"ALLOW_EMAIL_MATCH", false),
-		DisplayName:         strings.TrimSpace(os.Getenv(prefix + "DISPLAY_NAME")),
+		ClientID:               strings.TrimSpace(os.Getenv(prefix + "CLIENT_ID")),
+		ClientSecret:           strings.TrimSpace(os.Getenv(prefix + "CLIENT_SECRET")),
+		AuthURL:                strings.TrimSpace(os.Getenv(prefix + "AUTH_URL")),
+		TokenURL:               strings.TrimSpace(os.Getenv(prefix + "TOKEN_URL")),
+		UserInfoURL:            strings.TrimSpace(os.Getenv(prefix + "USERINFO_URL")),
+		UserIDClaim:            strings.TrimSpace(os.Getenv(prefix + "USER_ID_CLAIM")),
+		EmailClaim:             strings.TrimSpace(os.Getenv(prefix + "EMAIL_CLAIM")),
+		EmailsURL:              strings.TrimSpace(os.Getenv(prefix + "EMAILS_URL")),
+		EmailsPrimaryClaim:     strings.TrimSpace(os.Getenv(prefix + "EMAILS_PRIMARY_CLAIM")),
+		EmailVerifiedClaim:     strings.TrimSpace(os.Getenv(prefix + "EMAIL_VERIFIED_CLAIM")),
+		EmailsVerifiedClaim:    strings.TrimSpace(os.Getenv(prefix + "EMAILS_VERIFIED_CLAIM")),
+		AllowEmailMatch:        envBoolDefault(prefix+"ALLOW_EMAIL_MATCH", false),
+		DisplayName:            strings.TrimSpace(os.Getenv(prefix + "DISPLAY_NAME")),
+		JITEnabled:             envBoolDefault(prefix+"JIT_ENABLED", false),
+		JITDefaultRole:         strings.TrimSpace(os.Getenv(prefix + "JIT_DEFAULT_ROLE")),
+		JITDefaultOrganization: strings.TrimSpace(os.Getenv(prefix + "JIT_DEFAULT_ORGANIZATION")),
+		JITAllowedEmailDomains: parseEmailDomains(os.Getenv(prefix + "JIT_ALLOWED_EMAIL_DOMAINS")),
+		JITDomainOrgMap:        parseClaimMap(os.Getenv(prefix + "JIT_DOMAIN_ORG_MAP")),
+		RoleClaim:              strings.TrimSpace(os.Getenv(prefix + "ROLE_CLAIM")),
+		RoleMap:                parseClaimMap(os.Getenv(prefix + "ROLE_MAP")),
+		OrgClaim:               strings.TrimSpace(os.Getenv(prefix + "ORG_CLAIM")),
+		OrgMap:                 parseClaimMap(os.Getenv(prefix + "ORG_MAP")),
 		ClientMTLS: OAuthClientMTLSConfig{
 			Enabled:     envBoolDefault(prefix+"CLIENT_MTLS_ENABLED", false),
 			TLSCertFile: strings.TrimSpace(os.Getenv(prefix + "CLIENT_MTLS_CERT_FILE")),
@@ -273,6 +297,31 @@ func mergeOAuthProvider(base, overlay OAuthProviderConfig) OAuthProviderConfig {
 	if overlay.DisplayName != "" {
 		base.DisplayName = overlay.DisplayName
 	}
+	base.JITEnabled = base.JITEnabled || overlay.JITEnabled
+	if overlay.JITDefaultRole != "" {
+		base.JITDefaultRole = overlay.JITDefaultRole
+	}
+	if overlay.JITDefaultOrganization != "" {
+		base.JITDefaultOrganization = overlay.JITDefaultOrganization
+	}
+	if len(overlay.JITAllowedEmailDomains) > 0 {
+		base.JITAllowedEmailDomains = overlay.JITAllowedEmailDomains
+	}
+	if len(overlay.JITDomainOrgMap) > 0 {
+		base.JITDomainOrgMap = overlay.JITDomainOrgMap
+	}
+	if overlay.RoleClaim != "" {
+		base.RoleClaim = overlay.RoleClaim
+	}
+	if len(overlay.RoleMap) > 0 {
+		base.RoleMap = overlay.RoleMap
+	}
+	if overlay.OrgClaim != "" {
+		base.OrgClaim = overlay.OrgClaim
+	}
+	if len(overlay.OrgMap) > 0 {
+		base.OrgMap = overlay.OrgMap
+	}
 	if overlay.ClientMTLS.Enabled {
 		base.ClientMTLS.Enabled = true
 	}
@@ -311,6 +360,56 @@ func splitScopes(raw string) []string {
 		if s := strings.TrimSpace(part); s != "" {
 			out = append(out, s)
 		}
+	}
+	return out
+}
+
+func parseEmailDomains(raw string) []string {
+	parts := splitScopes(raw)
+	if len(parts) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(parts))
+	seen := make(map[string]bool)
+	for _, part := range parts {
+		d := NormalizeEmailDomain(part)
+		if d == "" || seen[d] {
+			continue
+		}
+		seen[d] = true
+		out = append(out, d)
+	}
+	return out
+}
+
+// NormalizeEmailDomain lowercases an email domain and strips a leading "@".
+func NormalizeEmailDomain(raw string) string {
+	d := strings.ToLower(strings.TrimSpace(raw))
+	d = strings.TrimPrefix(d, "@")
+	return strings.TrimSpace(d)
+}
+
+// parseClaimMap parses "claimValue:mapped,other:mapped" entries. The first colon in each
+// pair separates the IdP value from the IPAM role or organization. Order is preserved.
+func parseClaimMap(raw string) []ClaimMapEntry {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]ClaimMapEntry, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		value, mapped, ok := strings.Cut(part, ":")
+		value = strings.TrimSpace(value)
+		mapped = strings.TrimSpace(mapped)
+		if !ok || value == "" || mapped == "" {
+			continue
+		}
+		out = append(out, ClaimMapEntry{Value: value, Mapped: mapped})
 	}
 	return out
 }

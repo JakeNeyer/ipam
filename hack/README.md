@@ -2,6 +2,14 @@
 
 Helper scripts for development and testing.
 
+## SSO stack (Keycloak + IPAM)
+
+`hack/sso/` is a Docker Compose stack for testing just-in-time SSO. See [hack/sso/README.md](sso/README.md).
+
+```bash
+docker compose -p ipam-sso -f hack/sso/docker-compose.yml up --build
+```
+
 ## seed.sh
 
 Seeds a running IPAM API with test data (environments, blocks, allocations, reserved blocks).

@@ -155,6 +155,36 @@ func (s *PostgresStore) GetOrganization(id uuid.UUID) (*Organization, error) {
 	return &o, nil
 }
 
+func (s *PostgresStore) GetOrganizationByName(name string) (*Organization, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, fmt.Errorf("organization not found")
+	}
+	rows, err := s.db.Query(`SELECT id, name, created_at FROM organizations WHERE LOWER(name) = LOWER($1)`, name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var matches []*Organization
+	for rows.Next() {
+		var o Organization
+		if err := rows.Scan(&o.ID, &o.Name, &o.CreatedAt); err != nil {
+			return nil, err
+		}
+		matches = append(matches, &o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("organization not found")
+	}
+	if len(matches) > 1 {
+		return nil, fmt.Errorf("organization name is ambiguous")
+	}
+	return matches[0], nil
+}
+
 func (s *PostgresStore) ListOrganizations() ([]*Organization, error) {
 	rows, err := s.db.Query(`SELECT id, name, created_at FROM organizations ORDER BY name`)
 	if err != nil {

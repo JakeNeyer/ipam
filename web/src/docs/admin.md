@@ -26,6 +26,12 @@ The **Users** table lists all users you can manage (your organization’s users,
 - **Organization** — Global admins can reassign a user to a different organization via the organization dropdown. Org admins do not see this column.
 - **Delete** — Removes the user. Their API tokens and sessions are removed as well.
 
+## SSO just-in-time users
+
+When an OAuth/SSO provider has **JIT provisioning** enabled (environment or Helm: `OAUTH_<ID>_JIT_ENABLED`), a first sign-in creates the account. Organization and role come from JWT/userinfo claim maps (`ROLE_CLAIM` / `ROLE_MAP`, `ORG_CLAIM` / `ORG_MAP`), optional email-domain allowlists and domain-to-org maps, and a default organization. After that first login, change roles and organizations here in Admin; SSO does not overwrite them.
+
+JIT is opt-in. Without it, users still need a signup link or an account created below.
+
 ## Signup links
 
 Create time-bound invite links so new users can sign up without being added manually.

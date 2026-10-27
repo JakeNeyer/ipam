@@ -59,12 +59,12 @@ func TestProviderRegistry_UserInfo_UnknownProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProviderRegistry() error = %v", err)
 	}
-	id, email, err := r.UserInfo(context.Background(), "unknown", &oauth2.Token{})
+	profile, err := r.UserInfo(context.Background(), "unknown", &oauth2.Token{})
 	if err != nil {
 		t.Errorf("UserInfo(unknown) err = %v", err)
 	}
-	if id != "" || email != "" {
-		t.Errorf("UserInfo(unknown) = %q, %q", id, email)
+	if profile != nil {
+		t.Errorf("UserInfo(unknown) = %+v", profile)
 	}
 }
 

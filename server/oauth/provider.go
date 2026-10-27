@@ -15,7 +15,7 @@ type ProviderRegistry struct {
 }
 
 type UserInfoFetcher interface {
-	FetchUser(ctx context.Context, token *oauth2.Token) (providerUserID, email string, err error)
+	FetchUser(ctx context.Context, token *oauth2.Token) (*UserProfile, error)
 }
 
 func NewProviderRegistry(cfg *config.Config) (*ProviderRegistry, error) {
@@ -61,10 +61,10 @@ func (r *ProviderRegistry) Endpoint(providerID string) (oauth2.Endpoint, bool) {
 	return e, ok
 }
 
-func (r *ProviderRegistry) UserInfo(ctx context.Context, providerID string, token *oauth2.Token) (providerUserID, email string, err error) {
+func (r *ProviderRegistry) UserInfo(ctx context.Context, providerID string, token *oauth2.Token) (*UserProfile, error) {
 	f, ok := r.userInfos[providerID]
 	if !ok || f == nil {
-		return "", "", nil
+		return nil, nil
 	}
 	return f.FetchUser(ctx, token)
 }
