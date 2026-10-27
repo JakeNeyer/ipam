@@ -34,7 +34,7 @@ When the UI runs on a different origin (e.g. Vite on 5173), set **`APP_ORIGIN`**
 
 ### Optional: OAuth
 
-OAuth sign-in is optional. Users still need a signup invite or an account created by an admin. Set **`APP_ORIGIN`** when the UI is on a different host than the API.
+OAuth sign-in is optional. By default, users still need a signup invite or an account created by an admin. Enable **just-in-time (JIT) provisioning** on a provider to create accounts on first SSO login. Set **`APP_ORIGIN`** when the UI is on a different host than the API.
 
 Set **`OAUTH_PROVIDERS`** to a comma-separated list of provider ids (e.g. `sso`). Register each client with redirect URI `https://<host>/api/auth/oauth/<provider-id>/callback`.
 
@@ -56,6 +56,15 @@ For each id `<ID>` (uppercased in env names; hyphens become underscores):
 | `OAUTH_<ID>_EMAIL_VERIFIED_CLAIM` | no | `email_verified` | On **userinfo**: if `EMAIL_CLAIM` is present, this claim must exist and be true or sign-in fails. Standard OIDC userinfo (Keycloak, etc.) exposes `email_verified`. Unset the env var to use an empty claim name and skip this check. |
 | `OAUTH_<ID>_EMAILS_VERIFIED_CLAIM` | no | `verified` (only when `EMAILS_URL` is set) | On the **emails array**: ignore entries where this claim is missing or false. GitHub marks confirmed addresses with `"verified": true`. If every entry is unverified, sign-in fails. Unset to skip verification on the list. |
 | `OAUTH_<ID>_ALLOW_EMAIL_MATCH` | no | `false` | Set `true` to sign in to an existing account by email alone (see below). |
+| `OAUTH_<ID>_JIT_ENABLED` | no | `false` | Set `true` to create users on first SSO login without an invite. |
+| `OAUTH_<ID>_JIT_DEFAULT_ROLE` | no | `user` | Role when `ROLE_MAP` does not match (`user` or `admin`). Applied only at account creation. |
+| `OAUTH_<ID>_JIT_DEFAULT_ORGANIZATION` | when JIT has no other org source | — | Organization **name** or UUID when `ORG_CLAIM` is missing and the email domain is not in `JIT_DOMAIN_ORG_MAP`. |
+| `OAUTH_<ID>_JIT_ALLOWED_EMAIL_DOMAINS` | no | — | Comma-separated exact email domains allowed for JIT (e.g. `acme.com,platform.io`). If set, other domains are denied. |
+| `OAUTH_<ID>_JIT_DOMAIN_ORG_MAP` | no | — | `emailDomain:orgNameOrUUID` list, e.g. `acme.com:Acme`. Used when `ORG_CLAIM` is missing. If `JIT_ALLOWED_EMAIL_DOMAINS` is unset, this map is also the allowlist. |
+| `OAUTH_<ID>_ROLE_CLAIM` | no | — | Dotted claim path for role mapping (e.g. `groups`, `realm_access.roles`). Read from the ID token when present, otherwise userinfo. |
+| `OAUTH_<ID>_ROLE_MAP` | no | — | `claimValue:role` list, e.g. `ipam-admins:admin,ipam-users:user`. If any mapped value is `admin`, the user is created as admin. |
+| `OAUTH_<ID>_ORG_CLAIM` | no | — | Dotted claim path for organization mapping. |
+| `OAUTH_<ID>_ORG_MAP` | no | — | `claimValue:orgNameOrUUID` list, e.g. `team-network:Acme`. First matching entry in this list wins. A present claim that matches nothing is denied (domain map and default org are not used). |
 | `OAUTH_<ID>_CLIENT_MTLS_ENABLED` | no | `false` | Set to `true` to enable mTLS for OAuth client |
 | `OAUTH_<ID>_CLIENT_MTLS_CERT_FILE` | no | `""` | The TLS certificate file to use |
 | `OAUTH_<ID>_CLIENT_MTLS_KEY_FILE` | no | `""` | The TLS key file to use |
@@ -95,6 +104,22 @@ Keycloak example (add to your SSO vars):
 ```bash
 # Userinfo includes "email_verified": true; enforced by default (EMAIL_VERIFIED_CLAIM=email_verified).
 export OAUTH_KEYCLOAK_EMAIL_VERIFIED_CLAIM=email_verified
+```
+
+**Just-in-time provisioning:** with `OAUTH_<ID>_JIT_ENABLED=true`, a first SSO login creates the user. Map IdP groups or roles from the ID token (preferred) or userinfo onto IPAM `user`/`admin` and onto an existing organization. You can also allowlist verified email domains and map those domains to organizations (useful for GitHub, which typically has no org/group claims). Role mapping is applied only when the account is created; later changes in the Admin UI are not overwritten. Invite links still take precedence when present. JIT never creates a global admin (organization must resolve to an existing tenant).
+
+Organization resolution order: mapped `ORG_CLAIM` (if present), then `JIT_DOMAIN_ORG_MAP`, then `JIT_DEFAULT_ORGANIZATION`. A present org claim that matches nothing is denied. If `JIT_ALLOWED_EMAIL_DOMAINS` is set, the email domain must match exactly; otherwise `JIT_DOMAIN_ORG_MAP` is the allowlist. Do not map public domains such as `gmail.com`.
+
+```bash
+export OAUTH_SSO_JIT_ENABLED=true
+export OAUTH_SSO_JIT_DEFAULT_ROLE=user
+export OAUTH_SSO_JIT_DEFAULT_ORGANIZATION=Acme
+export OAUTH_SSO_JIT_ALLOWED_EMAIL_DOMAINS=acme.com,platform.io
+export OAUTH_SSO_JIT_DOMAIN_ORG_MAP=acme.com:Acme,platform.io:Platform
+export OAUTH_SSO_ROLE_CLAIM=groups
+export OAUTH_SSO_ROLE_MAP=ipam-admins:admin,ipam-users:user
+export OAUTH_SSO_ORG_CLAIM=groups
+export OAUTH_SSO_ORG_MAP=team-network:Acme,team-platform:Platform
 ```
 
 When `OAUTH_PROVIDERS` is unset, login is email and password only.

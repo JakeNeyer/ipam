@@ -30,15 +30,18 @@ func TestOAuthUserInfo_FetchUser(t *testing.T) {
 		Transport: transport,
 	}
 	f := newOAuthUserInfo(srv.URL, "sub", "email", "", "", "email_verified", "", client)
-	id, email, err := f.FetchUser(context.Background(), &oauth2.Token{AccessToken: "access-token"})
+	profile, err := f.FetchUser(context.Background(), &oauth2.Token{AccessToken: "access-token"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id != "user-123" {
-		t.Errorf("providerUserID = %q", id)
+	if profile.ProviderUserID != "user-123" {
+		t.Errorf("providerUserID = %q", profile.ProviderUserID)
 	}
-	if email != "user@example.com" {
-		t.Errorf("email = %q", email)
+	if profile.Email != "user@example.com" {
+		t.Errorf("email = %q", profile.Email)
+	}
+	if profile.Claims["sub"] != "user-123" {
+		t.Errorf("claims[sub] = %v", profile.Claims["sub"])
 	}
 }
 
@@ -58,7 +61,7 @@ func TestOAuthUserInfo_FetchUser_RejectsUnverifiedEmail(t *testing.T) {
 		Transport: transport,
 	}
 	f := newOAuthUserInfo(srv.URL, "sub", "email", "", "", "email_verified", "", client)
-	_, _, err := f.FetchUser(context.Background(), &oauth2.Token{AccessToken: "access-token"})
+	_, err := f.FetchUser(context.Background(), &oauth2.Token{AccessToken: "access-token"})
 	if err == nil {
 		t.Fatal("expected error for unverified email")
 	}
@@ -86,15 +89,15 @@ func TestOAuthUserInfo_FetchUser_EmailsListFallback(t *testing.T) {
 		Transport: transport,
 	}
 	f := newOAuthUserInfo(srv.URL+"/user", "id", "email", srv.URL+"/user/emails", "primary", "", "verified", client)
-	id, email, err := f.FetchUser(context.Background(), &oauth2.Token{AccessToken: "access-token"})
+	profile, err := f.FetchUser(context.Background(), &oauth2.Token{AccessToken: "access-token"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id != "42" {
-		t.Errorf("providerUserID = %q", id)
+	if profile.ProviderUserID != "42" {
+		t.Errorf("providerUserID = %q", profile.ProviderUserID)
 	}
-	if email != "user@example.com" {
-		t.Errorf("email = %q", email)
+	if profile.Email != "user@example.com" {
+		t.Errorf("email = %q", profile.Email)
 	}
 }
 
@@ -120,12 +123,12 @@ func TestOAuthUserInfo_FetchUser_SkipsUnverifiedListEntry(t *testing.T) {
 		Transport: transport,
 	}
 	f := newOAuthUserInfo(srv.URL+"/user", "id", "email", srv.URL+"/user/emails", "primary", "", "verified", client)
-	_, email, err := f.FetchUser(context.Background(), &oauth2.Token{AccessToken: "access-token"})
+	profile, err := f.FetchUser(context.Background(), &oauth2.Token{AccessToken: "access-token"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if email != "good@example.com" {
-		t.Errorf("email = %q", email)
+	if profile.Email != "good@example.com" {
+		t.Errorf("email = %q", profile.Email)
 	}
 }
 

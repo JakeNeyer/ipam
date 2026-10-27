@@ -67,34 +67,38 @@ func newOAuthUserInfo(
 	}
 }
 
-func (u *oauthUserInfo) FetchUser(ctx context.Context, token *oauth2.Token) (providerUserID, email string, err error) {
+func (u *oauthUserInfo) FetchUser(ctx context.Context, token *oauth2.Token) (*UserProfile, error) {
 	claims, err := u.fetchJSON(ctx, token, u.userInfoURL)
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
-	providerUserID = strings.TrimSpace(claimString(claims, u.userIDClaim))
-	email = strings.TrimSpace(strings.ToLower(claimString(claims, u.emailClaim)))
+	providerUserID := strings.TrimSpace(claimString(claims, u.userIDClaim))
+	email := strings.TrimSpace(strings.ToLower(claimString(claims, u.emailClaim)))
 	if providerUserID == "" {
-		return "", "", fmt.Errorf("missing %q in userinfo response", u.userIDClaim)
+		return nil, fmt.Errorf("missing %q in userinfo response", u.userIDClaim)
 	}
 	if email != "" {
 		if err := u.requireVerifiedOnClaims(claims, u.emailVerifiedClaim); err != nil {
-			return "", "", err
+			return nil, err
 		}
 	}
 	if email == "" && u.emailsURL != "" {
 		email, err = u.fetchEmailFromList(ctx, token)
 		if err != nil {
-			return providerUserID, "", err
+			return nil, err
 		}
 	}
 	if email == "" {
 		if u.emailsURL != "" {
-			return providerUserID, "", fmt.Errorf("no verified email in userinfo or emails list")
+			return nil, fmt.Errorf("no verified email in userinfo or emails list")
 		}
-		return providerUserID, "", fmt.Errorf("missing %q in userinfo response", u.emailClaim)
+		return nil, fmt.Errorf("missing %q in userinfo response", u.emailClaim)
 	}
-	return providerUserID, email, nil
+	return &UserProfile{
+		ProviderUserID: providerUserID,
+		Email:          email,
+		Claims:         claims,
+	}, nil
 }
 
 func (u *oauthUserInfo) requireVerifiedOnClaims(claims map[string]any, verifiedClaim string) error {

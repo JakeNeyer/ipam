@@ -107,7 +107,31 @@ oauth:
       displayName: Sign in with GitHub
 ```
 
-See the root [README.md](../../README.md#optional-oauth) for all `OAUTH_<ID>_*` variables (`emailsUrl`, `emailVerifiedClaim`, `allowEmailMatch`, etc.).
+See the root [README.md](../../README.md#optional-oauth) for all `OAUTH_<ID>_*` variables (`emailsUrl`, `emailVerifiedClaim`, `allowEmailMatch`, JIT provisioning, claim-to-role/org maps, etc.).
+
+Just-in-time SSO users (optional, per provider):
+
+```yaml
+oauth:
+  providers:
+    keycloak:
+      # ...client and endpoint fields...
+      jitEnabled: true
+      jitDefaultRole: user
+      jitDefaultOrganization: Acme
+      jitAllowedEmailDomains: [acme.com]
+      jitDomainOrgMap:
+        acme.com: Acme
+      roleClaim: groups
+      roleMap:
+        ipam-admins: admin
+        ipam-users: user
+      orgClaim: groups
+      orgMap:
+        team-network: Acme
+```
+
+Set `jitDomainOrgMap` from a values file (keys contain dots). `--set jitDomainOrgMap.acme.com=Acme` is parsed as a nested map and will not work.
 
 Validate rendered manifests:
 

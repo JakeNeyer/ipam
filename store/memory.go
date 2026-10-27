@@ -89,6 +89,28 @@ func (s *Store) GetOrganization(id uuid.UUID) (*Organization, error) {
 	return org, nil
 }
 
+func (s *Store) GetOrganizationByName(name string) (*Organization, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, fmt.Errorf("organization not found")
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var matches []*Organization
+	for _, o := range s.organizations {
+		if o != nil && strings.EqualFold(o.Name, name) {
+			matches = append(matches, o)
+		}
+	}
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("organization not found")
+	}
+	if len(matches) > 1 {
+		return nil, fmt.Errorf("organization name is ambiguous")
+	}
+	return matches[0], nil
+}
+
 func (s *Store) ListOrganizations() ([]*Organization, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

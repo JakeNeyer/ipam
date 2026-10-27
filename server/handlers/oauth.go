@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -159,17 +160,19 @@ func OAuthCallbackHandler(s store.Storer, cfg *config.Config, registry *oauth.Pr
 			redirectWithError(w, r, "failed to exchange code", cfg.AppOrigin)
 			return
 		}
-		providerUserID, email, err := registry.UserInfo(ctx, provider, token)
-		if err != nil || providerUserID == "" || email == "" {
+		profile, err := registry.UserInfo(ctx, provider, token)
+		if err != nil || profile == nil || profile.ProviderUserID == "" || profile.Email == "" {
 			logger.Error("failed to fetch user info", logger.ErrAttr(err))
 			redirectWithError(w, r, "failed to fetch user info", cfg.AppOrigin)
 			return
 		}
-		email = strings.TrimSpace(strings.ToLower(email))
+		providerUserID := profile.ProviderUserID
+		email := strings.TrimSpace(strings.ToLower(profile.Email))
 		if !validation.ValidateEmail(email) {
 			redirectWithError(w, r, "invalid email from provider", cfg.AppOrigin)
 			return
 		}
+		claims := oauth.MergeTokenClaims(profile.Claims, token)
 
 		appOrigin := cfg.AppOrigin
 		appRedirect := appRedirectBase(appOrigin) + appHashPath("dashboard")
@@ -228,14 +231,79 @@ func OAuthCallbackHandler(s store.Storer, cfg *config.Config, registry *oauth.Pr
 		users, listErr := s.ListUsers(nil)
 		if listErr == nil && len(users) == 1 {
 			onlyUser := users[0]
-			if onlyUser.OrganizationID == uuid.Nil && onlyUser.Role == store.RoleAdmin {
+			if onlyUser.OrganizationID == uuid.Nil && onlyUser.Role == store.RoleAdmin &&
+				strings.EqualFold(onlyUser.Email, email) {
 				_ = s.SetUserOAuth(onlyUser.ID, provider, providerUserID)
 				setSessionAndRedirect(w, r, s, onlyUser, secure, appRedirect)
 				return
 			}
 		}
+		if pc.JITEnabled {
+			newUser, jitErr := jitProvisionUser(s, pc, email, provider, providerUserID, claims)
+			if jitErr != nil {
+				logger.Error("failed to JIT provision user", logger.ErrAttr(jitErr))
+				redirectWithError(w, r, jitErr.Error(), appOrigin)
+				return
+			}
+			setSessionAndRedirect(w, r, s, newUser, secure, appRedirect)
+			return
+		}
 		redirectWithError(w, r, "Use a signup link or ask an admin to create your account", appOrigin)
 	}
+}
+
+func jitProvisionUser(s store.Storer, pc *config.OAuthProviderConfig, email, provider, providerUserID string, claims map[string]any) (*store.User, error) {
+	orgID, err := resolveJITOrganization(s, email, claims, pc)
+	if err != nil {
+		return nil, err
+	}
+	role, err := oauth.MapRole(claims, pc.RoleClaim, pc.RoleMap, pc.JITDefaultRole)
+	if err != nil {
+		return nil, err
+	}
+	newUser := &store.User{
+		Email:               email,
+		PasswordHash:        "",
+		Role:                role,
+		OrganizationID:      orgID,
+		OAuthProvider:       provider,
+		OAuthProviderUserID: providerUserID,
+	}
+	if err := s.CreateUser(newUser); err != nil {
+		return nil, fmt.Errorf("could not create account")
+	}
+	return newUser, nil
+}
+
+func resolveJITOrganization(s store.Storer, email string, claims map[string]any, pc *config.OAuthProviderConfig) (uuid.UUID, error) {
+	ref, err := oauth.MapOrganization(oauth.OrganizationMapping{
+		Claims:         claims,
+		Email:          email,
+		OrgClaim:       pc.OrgClaim,
+		OrgMap:         pc.OrgMap,
+		DefaultOrg:     pc.JITDefaultOrganization,
+		AllowedDomains: pc.JITAllowedEmailDomains,
+		DomainOrgMap:   pc.JITDomainOrgMap,
+	})
+	if err != nil {
+		return uuid.Nil, err
+	}
+	org, err := lookupOrganization(s, ref)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("could not resolve organization")
+	}
+	if org.ID == uuid.Nil {
+		return uuid.Nil, fmt.Errorf("cannot provision a global admin via SSO")
+	}
+	return org.ID, nil
+}
+
+func lookupOrganization(s store.Storer, ref string) (*store.Organization, error) {
+	ref = strings.TrimSpace(ref)
+	if id, err := uuid.Parse(ref); err == nil {
+		return s.GetOrganization(id)
+	}
+	return s.GetOrganizationByName(ref)
 }
 
 func defaultOAuthScopes(_ string, scopes []string) []string {

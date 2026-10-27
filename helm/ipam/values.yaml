@@ -102,6 +102,20 @@ oauth:
   #     - email
   #     - profile
   #   displayName: Sign in with Keycloak
+  #   jitEnabled: true
+  #   jitDefaultRole: user
+  #   jitDefaultOrganization: Acme
+  #   jitAllowedEmailDomains:
+  #     - acme.com
+  #   jitDomainOrgMap:
+  #     acme.com: Acme
+  #   roleClaim: groups
+  #   roleMap:
+  #     ipam-admins: admin
+  #     ipam-users: user
+  #   orgClaim: groups
+  #   orgMap:
+  #     team-network: Acme
   #   clientMtlsConfig:
   #      enabled: true
   #      tlsCertFile: "/certs/tls.crt"

@@ -15,6 +15,7 @@ type IDGenerator interface {
 type OrganizationStore interface {
 	CreateOrganization(org *Organization) error
 	GetOrganization(id uuid.UUID) (*Organization, error)
+	GetOrganizationByName(name string) (*Organization, error)
 	ListOrganizations() ([]*Organization, error)
 	UpdateOrganization(org *Organization) error
 	DeleteOrganization(id uuid.UUID) error
